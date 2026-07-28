@@ -81,13 +81,22 @@ export function WorkoutsPanel({
     if (!res.ok) {
       throw new Error(json.error || "Failed to load workout settings");
     }
-    const next = {
-      matchMode: "episode" as const,
-      showTitle: "Fit With the Force",
-      seasonNumber: 1,
-      warmupEpisode: 2,
-      firstDayEpisode: 3,
-      ...(json.settings as WorkoutSettings),
+    const loaded = (json.settings || {}) as Partial<WorkoutSettings>;
+    const next: WorkoutSettings = {
+      plexBaseUrl: loaded.plexBaseUrl || "",
+      plexToken: loaded.plexToken || "",
+      plexTokenSet: loaded.plexTokenSet,
+      librarySectionId: loaded.librarySectionId || "",
+      matchMode: loaded.matchMode === "title" ? "title" : "episode",
+      showTitle: loaded.showTitle || "Fit With the Force",
+      seasonNumber: loaded.seasonNumber ?? 1,
+      warmupEpisode: loaded.warmupEpisode ?? 2,
+      firstDayEpisode: loaded.firstDayEpisode ?? 3,
+      warmupTitle: loaded.warmupTitle || "Warm Up",
+      dayTitlePattern: loaded.dayTitlePattern || "Day {n}",
+      clientMachineId: loaded.clientMachineId || "",
+      clientName: loaded.clientName || "",
+      dayCount: loaded.dayCount || 30,
     };
     if (!next.plexBaseUrl && suggestedPlexUrl) {
       next.plexBaseUrl = suggestedPlexUrl;
@@ -133,6 +142,7 @@ export function WorkoutsPanel({
       setDays(discoverJson.days ?? []);
       setWarmup(discoverJson.warmup ?? null);
       setError(null);
+      if (discoverJson.hint) setMessage(discoverJson.hint);
     } else {
       setDays([]);
       setWarmup(null);
