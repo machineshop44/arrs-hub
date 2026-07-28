@@ -12,11 +12,7 @@ export type WatchdogSettings = {
   failThreshold: number;
   restartCooldownSeconds: number;
   autoRestart: boolean;
-  discordWebhookUrl: string;
   discordWebhookSet?: boolean;
-  discordNotifyDown: boolean;
-  discordNotifyRestart: boolean;
-  discordNotifyRecovered: boolean;
   services: Record<string, ServiceWatchConfig>;
 };
 
@@ -38,13 +34,7 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
       if (!health.ok) return;
       const res = await fetch("/api/watchdog/status");
       const json = await res.json();
-      setSettings({
-        ...json.settings,
-        discordWebhookUrl: "",
-        discordNotifyDown: json.settings?.discordNotifyDown !== false,
-        discordNotifyRestart: json.settings?.discordNotifyRestart !== false,
-        discordNotifyRecovered: json.settings?.discordNotifyRecovered !== false,
-      });
+      setSettings(json.settings);
     } catch {
       setServerUp(false);
     }
@@ -62,44 +52,19 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
       const res = await fetch("/api/watchdog/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(settings),
+        body: JSON.stringify({
+          enabled: settings.enabled,
+          intervalSeconds: settings.intervalSeconds,
+          failThreshold: settings.failThreshold,
+          restartCooldownSeconds: settings.restartCooldownSeconds,
+          autoRestart: settings.autoRestart,
+          services: settings.services,
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Save failed");
-      setSettings({
-        ...json.settings,
-        discordWebhookUrl: "",
-      });
+      setSettings(json.settings);
       setMessage("Watchdog settings saved.");
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const testDiscord = async () => {
-    setBusy(true);
-    setMessage(null);
-    try {
-      // Save first so a freshly pasted webhook is used
-      if (settings) {
-        const saveRes = await fetch("/api/watchdog/settings", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(settings),
-        });
-        const saveJson = await saveRes.json();
-        if (!saveRes.ok) throw new Error(saveJson.error || "Save failed");
-        setSettings({
-          ...saveJson.settings,
-          discordWebhookUrl: "",
-        });
-      }
-      const res = await fetch("/api/watchdog/discord-test", { method: "POST" });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Test failed");
-      setMessage("Test message sent to Discord.");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
     } finally {
@@ -169,7 +134,9 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
                   Keep Arr&apos;s Hub running on this PC. It checks each app&apos;s{" "}
                   <strong>Home</strong> port and can start the Windows service if
                   it goes down. Apps must be installed as Windows services
-                  (Sonarr/Radarr installers usually offer that).
+                  (Sonarr/Radarr installers usually offer that). Discord webhook
+                  for down/restart alerts is under hub <strong>Settings</strong>.
+                  {settings.discordWebhookSet ? " (webhook saved)" : ""}
                 </p>
                 <label className="toggle">
                   <input
@@ -235,98 +202,6 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
                     }
                   />
                 </label>
-              </section>
-
-              <section className="settings-group">
-                <h3>Discord notifications</h3>
-                <p className="settings-hint">
-                  Optional webhook for the same ports Port Watch already
-                  monitors above (Sonarr, Radarr, Plex, etc.). Discord itself is
-                  not scanned — you only get messages when those app ports go
-                  down, a restart succeeds/fails, or a port comes back up.
-                </p>
-                <label className="field">
-                  <span>
-                    Webhook URL
-                    {settings.discordWebhookSet
-                      ? " (saved — leave blank to keep)"
-                      : ""}
-                  </span>
-                  <input
-                    type="password"
-                    autoComplete="off"
-                    placeholder={
-                      settings.discordWebhookSet
-                        ? "•••• saved ••••"
-                        : "https://discord.com/api/webhooks/…"
-                    }
-                    value={settings.discordWebhookUrl}
-                    onChange={(e) =>
-                      setSettings((prev) =>
-                        prev
-                          ? { ...prev, discordWebhookUrl: e.target.value }
-                          : prev,
-                      )
-                    }
-                  />
-                </label>
-                <label className="toggle">
-                  <input
-                    type="checkbox"
-                    checked={settings.discordNotifyDown}
-                    onChange={(e) =>
-                      setSettings((prev) =>
-                        prev
-                          ? { ...prev, discordNotifyDown: e.target.checked }
-                          : prev,
-                      )
-                    }
-                  />
-                  <span className="toggle-label">Notify when port goes down</span>
-                </label>
-                <label className="toggle">
-                  <input
-                    type="checkbox"
-                    checked={settings.discordNotifyRestart}
-                    onChange={(e) =>
-                      setSettings((prev) =>
-                        prev
-                          ? { ...prev, discordNotifyRestart: e.target.checked }
-                          : prev,
-                      )
-                    }
-                  />
-                  <span className="toggle-label">
-                    Notify restart success / failure
-                  </span>
-                </label>
-                <label className="toggle">
-                  <input
-                    type="checkbox"
-                    checked={settings.discordNotifyRecovered}
-                    onChange={(e) =>
-                      setSettings((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              discordNotifyRecovered: e.target.checked,
-                            }
-                          : prev,
-                      )
-                    }
-                  />
-                  <span className="toggle-label">
-                    Notify when port comes back up
-                  </span>
-                </label>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  disabled={busy}
-                  onClick={() => void testDiscord()}
-                >
-                  Send test to Discord
-                </button>
               </section>
 
               <section className="settings-group">

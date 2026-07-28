@@ -29,6 +29,17 @@ export function SettingsPanel({
   } | null>(null);
   const [apiServerUp, setApiServerUp] = useState<boolean | null>(null);
 
+  const [discordWebhookUrl, setDiscordWebhookUrl] = useState("");
+  const [discordWebhookSet, setDiscordWebhookSet] = useState(false);
+  const [discordNotifyDown, setDiscordNotifyDown] = useState(true);
+  const [discordNotifyRestart, setDiscordNotifyRestart] = useState(true);
+  const [discordNotifyRecovered, setDiscordNotifyRecovered] = useState(true);
+  const [discordBusy, setDiscordBusy] = useState(false);
+  const [discordMessage, setDiscordMessage] = useState<{
+    type: "ok" | "err";
+    text: string;
+  } | null>(null);
+
   const loadApiKeys = useCallback(async () => {
     try {
       const health = await fetch("/api/health");
@@ -48,9 +59,30 @@ export function SettingsPanel({
     }
   }, []);
 
+  const loadDiscord = useCallback(async () => {
+    try {
+      const health = await fetch("/api/health");
+      setApiServerUp(health.ok);
+      if (!health.ok) return;
+
+      const res = await fetch("/api/watchdog/status");
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Could not load Discord settings");
+
+      setDiscordWebhookSet(Boolean(json.settings?.discordWebhookSet));
+      setDiscordWebhookUrl("");
+      setDiscordNotifyDown(json.settings?.discordNotifyDown !== false);
+      setDiscordNotifyRestart(json.settings?.discordNotifyRestart !== false);
+      setDiscordNotifyRecovered(json.settings?.discordNotifyRecovered !== false);
+    } catch {
+      setApiServerUp(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadApiKeys();
-  }, [loadApiKeys]);
+    void loadDiscord();
+  }, [loadApiKeys, loadDiscord]);
 
   const saveApiKeys = async () => {
     setApiBusy(true);
@@ -78,6 +110,69 @@ export function SettingsPanel({
       });
     } finally {
       setApiBusy(false);
+    }
+  };
+
+  const saveDiscord = async () => {
+    setDiscordBusy(true);
+    setDiscordMessage(null);
+    try {
+      const res = await fetch("/api/watchdog/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          discordWebhookUrl,
+          discordNotifyDown,
+          discordNotifyRestart,
+          discordNotifyRecovered,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Save failed");
+      setDiscordMessage({
+        type: "ok",
+        text: "Discord webhook saved (used by Port Watch).",
+      });
+      await loadDiscord();
+    } catch (err) {
+      setDiscordMessage({
+        type: "err",
+        text: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setDiscordBusy(false);
+    }
+  };
+
+  const testDiscord = async () => {
+    setDiscordBusy(true);
+    setDiscordMessage(null);
+    try {
+      const saveRes = await fetch("/api/watchdog/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          discordWebhookUrl,
+          discordNotifyDown,
+          discordNotifyRestart,
+          discordNotifyRecovered,
+        }),
+      });
+      const saveJson = await saveRes.json();
+      if (!saveRes.ok) throw new Error(saveJson.error || "Save failed");
+      await loadDiscord();
+
+      const res = await fetch("/api/watchdog/discord-test", { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Test failed");
+      setDiscordMessage({ type: "ok", text: "Test message sent to Discord." });
+    } catch (err) {
+      setDiscordMessage({
+        type: "err",
+        text: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setDiscordBusy(false);
     }
   };
 
@@ -227,6 +322,92 @@ export function SettingsPanel({
             >
               {apiBusy ? "Saving…" : "Save API keys"}
             </button>
+          </section>
+
+          <section className="settings-group">
+            <h3>Discord notifications</h3>
+            <p className="settings-hint">
+              Webhook for Port Watch: when a monitored app port goes down, a
+              restart succeeds or fails, or the port comes back up. Discord is
+              not scanned — only your Sonarr/Radarr/Plex/etc. ports are.
+            </p>
+            {apiServerUp === false && (
+              <p className="settings-hint">
+                Hub API is offline — start the hub server to save the webhook.
+              </p>
+            )}
+            <label className="field">
+              <span>
+                Webhook URL
+                {discordWebhookSet ? " (saved — leave blank to keep)" : ""}
+              </span>
+              <input
+                type="password"
+                autoComplete="off"
+                placeholder={
+                  discordWebhookSet
+                    ? "•••• saved ••••"
+                    : "https://discord.com/api/webhooks/…"
+                }
+                value={discordWebhookUrl}
+                disabled={apiServerUp === false || discordBusy}
+                onChange={(e) => setDiscordWebhookUrl(e.target.value)}
+              />
+            </label>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={discordNotifyDown}
+                disabled={apiServerUp === false || discordBusy}
+                onChange={(e) => setDiscordNotifyDown(e.target.checked)}
+              />
+              <span className="toggle-label">Notify when port goes down</span>
+            </label>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={discordNotifyRestart}
+                disabled={apiServerUp === false || discordBusy}
+                onChange={(e) => setDiscordNotifyRestart(e.target.checked)}
+              />
+              <span className="toggle-label">
+                Notify restart success / failure
+              </span>
+            </label>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={discordNotifyRecovered}
+                disabled={apiServerUp === false || discordBusy}
+                onChange={(e) => setDiscordNotifyRecovered(e.target.checked)}
+              />
+              <span className="toggle-label">Notify when port comes back up</span>
+            </label>
+            {discordMessage && (
+              <div
+                className={`sync-alert ${discordMessage.type === "ok" ? "sync-alert-ok" : "sync-alert-err"}`}
+              >
+                {discordMessage.text}
+              </div>
+            )}
+            <div className="watchdog-bar-actions">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={apiServerUp === false || discordBusy}
+                onClick={() => void saveDiscord()}
+              >
+                {discordBusy ? "Saving…" : "Save Discord settings"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={apiServerUp === false || discordBusy}
+                onClick={() => void testDiscord()}
+              >
+                Send test
+              </button>
+            </div>
           </section>
         </div>
 
