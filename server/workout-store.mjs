@@ -9,6 +9,14 @@ export function defaultWorkoutSettings() {
     plexBaseUrl: "http://localhost:32400",
     plexToken: "",
     librarySectionId: "",
+    /** "episode" = TV show S/E mapping; "title" = match video titles */
+    matchMode: "episode",
+    showTitle: "Fit With the Force",
+    seasonNumber: 1,
+    /** Episode number used as the warm-up (Fit With the Force = 2) */
+    warmupEpisode: 2,
+    /** Episode number for Day 1 (episodes after warm-up) */
+    firstDayEpisode: 3,
     warmupTitle: "Warm Up",
     dayTitlePattern: "Day {n}",
     clientMachineId: "",

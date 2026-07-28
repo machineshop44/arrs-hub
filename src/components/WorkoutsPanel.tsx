@@ -5,6 +5,11 @@ type WorkoutSettings = {
   plexToken: string;
   plexTokenSet?: boolean;
   librarySectionId: string;
+  matchMode: "episode" | "title";
+  showTitle: string;
+  seasonNumber: number;
+  warmupEpisode: number;
+  firstDayEpisode: number;
   warmupTitle: string;
   dayTitlePattern: string;
   clientMachineId: string;
@@ -76,7 +81,14 @@ export function WorkoutsPanel({
     if (!res.ok) {
       throw new Error(json.error || "Failed to load workout settings");
     }
-    const next = json.settings as WorkoutSettings;
+    const next = {
+      matchMode: "episode" as const,
+      showTitle: "Fit With the Force",
+      seasonNumber: 1,
+      warmupEpisode: 2,
+      firstDayEpisode: 3,
+      ...(json.settings as WorkoutSettings),
+    };
     if (!next.plexBaseUrl && suggestedPlexUrl) {
       next.plexBaseUrl = suggestedPlexUrl;
     }
@@ -293,36 +305,124 @@ export function WorkoutsPanel({
                     />
                   </label>
                   <label className="field">
-                    <span>Warm-up title</span>
-                    <input
-                      value={settings.warmupTitle}
+                    <span>Match mode</span>
+                    <select
+                      value={settings.matchMode || "episode"}
                       onChange={(e) =>
                         setSettings({
                           ...settings,
-                          warmupTitle: e.target.value,
+                          matchMode: e.target.value as "episode" | "title",
                         })
                       }
-                      placeholder="Warm Up"
-                    />
+                    >
+                      <option value="episode">
+                        TV episodes (Fit With the Force)
+                      </option>
+                      <option value="title">Video titles (Day 1, Warm Up)</option>
+                    </select>
                   </label>
-                  <label className="field">
-                    <span>Day title pattern</span>
-                    <input
-                      value={settings.dayTitlePattern}
-                      onChange={(e) =>
-                        setSettings({
-                          ...settings,
-                          dayTitlePattern: e.target.value,
-                        })
-                      }
-                      placeholder="Day {n}"
-                    />
-                  </label>
-                  <p className="settings-hint">
-                    Use <code>{"{n}"}</code> for 1, 2, 3 or{" "}
-                    <code>{"{nn}"}</code> for 01, 02, 03. Titles only need to
-                    contain that text.
-                  </p>
+                  {(settings.matchMode || "episode") === "episode" ? (
+                    <>
+                      <label className="field">
+                        <span>Show title contains</span>
+                        <input
+                          value={settings.showTitle || ""}
+                          onChange={(e) =>
+                            setSettings({
+                              ...settings,
+                              showTitle: e.target.value,
+                            })
+                          }
+                          placeholder="Fit With the Force"
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Season number</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={50}
+                          value={settings.seasonNumber ?? 1}
+                          onChange={(e) =>
+                            setSettings({
+                              ...settings,
+                              seasonNumber: Number(e.target.value) || 1,
+                            })
+                          }
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Warm-up episode #</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={200}
+                          value={settings.warmupEpisode ?? 2}
+                          onChange={(e) =>
+                            setSettings({
+                              ...settings,
+                              warmupEpisode: Number(e.target.value) || 2,
+                            })
+                          }
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Day 1 episode #</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={200}
+                          value={settings.firstDayEpisode ?? 3}
+                          onChange={(e) =>
+                            setSettings({
+                              ...settings,
+                              firstDayEpisode: Number(e.target.value) || 3,
+                            })
+                          }
+                        />
+                      </label>
+                      <p className="settings-hint">
+                        For <strong>Fit With the Force Series</strong> season 1:
+                        episode 2 = warm-up, episode 3 = Day 1, episode 4 = Day
+                        2, and so on. Pick the TV library that contains the
+                        show.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <label className="field">
+                        <span>Warm-up title</span>
+                        <input
+                          value={settings.warmupTitle}
+                          onChange={(e) =>
+                            setSettings({
+                              ...settings,
+                              warmupTitle: e.target.value,
+                            })
+                          }
+                          placeholder="Warm Up"
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Day title pattern</span>
+                        <input
+                          value={settings.dayTitlePattern}
+                          onChange={(e) =>
+                            setSettings({
+                              ...settings,
+                              dayTitlePattern: e.target.value,
+                            })
+                          }
+                          placeholder="Day {n}"
+                        />
+                      </label>
+                      <p className="settings-hint">
+                        Use <code>{"{n}"}</code> for 1, 2, 3 or{" "}
+                        <code>{"{nn}"}</code> for 01, 02, 03. Titles only need to
+                        contain that text.
+                      </p>
+                    </>
+                  )}
                   <label className="field">
                     <span>Days to show</span>
                     <input

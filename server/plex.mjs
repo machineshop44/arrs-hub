@@ -197,11 +197,120 @@ async function listSectionItems(settings) {
       title: item.title,
       type: item.type,
       duration: item.duration,
+      index: Number(item.index) || null,
+      parentIndex: Number(item.parentIndex) || null,
+      grandparentTitle: item.grandparentTitle || "",
+      parentTitle: item.parentTitle || "",
     }));
 }
 
-export async function discoverWorkoutDays(settings = getWorkoutConfig()) {
-  const items = await listSectionItems(settings);
+/**
+ * List TV episodes in a library section (type=4).
+ */
+async function listSectionEpisodes(settings) {
+  requireToken(settings);
+  if (!settings.librarySectionId) {
+    throw new Error("Pick a Plex library that holds your workout videos.");
+  }
+  const json = await plexFetch(
+    settings.plexBaseUrl,
+    settings.plexToken.trim(),
+    `/library/sections/${settings.librarySectionId}/all`,
+    { query: { type: 4, includeGuids: 0 } },
+  );
+  const container = mediaContainer(json);
+  return asArray(container.Metadata)
+    .filter((item) => item?.ratingKey && item?.title)
+    .map((item) => ({
+      ratingKey: String(item.ratingKey),
+      key: item.key || `/library/metadata/${item.ratingKey}`,
+      title: item.title,
+      type: item.type || "episode",
+      duration: item.duration,
+      index: Number(item.index) || null,
+      parentIndex: Number(item.parentIndex) || null,
+      grandparentTitle: String(item.grandparentTitle || ""),
+      parentTitle: String(item.parentTitle || ""),
+    }));
+}
+
+function showTitleMatches(needle, episode) {
+  const want = String(needle || "")
+    .trim()
+    .toLowerCase();
+  if (!want) return true;
+  const hay = `${episode.grandparentTitle} ${episode.parentTitle}`.toLowerCase();
+  return hay.includes(want);
+}
+
+function discoverByEpisode(settings, episodes) {
+  const showTitle = settings.showTitle || "Fit With the Force";
+  const seasonNumber = Number(settings.seasonNumber) || 1;
+  const warmupEpisode = Number(settings.warmupEpisode) || 2;
+  const firstDayEpisode = Number(settings.firstDayEpisode) || warmupEpisode + 1;
+  const dayCount = Math.max(1, Number(settings.dayCount) || 30);
+
+  const inShow = episodes
+    .filter((ep) => showTitleMatches(showTitle, ep))
+    .filter((ep) => ep.parentIndex == null || ep.parentIndex === seasonNumber)
+    .sort((a, b) => (a.index || 0) - (b.index || 0));
+
+  if (inShow.length === 0) {
+    return {
+      warmup: null,
+      days: [],
+      itemCount: episodes.length,
+      matchMode: "episode",
+      showTitle,
+      seasonNumber,
+      hint: `No episodes found for show matching "${showTitle}" in season ${seasonNumber}. Pick the TV library that contains it.`,
+    };
+  }
+
+  const byIndex = new Map();
+  for (const ep of inShow) {
+    if (ep.index != null) byIndex.set(ep.index, ep);
+  }
+
+  const warmup =
+    byIndex.get(warmupEpisode) ||
+    inShow.find((ep) => /warm\s*-?\s*up/i.test(ep.title)) ||
+    null;
+
+  /** @type {{ day: number, title: string, ratingKey: string, episode: number|null }[]} */
+  const days = [];
+  for (let day = 1; day <= dayCount; day += 1) {
+    const episodeNum = firstDayEpisode + day - 1;
+    const match = byIndex.get(episodeNum);
+    if (match) {
+      days.push({
+        day,
+        title: match.title,
+        ratingKey: match.ratingKey,
+        episode: episodeNum,
+      });
+    }
+  }
+
+  return {
+    warmup: warmup
+      ? {
+          title: warmup.title,
+          ratingKey: warmup.ratingKey,
+          episode: warmup.index,
+        }
+      : null,
+    days,
+    itemCount: inShow.length,
+    matchMode: "episode",
+    showTitle,
+    seasonNumber,
+    warmupEpisode,
+    firstDayEpisode,
+  };
+}
+
+function discoverByTitle(settings, items) {
   const pattern = settings.dayTitlePattern || "Day {n}";
   const warmupNeedle = String(settings.warmupTitle || "Warm Up")
     .trim()
@@ -237,7 +346,34 @@ export async function discoverWorkoutDays(settings = getWorkoutConfig()) {
       : null,
     days,
     itemCount: items.length,
+    matchMode: "title",
   };
+}
+
+export async function discoverWorkoutDays(settings = getWorkoutConfig()) {
+  const mode = settings.matchMode === "title" ? "title" : "episode";
+
+  if (mode === "episode") {
+    const episodes = await listSectionEpisodes(settings);
+    const result = discoverByEpisode(settings, episodes);
+    // If episode mode found nothing, try title match as a soft fallback
+    if (!result.warmup && result.days.length === 0) {
+      const items = await listSectionItems(settings);
+      const titleResult = discoverByTitle(settings, items);
+      if (titleResult.warmup || titleResult.days.length > 0) {
+        return {
+          ...titleResult,
+          hint:
+            result.hint ||
+            "Episode match found nothing; fell back to title matching.",
+        };
+      }
+    }
+    return result;
+  }
+
+  const items = await listSectionItems(settings);
+  return discoverByTitle(settings, items);
 }
 
 /**
@@ -261,12 +397,16 @@ export async function playWorkoutDay(day, settings = getWorkoutConfig()) {
   const dayItem = discovery.days.find((item) => item.day === dayNum);
   if (!dayItem) {
     throw new Error(
-      `Could not find a video matching "${formatDayTitle(settings.dayTitlePattern, dayNum)}" in that library.`,
+      settings.matchMode === "title"
+        ? `Could not find a video matching "${formatDayTitle(settings.dayTitlePattern, dayNum)}" in that library.`
+        : `Could not find Day ${dayNum} (episode ${(Number(settings.firstDayEpisode) || 3) + dayNum - 1}) for "${settings.showTitle || "Fit With the Force"}".`,
     );
   }
   if (!discovery.warmup) {
     throw new Error(
-      `Could not find warm-up video titled like "${settings.warmupTitle}".`,
+      settings.matchMode === "title"
+        ? `Could not find warm-up video titled like "${settings.warmupTitle}".`
+        : `Could not find warm-up episode ${settings.warmupEpisode || 2} for "${settings.showTitle || "Fit With the Force"}".`,
     );
   }
 

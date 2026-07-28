@@ -110,6 +110,20 @@ app.put("/api/workouts/settings", (req, res) => {
       plexBaseUrl: body.plexBaseUrl,
       plexToken: pickApiKey(body.plexToken, current.plexToken),
       librarySectionId: body.librarySectionId,
+      matchMode: body.matchMode,
+      showTitle: body.showTitle,
+      seasonNumber:
+        body.seasonNumber === undefined || body.seasonNumber === null
+          ? current.seasonNumber
+          : Number(body.seasonNumber) || 1,
+      warmupEpisode:
+        body.warmupEpisode === undefined || body.warmupEpisode === null
+          ? current.warmupEpisode
+          : Number(body.warmupEpisode) || 2,
+      firstDayEpisode:
+        body.firstDayEpisode === undefined || body.firstDayEpisode === null
+          ? current.firstDayEpisode
+          : Number(body.firstDayEpisode) || 3,
       warmupTitle: body.warmupTitle,
       dayTitlePattern: body.dayTitlePattern,
       clientMachineId: body.clientMachineId,
