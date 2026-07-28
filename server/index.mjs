@@ -174,7 +174,11 @@ app.get("/api/workouts/discover", async (_req, res) => {
 app.post("/api/workouts/play", async (req, res) => {
   try {
     const day = Number(req.body?.day);
-    const result = await playWorkoutDay(day);
+    const clientMachineId =
+      typeof req.body?.clientMachineId === "string"
+        ? req.body.clientMachineId
+        : undefined;
+    const result = await playWorkoutDay(day, undefined, { clientMachineId });
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message || String(err) });

@@ -217,9 +217,7 @@ export function WorkoutsPanel({
   const [playlistIndex, setPlaylistIndex] = useState(0);
 
   const configured = Boolean(
-    settings?.plexTokenSet &&
-      settings.librarySectionId &&
-      settings.clientMachineId,
+    settings?.plexTokenSet && settings.librarySectionId,
   );
 
   const loadSettings = useCallback(async () => {
@@ -267,9 +265,7 @@ export function WorkoutsPanel({
       next.plexBaseUrl = suggestedPlexUrl;
     }
     setSettings(next);
-    setShowSetup(
-      !(next.plexTokenSet && next.librarySectionId && next.clientMachineId),
-    );
+    setShowSetup(!(next.plexTokenSet && next.librarySectionId));
     setError(null);
     return next;
   }, [suggestedPlexUrl]);
@@ -364,6 +360,10 @@ export function WorkoutsPanel({
   };
 
   const playDay = async (day: number) => {
+    if (!settings?.clientMachineId) {
+      setError("Pick a device under Play on first.");
+      return;
+    }
     setPlayingDay(day);
     setMessage(null);
     setError(null);
@@ -371,7 +371,10 @@ export function WorkoutsPanel({
       const res = await fetch("/api/workouts/play", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ day }),
+        body: JSON.stringify({
+          day,
+          clientMachineId: settings.clientMachineId,
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Play failed");
@@ -644,39 +647,6 @@ export function WorkoutsPanel({
                       ))}
                     </select>
                   </label>
-                  <label className="field">
-                    <span>Play on</span>
-                    <select
-                      value={settings.clientMachineId}
-                      onChange={(e) => {
-                        const client = clients.find(
-                          (c) => c.machineIdentifier === e.target.value,
-                        );
-                        setSettings({
-                          ...settings,
-                          clientMachineId: e.target.value,
-                          clientName: client?.name || "",
-                        });
-                      }}
-                    >
-                      <option value="">Select device…</option>
-                      {clients.map((client) => (
-                        <option
-                          key={client.machineIdentifier}
-                          value={client.machineIdentifier}
-                        >
-                          {client.name}
-                          {client.product ? ` · ${client.product}` : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <p className="settings-hint">
-                    Choose <strong>This device (play here)</strong> for phone,
-                    tablet, or this PC. Other Plex apps (TV/stick/phone) only
-                    appear when that app is open on your network — then hit
-                    Refresh.
-                  </p>
                   <div className="workouts-toolbar">
                     <button
                       type="button"
@@ -692,9 +662,42 @@ export function WorkoutsPanel({
 
               <section className="settings-group">
                 <h3>Today’s workout</h3>
+                {configured && (
+                  <label className="field">
+                    <span>Play on</span>
+                    <select
+                      value={settings.clientMachineId || LOCAL_CLIENT_ID}
+                      onChange={(e) => {
+                        const client = clients.find(
+                          (c) => c.machineIdentifier === e.target.value,
+                        );
+                        setSettings({
+                          ...settings,
+                          clientMachineId: e.target.value,
+                          clientName: client?.name || "",
+                        });
+                      }}
+                    >
+                      {clients.map((client) => (
+                        <option
+                          key={client.machineIdentifier}
+                          value={client.machineIdentifier}
+                        >
+                          {client.name}
+                          {client.product ? ` · ${client.product}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <p className="settings-hint">
+                  Choose the device each time you work out.{" "}
+                  <strong>This device</strong> plays here; other Plex apps show
+                  up when they’re open — hit Refresh to update the list.
+                </p>
                 {!configured && (
                   <p className="settings-hint">
-                    Finish Setup (token, library, client), then pick a day.
+                    Finish Setup (token + library), then pick a day.
                   </p>
                 )}
                 {configured && days.length === 0 && !error && (

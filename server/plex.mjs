@@ -417,10 +417,17 @@ export async function discoverWorkoutDays(settings = getWorkoutConfig()) {
  * Create a play queue with warmup (optional) + day video, then tell the client to play.
  * @param {number} day
  * @param {object} [settings]
+ * @param {{ clientMachineId?: string }} [options]
  */
-export async function playWorkoutDay(day, settings = getWorkoutConfig()) {
+export async function playWorkoutDay(
+  day,
+  settings = getWorkoutConfig(),
+  options = {},
+) {
   requireToken(settings);
-  if (!settings.clientMachineId) {
+  const clientMachineId =
+    options.clientMachineId?.trim() || settings.clientMachineId;
+  if (!clientMachineId) {
     throw new Error(
       "Pick where to play (This device, or a Plex TV/phone/tablet).",
     );
@@ -449,7 +456,7 @@ export async function playWorkoutDay(day, settings = getWorkoutConfig()) {
     );
   }
 
-  if (settings.clientMachineId === LOCAL_CLIENT_ID) {
+  if (clientMachineId === LOCAL_CLIENT_ID) {
     const warmupMedia = await getBrowserPlayable(
       settings,
       discovery.warmup.ratingKey,
@@ -472,7 +479,7 @@ export async function playWorkoutDay(day, settings = getWorkoutConfig()) {
 
   const clients = await listClients(settings);
   const client = clients.find(
-    (item) => item.machineIdentifier === settings.clientMachineId,
+    (item) => item.machineIdentifier === clientMachineId,
   );
   if (!client || client.machineIdentifier === LOCAL_CLIENT_ID) {
     throw new Error(
