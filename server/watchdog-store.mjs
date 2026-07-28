@@ -31,6 +31,10 @@ export function defaultWatchdogSettings() {
     failThreshold: 2,
     restartCooldownSeconds: 120,
     autoRestart: true,
+    discordWebhookUrl: "",
+    discordNotifyDown: true,
+    discordNotifyRestart: true,
+    discordNotifyRecovered: true,
     /** @type {Record<string, { monitor: boolean, autoRestart: boolean, windowsService: string }>} */
     services: Object.fromEntries(
       Object.entries(DEFAULT_WINDOWS_SERVICES).map(([id, windowsService]) => [

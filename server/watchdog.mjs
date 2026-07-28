@@ -4,6 +4,7 @@ import {
   loadWatchdogSettings,
   saveWatchdogSettings,
 } from "./watchdog-store.mjs";
+import { DISCORD_COLORS, sendDiscordWebhook } from "./discord.mjs";
 
 /**
  * @typedef {object} WatchTarget
@@ -15,11 +16,25 @@ import {
 /** @type {WatchTarget[]} */
 let targets = [];
 
-/** @type {Map<string, { up: boolean|null, latencyMs: number|null, lastChecked: string|null, consecutiveFails: number, lastRestartAt: string|null, lastRestartResult: string|null, message: string }>} */
+/** @type {Map<string, { up: boolean|null, latencyMs: number|null, lastChecked: string|null, consecutiveFails: number, lastRestartAt: string|null, lastRestartResult: string|null, message: string, downAlertSent: boolean }>} */
 const state = new Map();
 
 /** @type {ReturnType<typeof setInterval> | null} */
 let timer = null;
+
+function maskWebhook(url) {
+  if (!url) return "";
+  if (url.length <= 24) return "••••••••";
+  return `${url.slice(0, 40)}…${url.slice(-6)}`;
+}
+
+function pickSecret(incoming, current) {
+  if (typeof incoming !== "string") return current;
+  const trimmed = incoming.trim();
+  if (!trimmed) return current;
+  if (trimmed.includes("…") || trimmed.includes("•")) return current;
+  return trimmed;
+}
 
 export function setWatchTargets(nextTargets) {
   targets = Array.isArray(nextTargets) ? nextTargets : [];
@@ -33,6 +48,7 @@ export function setWatchTargets(nextTargets) {
         lastRestartAt: null,
         lastRestartResult: null,
         message: "Waiting for first check",
+        downAlertSent: false,
       });
     }
   }
@@ -47,6 +63,13 @@ export function getWatchStatus() {
       failThreshold: settings.failThreshold,
       restartCooldownSeconds: settings.restartCooldownSeconds,
       autoRestart: settings.autoRestart,
+      discordWebhookUrl: settings.discordWebhookUrl
+        ? maskWebhook(settings.discordWebhookUrl)
+        : "",
+      discordWebhookSet: Boolean(settings.discordWebhookUrl),
+      discordNotifyDown: settings.discordNotifyDown !== false,
+      discordNotifyRestart: settings.discordNotifyRestart !== false,
+      discordNotifyRecovered: settings.discordNotifyRecovered !== false,
       services: settings.services,
     },
     targets,
@@ -58,17 +81,35 @@ export function getWatchStatus() {
 
 export function updateWatchdogSettings(partial) {
   const current = loadWatchdogSettings();
+  const body = partial ?? {};
+  const { discordWebhookUrl: _incomingUrl, services: partialServices, ...rest } =
+    body;
+
   const next = {
     ...current,
-    ...partial,
+    ...rest,
+    discordWebhookUrl: pickSecret(body.discordWebhookUrl, current.discordWebhookUrl),
     services: {
       ...current.services,
-      ...(partial.services ?? {}),
+      ...(partialServices ?? {}),
     },
   };
   saveWatchdogSettings(next);
   restartWatchLoop();
   return next;
+}
+
+export async function testDiscordWebhook() {
+  const settings = loadWatchdogSettings();
+  if (!settings.discordWebhookUrl) {
+    return { ok: false, message: "No Discord webhook URL saved yet." };
+  }
+  return sendDiscordWebhook(settings.discordWebhookUrl, {
+    title: "Arrs Hub test",
+    description:
+      "Port Watch can reach Discord. You’ll get alerts when a monitored port goes down and when a restart succeeds or fails.",
+    color: DISCORD_COLORS.test,
+  });
 }
 
 function hostPortFromUrl(raw) {
@@ -151,6 +192,14 @@ function startWindowsService(serviceName) {
   });
 }
 
+async function notifyDiscord(settings, payload) {
+  if (!settings.discordWebhookUrl) return;
+  const result = await sendDiscordWebhook(settings.discordWebhookUrl, payload);
+  if (!result.ok) {
+    console.error("Discord webhook failed:", result.message);
+  }
+}
+
 async function checkOne(target) {
   const settings = loadWatchdogSettings();
   const serviceCfg = settings.services[target.id] ?? {
@@ -187,11 +236,43 @@ async function checkOne(target) {
     consecutiveFails: 0,
     lastRestartAt: null,
     lastRestartResult: null,
+    downAlertSent: false,
+    up: null,
   };
 
   let consecutiveFails = result.up ? 0 : (prev.consecutiveFails || 0) + 1;
   let lastRestartAt = prev.lastRestartAt ?? null;
   let lastRestartResult = prev.lastRestartResult ?? null;
+  let downAlertSent = Boolean(prev.downAlertSent);
+
+  const wasDown = prev.up === false;
+  const recovered = result.up && wasDown;
+
+  if (result.up) {
+    downAlertSent = false;
+  }
+
+  // Alert once when failures hit the threshold (not every check while down)
+  if (
+    !result.up &&
+    !downAlertSent &&
+    consecutiveFails >= settings.failThreshold &&
+    settings.discordNotifyDown !== false
+  ) {
+    downAlertSent = true;
+    await notifyDiscord(settings, {
+      title: `${target.name} port is down`,
+      description: [
+        `Host: \`${parsed.host}:${parsed.port}\``,
+        `Failed checks: **${consecutiveFails}** (threshold ${settings.failThreshold})`,
+        `Detail: ${result.message}`,
+        settings.autoRestart && serviceCfg.autoRestart && serviceCfg.windowsService
+          ? "Arrs Hub will try to restart the Windows service."
+          : "Auto-restart is not enabled for this app.",
+      ].join("\n"),
+      color: DISCORD_COLORS.down,
+    });
+  }
 
   const shouldRestart =
     !result.up &&
@@ -209,7 +290,33 @@ async function checkOne(target) {
       lastRestartAt = new Date().toISOString();
       lastRestartResult = restart.message;
       consecutiveFails = 0;
+
+      if (settings.discordNotifyRestart !== false) {
+        await notifyDiscord(settings, {
+          title: restart.ok
+            ? `${target.name} restart succeeded`
+            : `${target.name} restart failed`,
+          description: [
+            `Service: \`${serviceCfg.windowsService}\``,
+            restart.message,
+            `Checked port: \`${parsed.host}:${parsed.port}\``,
+          ].join("\n"),
+          color: restart.ok
+            ? DISCORD_COLORS.restartOk
+            : DISCORD_COLORS.restartFail,
+        });
+      }
     }
+  }
+
+  if (recovered && settings.discordNotifyRecovered !== false) {
+    await notifyDiscord(settings, {
+      title: `${target.name} is back up`,
+      description: `Port \`${parsed.host}:${parsed.port}\` is responding again${
+        result.latencyMs != null ? ` (${result.latencyMs} ms)` : ""
+      }.`,
+      color: DISCORD_COLORS.recovered,
+    });
   }
 
   state.set(target.id, {
@@ -220,6 +327,7 @@ async function checkOne(target) {
     lastRestartAt,
     lastRestartResult,
     message: result.message,
+    downAlertSent,
   });
 }
 

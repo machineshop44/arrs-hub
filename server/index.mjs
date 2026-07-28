@@ -20,6 +20,7 @@ import {
   startWatchdog,
   updateWatchdogSettings,
   runWatchCycle,
+  testDiscordWebhook,
 } from "./watchdog.mjs";
 import {
   discoverWorkoutDays,
@@ -61,10 +62,23 @@ app.put("/api/watchdog/targets", (req, res) => {
 
 app.put("/api/watchdog/settings", (req, res) => {
   try {
-    const settings = updateWatchdogSettings(req.body ?? {});
-    res.json({ ok: true, settings });
+    updateWatchdogSettings(req.body ?? {});
+    res.json({ ok: true, settings: getWatchStatus().settings });
   } catch (err) {
     res.status(400).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/watchdog/discord-test", async (_req, res) => {
+  try {
+    const result = await testDiscordWebhook();
+    if (!result.ok) {
+      res.status(400).json({ error: result.message });
+      return;
+    }
+    res.json({ ok: true, message: result.message });
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
   }
 });
 
