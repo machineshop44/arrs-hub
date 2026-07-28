@@ -6,3 +6,6 @@ dist
 .env.*
 data/
 server/node_modules/
+data/recyclarr/run-apply-sync.bat
+data/recyclarr/.last-sync-exit
+

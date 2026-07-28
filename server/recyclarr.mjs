@@ -184,8 +184,9 @@ function runRecyclarrPiped(args, options = {}) {
 
 /**
  * Real Apply sync uses Spectre LiveDisplay, which crashes with
- * "The handle is invalid" when stdout is piped. On Windows we open a
- * minimized console via `start /wait` and stream Recyclarr's log file instead.
+ * "The handle is invalid" when stdout is piped. On Windows we launch
+ * Recyclarr with its own console (stdio ignored, not piped) and stream
+ * progress from Recyclarr's log files into the hub popup.
  * @param {string[]} args
  * @param {{ timeoutMs?: number, onOutput?: (chunk: string, stream: 'stdout'|'stderr') => void, onStatus?: (message: string) => void }} [options]
  */
@@ -202,27 +203,45 @@ function runRecyclarrWindowsConsole(args, options = {}) {
 
     const exitFile = path.join(RECYCLARR_DIR, ".last-sync-exit");
     const logDir = path.join(RECYCLARR_DIR, "data", "logs", "cli");
+    const wrapperPath = path.join(RECYCLARR_DIR, "run-apply-sync.bat");
     try {
       fs.unlinkSync(exitFile);
     } catch {
       // ignore
     }
 
-    const startedAt = Date.now();
-    const argLine = args.map(quoteCmdArg).join(" ");
-    const cmdline = `start "Arrs Hub Sync" /wait /min ${quoteCmdArg(EXE_PATH)} ${argLine} & echo %ERRORLEVEL%>${quoteCmdArg(exitFile)}`;
+    const bat = [
+      "@echo off",
+      "setlocal",
+      `cd /d ${quoteCmdArg(RECYCLARR_DIR)}`,
+      `set "RECYCLARR_CONFIG_DIR=${path.join(RECYCLARR_DIR, "config")}"`,
+      `set "RECYCLARR_DATA_DIR=${path.join(RECYCLARR_DIR, "data")}"`,
+      `set "RECYCLARR_APP_DATA="`,
+      `${quoteCmdArg(EXE_PATH)} ${args.map(quoteCmdArg).join(" ")}`,
+      `echo %ERRORLEVEL%>${quoteCmdArg(exitFile)}`,
+      "endlocal",
+      "",
+    ].join("\r\n");
+    fs.writeFileSync(wrapperPath, bat, "utf8");
 
+    const startedAt = Date.now();
     onStatus?.("Applying sync — watch this popup (a brief console may flash)…");
     onOutput?.(
       "[hub] Apply started. Keep this popup open until you see SUCCESS or FAILED.\n",
       "stdout",
     );
 
-    const child = spawn("cmd.exe", ["/d", "/s", "/c", cmdline], {
-      cwd: RECYCLARR_DIR,
-      windowsHide: true,
-      env: recyclarrEnv(),
-    });
+    // Own console window (not piped) so Spectre LiveDisplay works.
+    const child = spawn(
+      process.env.ComSpec || "cmd.exe",
+      ["/d", "/c", wrapperPath],
+      {
+        cwd: RECYCLARR_DIR,
+        windowsHide: false,
+        stdio: "ignore",
+        env: recyclarrEnv(),
+      },
+    );
 
     let stdout = "";
     let stopped = false;
@@ -236,14 +255,16 @@ function runRecyclarrWindowsConsole(args, options = {}) {
       stdout += text;
       onOutput?.(text, "stdout");
 
-      const lines = text.split(/\r?\n/);
-      for (const line of lines) {
+      for (const line of text.split(/\r?\n/)) {
         if (/Processing (Radarr|Sonarr)/i.test(line)) {
           onStatus?.(line.replace(/^\[INF\]\s*/i, "").trim());
+          lastStatusAt = Date.now();
         } else if (/Completed at /i.test(line)) {
           onStatus?.(line.replace(/^\[INF\]\s*/i, "").trim());
+          lastStatusAt = Date.now();
         } else if (/Created |Updated |Synced /i.test(line)) {
           onStatus?.(line.replace(/^\[INF\]\s*/i, "").trim());
+          lastStatusAt = Date.now();
         }
       }
     };
@@ -259,13 +280,17 @@ function runRecyclarrWindowsConsole(args, options = {}) {
             const full = path.join(logDir, name);
             return { full, mtime: fs.statSync(full).mtimeMs };
           })
-          .filter((item) => item.mtime >= startedAt - 2000)
+          .filter((item) => item.mtime >= startedAt - 5000)
           .sort((a, b) => b.mtime - a.mtime)[0];
 
         if (!newest) return;
         if (activeLog !== newest.full) {
           activeLog = newest.full;
           offset = 0;
+          onOutput?.(
+            `[hub] Reading Recyclarr log: ${path.basename(newest.full)}\n`,
+            "stdout",
+          );
         }
 
         const stat = fs.statSync(activeLog);
@@ -305,7 +330,11 @@ function runRecyclarrWindowsConsole(args, options = {}) {
     const timer = setTimeout(() => {
       stopped = true;
       clearInterval(logTimer);
-      child.kill();
+      try {
+        child.kill();
+      } catch {
+        // ignore
+      }
       reject(new Error(`Recyclarr timed out after ${timeoutMs / 1000}s`));
     }, timeoutMs);
 
@@ -316,19 +345,19 @@ function runRecyclarrWindowsConsole(args, options = {}) {
       reject(err);
     });
 
-    child.on("close", () => {
+    child.on("close", (spawnCode) => {
       stopped = true;
       clearTimeout(timer);
       clearInterval(logTimer);
       pollLogs();
 
-      let code = 1;
+      let code = spawnCode ?? 1;
       try {
         const raw = fs.readFileSync(exitFile, "utf8").trim();
-        code = Number.parseInt(raw, 10);
-        if (!Number.isFinite(code)) code = 1;
+        const parsed = Number.parseInt(raw, 10);
+        if (Number.isFinite(parsed)) code = parsed;
       } catch {
-        code = 1;
+        // fall back to spawn exit code
       }
 
       if (code === 0) {
