@@ -32,15 +32,21 @@ export function loadWorkoutSettings() {
     saveWorkoutSettings(defaults);
     return defaults;
   }
-  const raw = JSON.parse(fs.readFileSync(WORKOUT_SETTINGS_PATH, "utf8"));
-  return { ...defaultWorkoutSettings(), ...raw };
+  const raw = fs
+    .readFileSync(WORKOUT_SETTINGS_PATH, "utf8")
+    .replace(/^\uFEFF/, "")
+    .trim();
+  const start = raw.indexOf("{");
+  const jsonText = start >= 0 ? raw.slice(start) : raw;
+  const parsed = JSON.parse(jsonText);
+  return { ...defaultWorkoutSettings(), ...parsed };
 }
 
 export function saveWorkoutSettings(settings) {
   ensureDataDirs();
   fs.writeFileSync(
     WORKOUT_SETTINGS_PATH,
-    JSON.stringify(settings, null, 2),
+    `${JSON.stringify(settings, null, 2)}\n`,
     "utf8",
   );
 }
