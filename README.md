@@ -4,7 +4,7 @@ A simple, all-in-one dashboard for your Plex and *arr stack. No Docker, no backe
 
 ## Setup (3 steps)
 
-1. Install and run:
+1. Install and run (UI + local sync helper):
    ```bash
    npm install
    npm run dev
@@ -16,7 +16,31 @@ A simple, all-in-one dashboard for your Plex and *arr stack. No Docker, no backe
 
 That's it. Settings save automatically in your browser.
 
-Use the **Home / Remote** toggle at the top to switch which addresses the dashboard links to.
+Use **Auto** (default) to pick Home vs Remote from your network. Use the header override only if needed.
+
+## Run on your Plex PC (recommended)
+
+For port monitoring + auto-restart when an app dies:
+
+1. Copy/clone this folder onto the Plex PC
+2. Double-click `start-hub.bat` (or run `npm run dev`)
+3. Leave that window open
+4. Open **Watch** in the hub → enable Monitor + Auto-restart
+5. Confirm each app’s **Windows service name** (usually `Sonarr`, `Radarr`, `Prowlarr`, …)
+
+Home URLs should point at this machine (`http://localhost:8989` or the PC’s LAN IP). The watchdog always checks **Home** ports.
+
+The hub can apply TRaSH Guide profiles using a local Windows helper (Recyclarr under the hood — no Docker):
+
+1. Start with `npm run dev` so the sync server is running
+2. Click **Sync** in the header
+3. Paste Sonarr/Radarr API keys (Settings → General in each app)
+4. Choose a profile preset (e.g. WEB-1080p / HD Bluray + WEB)
+5. Click **Download Recyclarr** once, then **Sync now**
+
+Requires [Git for Windows](https://git-scm.com/). API keys are stored only in the local `data/` folder (not uploaded).
+
+When TRaSH Guides change online, the hub shows an update banner so you know to sync again.
 
 ## Example
 

@@ -15,9 +15,15 @@ export interface ServiceDefinition {
   defaultUrl: string;
   icon: string;
   color: string;
+  /** Defaults to true when omitted */
+  defaultEnabled?: boolean;
+  /** Optional default remote URL (e.g. public sites usable everywhere) */
+  defaultRemoteUrl?: string;
 }
 
 export type ConnectionMode = "home" | "remote";
+/** Auto detects LAN vs away; home/remote force a mode. */
+export type ConnectionPreference = "auto" | ConnectionMode;
 
 export interface ServiceConfig extends ServiceDefinition {
   homeUrl: string;
@@ -28,7 +34,7 @@ export interface ServiceConfig extends ServiceDefinition {
 export interface AppSettings {
   title: string;
   subtitle: string;
-  connectionMode: ConnectionMode;
+  connectionPreference: ConnectionPreference;
   services: ServiceConfig[];
 }
 

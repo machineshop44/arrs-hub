@@ -38,6 +38,15 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     color: "#ffc230",
   },
   {
+    id: "calibre",
+    name: "Calibre",
+    description: "Ebook library and content server",
+    category: "media-management",
+    defaultUrl: "http://localhost:8080",
+    icon: "📖",
+    color: "#45b29d",
+  },
+  {
     id: "prowlarr",
     name: "Prowlarr",
     description: "Indexer manager for all *arr apps",
@@ -110,6 +119,16 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     color: "#e5a00d",
   },
   {
+    id: "trash-guides",
+    name: "TRaSH Guides",
+    description: "Recommended *arr quality profiles & formats",
+    category: "other",
+    defaultUrl: "https://trash-guides.info/",
+    defaultRemoteUrl: "https://trash-guides.info/",
+    icon: "🗑️",
+    color: "#22c55e",
+  },
+  {
     id: "bazarr",
     name: "Bazarr",
     description: "Subtitle management for Sonarr & Radarr",
@@ -126,5 +145,6 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     defaultUrl: "http://localhost:6969",
     icon: "🔞",
     color: "#ec4899",
+    defaultEnabled: false,
   },
 ];

@@ -1,0 +1,390 @@
+import {
+  loadWorkoutSettings,
+  normalizePlexBaseUrl,
+  saveWorkoutSettings,
+} from "./workout-store.mjs";
+
+const HUB_CLIENT_ID = "arrs-hub-workouts";
+
+/**
+ * @param {string} baseUrl
+ * @param {string} token
+ * @param {string} apiPath
+ * @param {{ method?: string, query?: Record<string, string|number|boolean|undefined|null>, headers?: Record<string,string> }} [options]
+ */
+async function plexFetch(baseUrl, token, apiPath, options = {}) {
+  const url = new URL(apiPath, `${normalizePlexBaseUrl(baseUrl)}/`);
+  for (const [key, value] of Object.entries(options.query ?? {})) {
+    if (value === undefined || value === null || value === "") continue;
+    url.searchParams.set(key, String(value));
+  }
+  if (token) url.searchParams.set("X-Plex-Token", token);
+
+  const res = await fetch(url, {
+    method: options.method || "GET",
+    headers: {
+      Accept: "application/json",
+      "X-Plex-Token": token,
+      "X-Plex-Client-Identifier": HUB_CLIENT_ID,
+      "X-Plex-Product": "Arrs Hub",
+      "X-Plex-Device-Name": "Arrs Hub",
+      "X-Plex-Platform": "Windows",
+      ...(options.headers ?? {}),
+    },
+    signal: AbortSignal.timeout(20000),
+  });
+
+  const text = await res.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+
+  if (!res.ok) {
+    const detail =
+      json?.error ||
+      json?.message ||
+      text.slice(0, 240) ||
+      `HTTP ${res.status}`;
+    throw new Error(`Plex ${apiPath} failed: ${detail}`);
+  }
+
+  return json;
+}
+
+function mediaContainer(json) {
+  return json?.MediaContainer ?? json ?? {};
+}
+
+function asArray(value) {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+export function getWorkoutConfig() {
+  const settings = loadWorkoutSettings();
+  return {
+    ...settings,
+    plexBaseUrl: normalizePlexBaseUrl(settings.plexBaseUrl),
+  };
+}
+
+export function updateWorkoutConfig(patch = {}) {
+  const current = loadWorkoutSettings();
+  const next = {
+    ...current,
+    ...patch,
+    plexBaseUrl: normalizePlexBaseUrl(
+      patch.plexBaseUrl ?? current.plexBaseUrl,
+    ),
+  };
+  if (
+    typeof patch.plexToken === "string" &&
+    (patch.plexToken.includes("…") || patch.plexToken.includes("•"))
+  ) {
+    next.plexToken = current.plexToken;
+  }
+  saveWorkoutSettings(next);
+  return next;
+}
+
+export async function testPlexConnection(settings = getWorkoutConfig()) {
+  if (!settings.plexToken?.trim()) {
+    throw new Error("Add your Plex token first.");
+  }
+  const json = await plexFetch(
+    settings.plexBaseUrl,
+    settings.plexToken.trim(),
+    "/identity",
+  );
+  const container = mediaContainer(json);
+  return {
+    ok: true,
+    machineIdentifier: container.machineIdentifier,
+    version: container.version,
+  };
+}
+
+export async function listLibraries(settings = getWorkoutConfig()) {
+  requireToken(settings);
+  const json = await plexFetch(
+    settings.plexBaseUrl,
+    settings.plexToken.trim(),
+    "/library/sections",
+  );
+  const container = mediaContainer(json);
+  return asArray(container.Directory).map((dir) => ({
+    id: String(dir.key),
+    title: dir.title,
+    type: dir.type,
+    agent: dir.agent,
+  }));
+}
+
+export async function listClients(settings = getWorkoutConfig()) {
+  requireToken(settings);
+  const json = await plexFetch(
+    settings.plexBaseUrl,
+    settings.plexToken.trim(),
+    "/clients",
+  );
+  const container = mediaContainer(json);
+  return asArray(container.Server).map((client) => ({
+    name: client.name,
+    host: client.host || client.address,
+    address: client.address || client.host,
+    port: Number(client.port) || 32400,
+    machineIdentifier: client.machineIdentifier,
+    product: client.product,
+    deviceClass: client.deviceClass,
+    protocolCapabilities: String(client.protocolCapabilities || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  }));
+}
+
+/**
+ * Format day title from pattern. {n}=1, {nn}=01
+ * @param {string} pattern
+ * @param {number} day
+ */
+export function formatDayTitle(pattern, day) {
+  return String(pattern || "Day {n}")
+    .replaceAll("{nn}", String(day).padStart(2, "0"))
+    .replaceAll("{n}", String(day));
+}
+
+/**
+ * @param {number} day
+ * @param {string} pattern
+ * @param {string} title
+ */
+function titleMatchesDay(day, pattern, title) {
+  const expected = formatDayTitle(pattern, day).toLowerCase();
+  const value = String(title || "").toLowerCase();
+  if (value === expected) return true;
+  if (value.includes(expected)) return true;
+  // Loose fallback: "Day 7" / "day07"
+  const loose = new RegExp(`\\bday\\s*0*${day}\\b`, "i");
+  return loose.test(value);
+}
+
+async function listSectionItems(settings) {
+  requireToken(settings);
+  if (!settings.librarySectionId) {
+    throw new Error("Pick a Plex library that holds your workout videos.");
+  }
+  const json = await plexFetch(
+    settings.plexBaseUrl,
+    settings.plexToken.trim(),
+    `/library/sections/${settings.librarySectionId}/all`,
+    { query: { includeGuids: 0 } },
+  );
+  const container = mediaContainer(json);
+  const items = [
+    ...asArray(container.Metadata),
+    ...asArray(container.Video),
+    ...asArray(container.Directory),
+  ];
+  return items
+    .filter((item) => item?.ratingKey && item?.title)
+    .map((item) => ({
+      ratingKey: String(item.ratingKey),
+      key: item.key || `/library/metadata/${item.ratingKey}`,
+      title: item.title,
+      type: item.type,
+      duration: item.duration,
+    }));
+}
+
+export async function discoverWorkoutDays(settings = getWorkoutConfig()) {
+  const items = await listSectionItems(settings);
+  const pattern = settings.dayTitlePattern || "Day {n}";
+  const warmupNeedle = String(settings.warmupTitle || "Warm Up")
+    .trim()
+    .toLowerCase();
+
+  const warmup =
+    items.find((item) => item.title.toLowerCase() === warmupNeedle) ||
+    items.find((item) => item.title.toLowerCase().includes(warmupNeedle)) ||
+    null;
+
+  const maxScan = Math.max(Number(settings.dayCount) || 30, 60);
+  /** @type {{ day: number, title: string, ratingKey: string }[]} */
+  const days = [];
+  for (let day = 1; day <= maxScan; day += 1) {
+    const match = items.find((item) =>
+      titleMatchesDay(day, pattern, item.title),
+    );
+    if (match) {
+      days.push({
+        day,
+        title: match.title,
+        ratingKey: match.ratingKey,
+      });
+    }
+  }
+
+  return {
+    warmup: warmup
+      ? {
+          title: warmup.title,
+          ratingKey: warmup.ratingKey,
+        }
+      : null,
+    days,
+    itemCount: items.length,
+  };
+}
+
+/**
+ * Create a play queue with warmup (optional) + day video, then tell the client to play.
+ * @param {number} day
+ * @param {object} [settings]
+ */
+export async function playWorkoutDay(day, settings = getWorkoutConfig()) {
+  requireToken(settings);
+  if (!settings.clientMachineId) {
+    throw new Error("Pick a Plex client (your TV / stick) first.");
+  }
+
+  const dayNum = Number(day);
+  if (!Number.isFinite(dayNum) || dayNum < 1) {
+    throw new Error("Pick a valid day number.");
+  }
+
+  const identity = await testPlexConnection(settings);
+  const discovery = await discoverWorkoutDays(settings);
+  const dayItem = discovery.days.find((item) => item.day === dayNum);
+  if (!dayItem) {
+    throw new Error(
+      `Could not find a video matching "${formatDayTitle(settings.dayTitlePattern, dayNum)}" in that library.`,
+    );
+  }
+  if (!discovery.warmup) {
+    throw new Error(
+      `Could not find warm-up video titled like "${settings.warmupTitle}".`,
+    );
+  }
+
+  const clients = await listClients(settings);
+  const client = clients.find(
+    (item) => item.machineIdentifier === settings.clientMachineId,
+  );
+  if (!client) {
+    throw new Error(
+      "Selected Plex client is not online. Open Plex on your TV/stick, then refresh clients.",
+    );
+  }
+
+  const serverId = identity.machineIdentifier;
+  const warmupUri = libraryUri(serverId, discovery.warmup.ratingKey);
+  const dayUri = libraryUri(serverId, dayItem.ratingKey);
+
+  // Create queue with warm-up, then append the day video so they play in order.
+  const queueJson = await plexFetch(
+    settings.plexBaseUrl,
+    settings.plexToken.trim(),
+    "/playQueues",
+    {
+      method: "POST",
+      query: {
+        type: "video",
+        shuffle: 0,
+        repeat: 0,
+        continuous: 1,
+        includeChapters: 1,
+        uri: warmupUri,
+      },
+    },
+  );
+  const queue = mediaContainer(queueJson);
+  const playQueueID = queue.playQueueID;
+  if (!playQueueID) {
+    throw new Error("Plex did not return a play queue id.");
+  }
+
+  await plexFetch(
+    settings.plexBaseUrl,
+    settings.plexToken.trim(),
+    `/playQueues/${playQueueID}`,
+    {
+      method: "PUT",
+      query: {
+        uri: dayUri,
+        type: "video",
+      },
+    },
+  );
+
+  const serverUrl = new URL(normalizePlexBaseUrl(settings.plexBaseUrl));
+  const playUrl = new URL(
+    "/player/playback/playMedia",
+    `http://${client.address}:${client.port}/`,
+  );
+  playUrl.searchParams.set("commandID", String(Date.now() % 100000));
+  playUrl.searchParams.set("providerIdentifier", "com.plexapp.plugins.library");
+  playUrl.searchParams.set("machineIdentifier", serverId);
+  playUrl.searchParams.set("protocol", serverUrl.protocol.replace(":", ""));
+  playUrl.searchParams.set("address", serverUrl.hostname);
+  playUrl.searchParams.set("port", serverUrl.port || "32400");
+  playUrl.searchParams.set("offset", "0");
+  playUrl.searchParams.set("type", "video");
+  playUrl.searchParams.set(
+    "key",
+    `/library/metadata/${discovery.warmup.ratingKey}`,
+  );
+  playUrl.searchParams.set(
+    "containerKey",
+    `/playQueues/${playQueueID}?window=100&own=1`,
+  );
+  playUrl.searchParams.set("token", settings.plexToken.trim());
+  playUrl.searchParams.set("X-Plex-Token", settings.plexToken.trim());
+  playUrl.searchParams.set(
+    "X-Plex-Target-Client-Identifier",
+    client.machineIdentifier,
+  );
+
+  const playRes = await fetch(playUrl, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      "X-Plex-Token": settings.plexToken.trim(),
+      "X-Plex-Client-Identifier": HUB_CLIENT_ID,
+      "X-Plex-Target-Client-Identifier": client.machineIdentifier,
+      "X-Plex-Product": "Arrs Hub",
+      "X-Plex-Device-Name": "Arrs Hub",
+    },
+    signal: AbortSignal.timeout(15000),
+  });
+
+  if (!playRes.ok) {
+    const body = await playRes.text();
+    throw new Error(
+      `Could not start playback on ${client.name}: HTTP ${playRes.status}${
+        body ? ` — ${body.slice(0, 180)}` : ""
+      }`,
+    );
+  }
+
+  return {
+    ok: true,
+    client: client.name,
+    warmup: discovery.warmup.title,
+    day: dayItem.title,
+    playQueueID,
+  };
+}
+
+function libraryUri(serverId, ratingKey) {
+  return `server://${serverId}/com.plexapp.plugins.library/library/metadata/${ratingKey}`;
+}
+
+function requireToken(settings) {
+  if (!settings?.plexToken?.trim()) {
+    throw new Error("Add your Plex token first.");
+  }
+}

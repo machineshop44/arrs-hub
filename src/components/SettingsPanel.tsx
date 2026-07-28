@@ -57,9 +57,10 @@ export function SettingsPanel({
           <section className="settings-group">
             <h3>Services</h3>
             <p className="settings-hint">
-              For each app, enter your home network address and optional remote
-              address. Use the Home / Remote toggle on the dashboard to switch
-              which links open.
+              Enter a Home address (local IP &amp; port) and optional Remote
+              address for each app. With <strong>Auto</strong> selected, the
+              dashboard picks Home or Remote from your network — use Home/Remote
+              in the header only if you need to override.
             </p>
             <div className="settings-services">
               {settings.services.map((service) => (

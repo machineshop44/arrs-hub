@@ -1,0 +1,15 @@
+---
+description: Keep GitHub updated for Arrs Hub after feature work
+alwaysApply: true
+---
+
+# Push Arrs Hub to GitHub
+
+When finishing a meaningful chunk of work in this repo (new feature, fix, or multi-file change):
+
+1. Commit the changes with a clear message (do not wait to be asked).
+2. Push to `origin` on the current branch (`git push -u origin HEAD` if needed).
+3. Never commit `data/`, `.env`, tokens, API keys, or Plex credentials.
+4. Skip empty commits. If only secrets/local data changed, do not commit.
+
+Do this at natural stopping points (feature done, bug fixed), not after every tiny edit.

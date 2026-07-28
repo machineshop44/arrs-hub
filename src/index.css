@@ -135,6 +135,152 @@ input {
   padding: 2rem 1.5rem 3rem;
 }
 
+.trash-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.75rem;
+  padding: 1.1rem 1.25rem;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, #22c55e 16%, var(--bg-card)),
+    var(--bg-card)
+  );
+  border: 1px solid color-mix(in srgb, #22c55e 45%, var(--border));
+  border-radius: var(--radius-lg);
+}
+
+.trash-banner-title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.35rem;
+}
+
+.trash-banner-badge {
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: #16a34a;
+  color: white;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.trash-banner-meta {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin-bottom: 0.65rem;
+}
+
+.trash-banner-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+  color: var(--text);
+}
+
+.trash-banner-list a {
+  color: #86efac;
+  text-decoration: none;
+}
+
+.trash-banner-list a:hover {
+  text-decoration: underline;
+}
+
+.trash-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.trash-banner-actions a {
+  text-decoration: none;
+}
+
+.sync-panel {
+  max-width: 720px;
+}
+
+.sync-status-line {
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.sync-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.sync-preset {
+  display: flex;
+  gap: 0.65rem;
+  align-items: flex-start;
+  padding: 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.sync-preset input {
+  margin-top: 0.2rem;
+  accent-color: var(--accent);
+}
+
+.sync-preset strong {
+  display: block;
+  font-size: 0.9rem;
+}
+
+.sync-preset small {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  margin-top: 0.15rem;
+}
+
+.sync-alert {
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.sync-alert code {
+  font-size: 0.8rem;
+}
+
+.sync-alert-ok {
+  background: color-mix(in srgb, #22c55e 18%, var(--bg));
+  border: 1px solid color-mix(in srgb, #22c55e 40%, var(--border));
+}
+
+.sync-alert-err {
+  background: color-mix(in srgb, #ef4444 18%, var(--bg));
+  border: 1px solid color-mix(in srgb, #ef4444 40%, var(--border));
+}
+
+.sync-log {
+  max-height: 220px;
+  overflow: auto;
+  padding: 0.75rem;
+  background: #0a0c12;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .service-section {
   margin-bottom: 2.5rem;
 }
@@ -155,6 +301,7 @@ input {
 }
 
 .service-card {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 1rem;
@@ -171,6 +318,20 @@ input {
     transform 0.15s,
     box-shadow 0.15s;
   box-shadow: var(--shadow);
+}
+
+.service-card-badge {
+  position: absolute;
+  top: 0.65rem;
+  right: 0.65rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: #16a34a;
+  color: white;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .service-card:hover {
@@ -202,6 +363,262 @@ input {
   font-size: 1rem;
   font-weight: 600;
   margin-bottom: 0.15rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.status-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-muted);
+}
+
+.status-dot.status-up {
+  background: #22c55e;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #22c55e 25%, transparent);
+}
+
+.status-dot.status-down {
+  background: #ef4444;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #ef4444 25%, transparent);
+}
+
+.status-dot.status-unknown {
+  background: #64748b;
+}
+
+.service-card-health {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+
+.service-card-health.status-up {
+  color: #86efac;
+}
+
+.service-card-health.status-down {
+  color: #fca5a5;
+}
+
+.watchdog-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.5rem;
+  padding: 1rem 1.15rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.watchdog-bar strong {
+  display: block;
+  margin-bottom: 0.2rem;
+}
+
+.watchdog-bar span {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.watchdog-bar small {
+  display: block;
+  margin-top: 0.45rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  max-width: 42rem;
+  line-height: 1.4;
+}
+
+.progress-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.progress-card {
+  width: min(720px, 100%);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.15rem 1.25rem;
+  box-shadow: var(--shadow);
+}
+
+.progress-header {
+  display: flex;
+  gap: 0.85rem;
+  align-items: flex-start;
+}
+
+.progress-header h3 {
+  margin: 0 0 0.25rem;
+  font-size: 1.05rem;
+}
+
+.progress-status {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.progress-status.err {
+  color: #fca5a5;
+}
+
+.progress-spinner {
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-top: 0.15rem;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.progress-log {
+  flex: 1;
+  min-height: 180px;
+  max-height: 45vh;
+  overflow: auto;
+  margin: 0;
+  padding: 0.75rem;
+  background: #0a0c12;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.progress-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.progress-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.progress-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.workouts-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 0.85rem;
+}
+
+.workout-day-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(4.5rem, 1fr));
+  gap: 0.55rem;
+  margin-top: 0.75rem;
+}
+
+.workout-day-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  min-height: 3.6rem;
+  padding: 0.45rem 0.3rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.workout-day-btn.found {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.workout-day-btn.found:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-elevated));
+  border-color: var(--accent);
+}
+
+.workout-day-btn.playing {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-elevated));
+}
+
+.workout-day-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.workout-day-num {
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.workout-day-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.watchdog-bar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.watchdog-service-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.85rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.watchdog-service-row strong {
+  font-size: 0.9rem;
+}
+
+.watchdog-service-row .field {
+  margin-bottom: 0;
 }
 
 .service-card-body p {
@@ -397,6 +814,7 @@ input {
 }
 
 .field input,
+.field select,
 .url-input {
   padding: 0.55rem 0.75rem;
   background: var(--bg);
@@ -406,6 +824,7 @@ input {
 }
 
 .field input:focus,
+.field select:focus,
 .url-input:focus {
   outline: none;
   border-color: var(--accent);

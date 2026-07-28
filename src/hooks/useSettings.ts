@@ -1,18 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_SERVICES } from "../services";
-import type { AppSettings, ConnectionMode, ServiceConfig } from "../types";
+import type {
+  AppSettings,
+  ConnectionPreference,
+  ServiceConfig,
+} from "../types";
 
 const STORAGE_KEY = "arrs-hub-settings";
 
 const defaultSettings = (): AppSettings => ({
   title: "Arr's Hub",
   subtitle: "Your Plex & *arr stack in one place",
-  connectionMode: "home",
+  connectionPreference: "auto",
   services: DEFAULT_SERVICES.map((service) => ({
     ...service,
     homeUrl: service.defaultUrl,
-    remoteUrl: "",
-    enabled: true,
+    remoteUrl: service.defaultRemoteUrl ?? "",
+    enabled: service.defaultEnabled !== false,
   })),
 });
 
@@ -32,6 +36,7 @@ function loadSettings(): AppSettings {
     if (!stored) return defaultSettings();
 
     const parsed = JSON.parse(stored) as AppSettings & {
+      connectionMode?: "home" | "remote";
       services: (ServiceConfig & { url?: string })[];
     };
     const knownIds = new Set(DEFAULT_SERVICES.map((s) => s.id));
@@ -41,8 +46,8 @@ function loadSettings(): AppSettings {
       (service) => ({
         ...service,
         homeUrl: service.defaultUrl,
-        remoteUrl: "",
-        enabled: false,
+        remoteUrl: service.defaultRemoteUrl ?? "",
+        enabled: service.defaultEnabled !== false,
       }),
     );
 
@@ -53,10 +58,16 @@ function loadSettings(): AppSettings {
       ...merged,
     ];
 
+    const connectionPreference: ConnectionPreference =
+      parsed.connectionPreference ??
+      (parsed.connectionMode === "home" || parsed.connectionMode === "remote"
+        ? "auto"
+        : "auto");
+
     return {
       title: parsed.title || defaultSettings().title,
       subtitle: parsed.subtitle || defaultSettings().subtitle,
-      connectionMode: parsed.connectionMode ?? "home",
+      connectionPreference,
       services,
     };
   } catch {
@@ -92,9 +103,12 @@ export function useSettings() {
     setSettings((prev) => ({ ...prev, subtitle }));
   }, []);
 
-  const setConnectionMode = useCallback((connectionMode: ConnectionMode) => {
-    setSettings((prev) => ({ ...prev, connectionMode }));
-  }, []);
+  const setConnectionPreference = useCallback(
+    (connectionPreference: ConnectionPreference) => {
+      setSettings((prev) => ({ ...prev, connectionPreference }));
+    },
+    [],
+  );
 
   const resetSettings = useCallback(() => {
     setSettings(defaultSettings());
@@ -107,7 +121,7 @@ export function useSettings() {
     updateService,
     updateTitle,
     updateSubtitle,
-    setConnectionMode,
+    setConnectionPreference,
     resetSettings,
   };
 }

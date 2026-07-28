@@ -1,17 +1,22 @@
 import { CATEGORY_LABELS } from "../types";
 import type { ConnectionMode, ServiceCategory, ServiceConfig } from "../types";
+import type { ServiceHealth } from "../hooks/useServiceHealth";
 import { ServiceCard } from "./ServiceCard";
 
 interface ServiceSectionProps {
   category: ServiceCategory;
   services: ServiceConfig[];
   connectionMode: ConnectionMode;
+  badges?: Record<string, string>;
+  healthById?: Record<string, ServiceHealth>;
 }
 
 export function ServiceSection({
   category,
   services,
   connectionMode,
+  badges,
+  healthById,
 }: ServiceSectionProps) {
   if (services.length === 0) return null;
 
@@ -24,6 +29,8 @@ export function ServiceSection({
             key={service.id}
             service={service}
             connectionMode={connectionMode}
+            badge={badges?.[service.id]}
+            health={healthById?.[service.id]}
           />
         ))}
       </div>
