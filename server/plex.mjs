@@ -146,11 +146,17 @@ export async function startPlexLogin() {
   const url = new URL("https://plex.tv/api/v2/pins");
   url.searchParams.set("strong", "true");
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: plexHeaders(),
-    signal: AbortSignal.timeout(20000),
-  });
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: plexHeaders(),
+      signal: AbortSignal.timeout(20000),
+    });
+  } catch (err) {
+    const detail = err?.cause?.message || err?.message || String(err);
+    throw new Error(`Could not reach plex.tv to start login (${detail}).`);
+  }
   const text = await res.text();
   let json = null;
   try {

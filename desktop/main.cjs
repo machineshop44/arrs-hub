@@ -64,10 +64,17 @@ function startServer() {
     );
   }
 
+  const nodeOptions = [process.env.NODE_OPTIONS, "--use-system-ca"]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+
   const env = {
     ...process.env,
     ARRS_HUB_DESKTOP: "1",
     ARRS_HUB_SYNC_PORT: "3000",
+    // Corporate/custom CAs: plex.tv TLS fails without system trust store
+    NODE_OPTIONS: nodeOptions,
   };
 
   serverProcess = spawn("node", [path.join(ROOT, "server", "index.mjs")], {
