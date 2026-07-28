@@ -7,6 +7,7 @@ import type {
 } from "../types";
 
 const STORAGE_KEY = "arrs-hub-settings";
+const REMOTE_URLS_MIGRATION_KEY = "arrs-hub-remote-urls-v1";
 
 const defaultSettings = (): AppSettings => ({
   title: "Arr's Hub",
@@ -23,11 +24,33 @@ const defaultSettings = (): AppSettings => ({
 function migrateService(
   service: ServiceConfig & { url?: string },
 ): ServiceConfig {
+  const definition = DEFAULT_SERVICES.find((item) => item.id === service.id);
   return {
     ...service,
+    ...(definition ?? {}),
     homeUrl: service.homeUrl ?? service.url ?? service.defaultUrl,
     remoteUrl: service.remoteUrl ?? "",
+    enabled: service.enabled,
   };
+}
+
+function fillMissingRemoteUrls(services: ServiceConfig[]): ServiceConfig[] {
+  // One-time restore from bookmark-backed defaults when remotes were blank
+  // (e.g. after switching from Chrome to the tray app).
+  const alreadyMigrated =
+    localStorage.getItem(REMOTE_URLS_MIGRATION_KEY) === "1";
+  if (alreadyMigrated) return services;
+
+  const next = services.map((service) => {
+    const definition = DEFAULT_SERVICES.find((item) => item.id === service.id);
+    if (service.remoteUrl?.trim() || !definition?.defaultRemoteUrl) {
+      return service;
+    }
+    return { ...service, remoteUrl: definition.defaultRemoteUrl };
+  });
+
+  localStorage.setItem(REMOTE_URLS_MIGRATION_KEY, "1");
+  return next;
 }
 
 function loadSettings(): AppSettings {
@@ -51,12 +74,12 @@ function loadSettings(): AppSettings {
       }),
     );
 
-    const services = [
+    const services = fillMissingRemoteUrls([
       ...parsed.services
         .filter((s) => knownIds.has(s.id))
         .map((s) => migrateService(s)),
       ...merged,
-    ];
+    ]);
 
     const connectionPreference: ConnectionPreference =
       parsed.connectionPreference ??
