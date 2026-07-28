@@ -670,6 +670,27 @@ input {
   display: block;
 }
 
+.workout-player-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.75rem 1rem 1rem;
+  flex-wrap: wrap;
+}
+
+.workout-scrub {
+  flex: 1;
+  min-width: 140px;
+  accent-color: var(--accent, #3b82f6);
+}
+
+.workout-player-time {
+  font-size: 0.8rem;
+  color: var(--text-muted, #9aa4b2);
+  min-width: 5.5rem;
+  text-align: right;
+}
+
 .watchdog-bar-actions {
   display: flex;
   flex-wrap: wrap;

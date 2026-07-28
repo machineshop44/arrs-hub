@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type WorkoutSettings = {
   plexBaseUrl: string;
@@ -26,9 +26,169 @@ type Client = {
   product?: string;
 };
 type DayItem = { day: number; title: string; ratingKey: string };
-type PlaylistItem = { title: string; ratingKey: string; url: string };
+type PlaylistItem = {
+  title: string;
+  ratingKey: string;
+  url: string;
+  seekable?: boolean;
+  durationMs?: number | null;
+};
 
 const LOCAL_CLIENT_ID = "arrs-hub-local";
+
+function formatClock(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function withStreamOffset(url: string, offsetSeconds: number) {
+  try {
+    const next = new URL(url);
+    // Plex universal transcoder uses milliseconds
+    next.searchParams.set("offset", String(Math.max(0, Math.floor(offsetSeconds * 1000))));
+    next.searchParams.set("X-Plex-Session-Id", `${Date.now()}`);
+    return next.toString();
+  } catch {
+    return url;
+  }
+}
+
+function WorkoutPlayer({
+  playlist,
+  index,
+  onIndexChange,
+  onClose,
+  onFinished,
+}: {
+  playlist: PlaylistItem[];
+  index: number;
+  onIndexChange: (index: number) => void;
+  onClose: () => void;
+  onFinished: () => void;
+}) {
+  const item = playlist[index];
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [src, setSrc] = useState(item.url);
+  const [current, setCurrent] = useState(0);
+  const [duration, setDuration] = useState(
+    item.durationMs ? item.durationMs / 1000 : 0,
+  );
+  const [scrubbing, setScrubbing] = useState(false);
+
+  useEffect(() => {
+    setSrc(item.url);
+    setCurrent(0);
+    setDuration(item.durationMs ? item.durationMs / 1000 : 0);
+  }, [item.url, item.durationMs, index]);
+
+  const seekTo = (seconds: number) => {
+    const video = videoRef.current;
+    const target = Math.max(0, seconds);
+    if (item.seekable !== false && video && Number.isFinite(video.duration) && video.duration > 0) {
+      video.currentTime = Math.min(target, video.duration);
+      setCurrent(video.currentTime);
+      return;
+    }
+    // Transcode streams: restart from offset so scrubbing still works
+    setSrc(withStreamOffset(item.url, target));
+    setCurrent(target);
+  };
+
+  if (!item) return null;
+
+  return (
+    <div className="workout-player-overlay" role="presentation">
+      <div className="workout-player">
+        <header className="workout-player-header">
+          <div>
+            <strong>
+              {index === 0 ? "Warm-up" : "Workout"} · {item.title}
+            </strong>
+            <p className="settings-hint">
+              {index + 1} of {playlist.length}
+              {index === 0
+                ? " — warm-up always plays first, then today’s video"
+                : ""}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={onClose}
+            aria-label="Close player"
+          >
+            ✕
+          </button>
+        </header>
+        <video
+          ref={videoRef}
+          key={src}
+          className="workout-player-video"
+          src={src}
+          controls
+          autoPlay
+          playsInline
+          preload="auto"
+          onLoadedMetadata={(e) => {
+            const d = e.currentTarget.duration;
+            if (Number.isFinite(d) && d > 0) setDuration(d);
+          }}
+          onTimeUpdate={(e) => {
+            if (!scrubbing) setCurrent(e.currentTarget.currentTime || 0);
+          }}
+          onEnded={() => {
+            if (index < playlist.length - 1) onIndexChange(index + 1);
+            else onFinished();
+          }}
+        />
+        <div className="workout-player-controls">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => seekTo(current - 10)}
+          >
+            −10s
+          </button>
+          <input
+            className="workout-scrub"
+            type="range"
+            min={0}
+            max={Math.max(
+              duration || (item.durationMs ? item.durationMs / 1000 : 0) || 1,
+              1,
+            )}
+            step={1}
+            value={Math.min(current, duration || current)}
+            onMouseDown={() => setScrubbing(true)}
+            onTouchStart={() => setScrubbing(true)}
+            onChange={(e) => setCurrent(Number(e.target.value))}
+            onMouseUp={(e) => {
+              setScrubbing(false);
+              seekTo(Number((e.target as HTMLInputElement).value));
+            }}
+            onTouchEnd={(e) => {
+              setScrubbing(false);
+              seekTo(Number((e.target as HTMLInputElement).value));
+            }}
+            aria-label="Scrub video"
+          />
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => seekTo(current + 10)}
+          >
+            +10s
+          </button>
+          <span className="workout-player-time">
+            {formatClock(current)} / {formatClock(duration || (item.durationMs || 0) / 1000)}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface WorkoutsPanelProps {
   onClose: () => void;
@@ -247,8 +407,8 @@ export function WorkoutsPanel({
           <div>
             <h2 id="workouts-title">Workouts</h2>
             <p className="settings-hint">
-              Pick a day — plays warm-up, then that day’s video on your Plex
-              TV/stick.
+              Pick a day — warm-up always plays first, then that day’s video
+              (on this device or a Plex client you choose).
             </p>
           </div>
           <button type="button" className="btn btn-ghost" onClick={onClose}>
@@ -613,46 +773,17 @@ export function WorkoutsPanel({
           {error && <div className="sync-alert sync-alert-err">{error}</div>}
         </div>
 
-        {playlist && playlist[playlistIndex] && (
-          <div className="workout-player-overlay" role="presentation">
-            <div className="workout-player">
-              <header className="workout-player-header">
-                <div>
-                  <strong>
-                    {playlistIndex === 0 ? "Warm-up" : "Workout"} ·{" "}
-                    {playlist[playlistIndex].title}
-                  </strong>
-                  <p className="settings-hint">
-                    {playlistIndex + 1} of {playlist.length}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  onClick={closePlayer}
-                  aria-label="Close player"
-                >
-                  ✕
-                </button>
-              </header>
-              <video
-                key={playlist[playlistIndex].url}
-                className="workout-player-video"
-                src={playlist[playlistIndex].url}
-                controls
-                autoPlay
-                playsInline
-                onEnded={() => {
-                  if (playlistIndex < playlist.length - 1) {
-                    setPlaylistIndex((i) => i + 1);
-                  } else {
-                    closePlayer();
-                    setMessage("Workout finished.");
-                  }
-                }}
-              />
-            </div>
-          </div>
+        {playlist && (
+          <WorkoutPlayer
+            playlist={playlist}
+            index={playlistIndex}
+            onIndexChange={setPlaylistIndex}
+            onClose={closePlayer}
+            onFinished={() => {
+              closePlayer();
+              setMessage("Workout finished.");
+            }}
+          />
         )}
       </div>
     </div>

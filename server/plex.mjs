@@ -581,7 +581,8 @@ export async function playWorkoutDay(day, settings = getWorkoutConfig()) {
 }
 
 /**
- * Browser-playable URL via Plex universal MP4 transcode (works on phone/tablet/desktop).
+ * Browser-playable URL. Prefer direct MP4/WebM (scrubbing works).
+ * Fall back to Plex universal MP4 transcode for other containers.
  */
 async function getBrowserPlayable(settings, ratingKey, title) {
   const base = normalizePlexBaseUrl(settings.plexBaseUrl);
@@ -596,29 +597,51 @@ async function getBrowserPlayable(settings, ratingKey, title) {
     throw new Error(`Could not load media for "${title}".`);
   }
 
-  const stream = new URL("/video/:/transcode/universal/start.mp4", `${base}/`);
-  stream.searchParams.set("path", `/library/metadata/${ratingKey}`);
-  stream.searchParams.set("mediaIndex", "0");
-  stream.searchParams.set("partIndex", "0");
-  stream.searchParams.set("protocol", "http");
-  stream.searchParams.set("fastSeek", "1");
-  stream.searchParams.set("directPlay", "0");
-  stream.searchParams.set("directStream", "1");
-  stream.searchParams.set("subtitleSize", "100");
-  stream.searchParams.set("audioBoost", "100");
-  stream.searchParams.set("location", "lan");
-  stream.searchParams.set("addDebugOverlay", "0");
-  stream.searchParams.set("autoAdjustQuality", "0");
-  stream.searchParams.set("X-Plex-Platform", "Chrome");
-  stream.searchParams.set("X-Plex-Client-Identifier", HUB_CLIENT_ID);
-  stream.searchParams.set("X-Plex-Product", "Arrs Hub");
-  stream.searchParams.set("X-Plex-Device-Name", "Arrs Hub");
-  stream.searchParams.set("X-Plex-Token", token);
+  const media = asArray(meta.Media)[0];
+  const part = asArray(media?.Part)[0];
+  const container = String(part?.container || media?.container || "").toLowerCase();
+  const browserFriendly = ["mp4", "m4v", "mov", "webm"].includes(container);
+
+  let url;
+  let seekable = false;
+  if (browserFriendly && part?.key) {
+    const direct = new URL(part.key, `${base}/`);
+    direct.searchParams.set("X-Plex-Token", token);
+    url = direct.toString();
+    seekable = true;
+  } else {
+    const stream = new URL(
+      "/video/:/transcode/universal/start.mp4",
+      `${base}/`,
+    );
+    stream.searchParams.set("path", `/library/metadata/${ratingKey}`);
+    stream.searchParams.set("mediaIndex", "0");
+    stream.searchParams.set("partIndex", "0");
+    stream.searchParams.set("protocol", "http");
+    stream.searchParams.set("fastSeek", "1");
+    stream.searchParams.set("directPlay", "0");
+    stream.searchParams.set("directStream", "1");
+    stream.searchParams.set("subtitleSize", "100");
+    stream.searchParams.set("audioBoost", "100");
+    stream.searchParams.set("location", "lan");
+    stream.searchParams.set("addDebugOverlay", "0");
+    stream.searchParams.set("autoAdjustQuality", "0");
+    stream.searchParams.set("X-Plex-Platform", "Chrome");
+    stream.searchParams.set("X-Plex-Client-Identifier", HUB_CLIENT_ID);
+    stream.searchParams.set("X-Plex-Product", "Arrs Hub");
+    stream.searchParams.set("X-Plex-Device-Name", "Arrs Hub");
+    stream.searchParams.set("X-Plex-Token", token);
+    url = stream.toString();
+    // Transcode streams often need offset= reload to scrub; player handles that.
+    seekable = false;
+  }
 
   return {
     title: title || meta.title,
     ratingKey: String(ratingKey),
-    url: stream.toString(),
+    url,
+    seekable,
+    durationMs: Number(meta.duration) || Number(part?.duration) || null,
   };
 }
 
