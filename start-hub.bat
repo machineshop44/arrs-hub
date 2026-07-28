@@ -1,6 +1,9 @@
 @echo off
-title Arrs Hub
+title Arrs Hub (console / developer mode)
 cd /d "%~dp0"
+
+REM Prefer the tray app for normal use: double-click "Start Arrs Hub.vbs"
+REM This bat keeps the old console-based npm run dev workflow.
 
 where node >nul 2>&1
 if errorlevel 1 (
