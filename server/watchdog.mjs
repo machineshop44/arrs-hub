@@ -5,6 +5,12 @@ import {
   saveWatchdogSettings,
 } from "./watchdog-store.mjs";
 import { DISCORD_COLORS, sendDiscordWebhook } from "./discord.mjs";
+import {
+  guessBroadcastAddress,
+  isHostOnline,
+  normalizeMac,
+  sendWakeOnLan,
+} from "./wol.mjs";
 
 /**
  * @typedef {object} WatchTarget
@@ -18,6 +24,9 @@ let targets = [];
 
 /** @type {Map<string, { up: boolean|null, latencyMs: number|null, lastChecked: string|null, consecutiveFails: number, lastRestartAt: string|null, lastRestartResult: string|null, message: string, downAlertSent: boolean }>} */
 const state = new Map();
+
+/** @type {Map<string, { online: boolean|null, lastChecked: string|null, consecutiveFails: number, lastWakeAt: string|null, lastWakeResult: string|null, message: string, method: string|null, downAlertSent: boolean }>} */
+const pcState = new Map();
 
 /** @type {ReturnType<typeof setInterval> | null} */
 let timer = null;
@@ -64,6 +73,9 @@ export function getWatchStatus() {
       failThreshold: settings.failThreshold,
       restartCooldownSeconds: settings.restartCooldownSeconds,
       autoRestart: settings.autoRestart,
+      wolEnabled: settings.wolEnabled !== false,
+      wolCooldownSeconds: settings.wolCooldownSeconds || 300,
+      pcs: settings.pcs || [],
       discordWebhookUrl: settings.discordWebhookUrl
         ? maskWebhook(settings.discordWebhookUrl)
         : "",
@@ -77,13 +89,14 @@ export function getWatchStatus() {
     services: Object.fromEntries(
       [...state.entries()].map(([id, value]) => [id, value]),
     ),
+    pcs: Object.fromEntries([...pcState.entries()].map(([id, value]) => [id, value])),
   };
 }
 
 export function updateWatchdogSettings(partial) {
   const current = loadWatchdogSettings();
   const body = partial ?? {};
-  const { discordWebhookUrl: _incomingUrl, services: partialServices, ...rest } =
+  const { discordWebhookUrl: _incomingUrl, services: partialServices, pcs, ...rest } =
     body;
 
   const next = {
@@ -94,10 +107,46 @@ export function updateWatchdogSettings(partial) {
       ...current.services,
       ...(partialServices ?? {}),
     },
+    pcs: Array.isArray(pcs)
+      ? pcs
+          .map((pc) => ({
+            id: String(pc.id || cryptoRandomId()),
+            name: String(pc.name || "PC").trim() || "PC",
+            host: String(pc.host || "").trim(),
+            mac: normalizeMac(pc.mac) || String(pc.mac || "").trim(),
+            monitor: pc.monitor !== false,
+            wakeOnLan: pc.wakeOnLan !== false,
+          }))
+          .filter((pc) => pc.host || pc.mac)
+      : current.pcs,
   };
   saveWatchdogSettings(next);
   restartWatchLoop();
   return next;
+}
+
+function cryptoRandomId() {
+  return `pc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export async function wakePcNow(pcId) {
+  const settings = loadWatchdogSettings();
+  const pc = (settings.pcs || []).find((item) => item.id === pcId);
+  if (!pc) throw new Error("PC not found in Wake-on-LAN list.");
+  if (!normalizeMac(pc.mac)) {
+    throw new Error(`Add a valid MAC address for ${pc.name}.`);
+  }
+  const broadcast =
+    guessBroadcastAddress(pc.host) || "255.255.255.255";
+  const result = await sendWakeOnLan(pc.mac, { broadcastAddress: broadcast });
+  const prev = pcState.get(pc.id) ?? {};
+  pcState.set(pc.id, {
+    ...prev,
+    lastWakeAt: new Date().toISOString(),
+    lastWakeResult: `WOL sent to ${result.mac}`,
+    message: `Manual WOL sent via ${broadcast}`,
+  });
+  return { ok: true, pc: pc.name, mac: result.mac, broadcast };
 }
 
 export async function testDiscordWebhook() {
@@ -349,7 +398,129 @@ async function checkOne(target) {
 export async function runWatchCycle() {
   const snapshot = [...targets];
   await Promise.all(snapshot.map((target) => checkOne(target)));
+  await checkPcs();
   return getWatchStatus();
+}
+
+async function checkPcs() {
+  const settings = loadWatchdogSettings();
+  if (!settings.enabled) return;
+  const pcs = Array.isArray(settings.pcs) ? settings.pcs : [];
+
+  for (const pc of pcs) {
+    if (!pc.monitor || !pc.host) {
+      pcState.set(pc.id, {
+        ...(pcState.get(pc.id) ?? {}),
+        online: null,
+        lastChecked: new Date().toISOString(),
+        message: pc.monitor ? "No host/IP set" : "Monitoring disabled",
+        method: null,
+      });
+      continue;
+    }
+
+    const prev = pcState.get(pc.id) ?? {
+      consecutiveFails: 0,
+      lastWakeAt: null,
+      lastWakeResult: null,
+      downAlertSent: false,
+      online: null,
+    };
+
+    const probe = await isHostOnline(pc.host);
+    let consecutiveFails = probe.online ? 0 : (prev.consecutiveFails || 0) + 1;
+    let lastWakeAt = prev.lastWakeAt ?? null;
+    let lastWakeResult = prev.lastWakeResult ?? null;
+    let downAlertSent = Boolean(prev.downAlertSent);
+    let message = probe.message;
+
+    if (probe.online) downAlertSent = false;
+
+    const wasOffline = prev.online === false;
+    if (probe.online && wasOffline && settings.discordNotifyRecovered !== false) {
+      await notifyDiscord(settings, {
+        title: `${pc.name} is back online`,
+        description: `Host \`${pc.host}\` responded (${probe.method || "ok"}).`,
+        color: DISCORD_COLORS.recovered,
+      });
+    }
+
+    if (
+      !probe.online &&
+      !downAlertSent &&
+      consecutiveFails >= settings.failThreshold &&
+      settings.discordNotifyDown !== false
+    ) {
+      downAlertSent = true;
+      await notifyDiscord(settings, {
+        title: `${pc.name} appears offline`,
+        description: [
+          `Host: \`${pc.host}\``,
+          `MAC: \`${pc.mac || "not set"}\``,
+          `Failed checks: **${consecutiveFails}**`,
+          settings.wolEnabled !== false && pc.wakeOnLan && normalizeMac(pc.mac)
+            ? "Sending Wake-on-LAN (LAN only)."
+            : "Wake-on-LAN not configured/enabled for this PC.",
+        ].join("\n"),
+        color: DISCORD_COLORS.down,
+      });
+    }
+
+    const shouldWake =
+      !probe.online &&
+      settings.wolEnabled !== false &&
+      pc.wakeOnLan &&
+      Boolean(normalizeMac(pc.mac)) &&
+      consecutiveFails >= settings.failThreshold;
+
+    if (shouldWake) {
+      const last = lastWakeAt ? Date.parse(lastWakeAt) : 0;
+      const cooled =
+        Date.now() - last >= (settings.wolCooldownSeconds || 300) * 1000;
+      if (cooled) {
+        try {
+          const broadcast =
+            guessBroadcastAddress(pc.host) || "255.255.255.255";
+          const wol = await sendWakeOnLan(pc.mac, {
+            broadcastAddress: broadcast,
+          });
+          lastWakeAt = new Date().toISOString();
+          lastWakeResult = `WOL sent to ${wol.mac} via ${broadcast}`;
+          message = lastWakeResult;
+          consecutiveFails = 0;
+          if (settings.discordNotifyRestart !== false) {
+            await notifyDiscord(settings, {
+              title: `${pc.name} Wake-on-LAN sent`,
+              description: lastWakeResult,
+              color: DISCORD_COLORS.restartOk,
+            });
+          }
+        } catch (err) {
+          lastWakeAt = new Date().toISOString();
+          lastWakeResult = err instanceof Error ? err.message : String(err);
+          message = `WOL failed: ${lastWakeResult}`;
+          if (settings.discordNotifyRestart !== false) {
+            await notifyDiscord(settings, {
+              title: `${pc.name} Wake-on-LAN failed`,
+              description: lastWakeResult,
+              color: DISCORD_COLORS.restartFail,
+            });
+          }
+        }
+      }
+    }
+
+    pcState.set(pc.id, {
+      online: probe.online,
+      lastChecked: new Date().toISOString(),
+      consecutiveFails,
+      lastWakeAt,
+      lastWakeResult,
+      message,
+      method: probe.method,
+      downAlertSent,
+    });
+  }
 }
 
 export function restartWatchLoop() {

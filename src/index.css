@@ -716,6 +716,43 @@ input {
   margin-bottom: 0;
 }
 
+.watchdog-pc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.watchdog-pc-message {
+  margin: 0;
+}
+
+.watchdog-pc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.pc-status {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.pc-status-online {
+  color: var(--ok, #3d9a6a);
+}
+
+.pc-status-offline {
+  color: var(--danger, #c44);
+}
+
+.pc-status-unknown {
+  color: var(--text-muted);
+}
+
 .service-card-body p {
   font-size: 0.8rem;
   color: var(--text-muted);

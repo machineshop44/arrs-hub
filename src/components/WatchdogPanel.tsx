@@ -6,14 +6,36 @@ export type ServiceWatchConfig = {
   windowsService: string;
 };
 
+export type PcWatchConfig = {
+  id: string;
+  name: string;
+  host: string;
+  mac: string;
+  monitor: boolean;
+  wakeOnLan: boolean;
+};
+
+export type PcLiveStatus = {
+  online: boolean | null;
+  lastChecked?: string | null;
+  consecutiveFails?: number;
+  lastWakeAt?: string | null;
+  lastWakeResult?: string | null;
+  message?: string;
+  method?: string | null;
+};
+
 export type WatchdogSettings = {
   enabled: boolean;
   intervalSeconds: number;
   failThreshold: number;
   restartCooldownSeconds: number;
   autoRestart: boolean;
+  wolEnabled: boolean;
+  wolCooldownSeconds: number;
   discordWebhookSet?: boolean;
   services: Record<string, ServiceWatchConfig>;
+  pcs: PcWatchConfig[];
 };
 
 interface WatchdogPanelProps {
@@ -21,11 +43,43 @@ interface WatchdogPanelProps {
   serviceNames: { id: string; name: string; enabled: boolean }[];
 }
 
+function newPcId() {
+  return `pc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function emptyPc(): PcWatchConfig {
+  return {
+    id: newPcId(),
+    name: "",
+    host: "",
+    mac: "",
+    monitor: true,
+    wakeOnLan: true,
+  };
+}
+
 export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
   const [settings, setSettings] = useState<WatchdogSettings | null>(null);
+  const [pcStatus, setPcStatus] = useState<Record<string, PcLiveStatus>>({});
   const [busy, setBusy] = useState(false);
+  const [wakingId, setWakingId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [serverUp, setServerUp] = useState<boolean | null>(null);
+
+  const applyStatus = (json: {
+    settings?: WatchdogSettings;
+    pcs?: Record<string, PcLiveStatus>;
+  }) => {
+    if (json.settings) {
+      setSettings({
+        ...json.settings,
+        wolEnabled: json.settings.wolEnabled !== false,
+        wolCooldownSeconds: json.settings.wolCooldownSeconds || 300,
+        pcs: Array.isArray(json.settings.pcs) ? json.settings.pcs : [],
+      });
+    }
+    setPcStatus(json.pcs ?? {});
+  };
 
   const load = useCallback(async () => {
     try {
@@ -34,7 +88,7 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
       if (!health.ok) return;
       const res = await fetch("/api/watchdog/status");
       const json = await res.json();
-      setSettings(json.settings);
+      applyStatus(json);
     } catch {
       setServerUp(false);
     }
@@ -58,17 +112,42 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
           failThreshold: settings.failThreshold,
           restartCooldownSeconds: settings.restartCooldownSeconds,
           autoRestart: settings.autoRestart,
+          wolEnabled: settings.wolEnabled,
+          wolCooldownSeconds: settings.wolCooldownSeconds,
           services: settings.services,
+          pcs: settings.pcs,
         }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Save failed");
-      setSettings(json.settings);
+      applyStatus(json);
+      // Reload so live PC map matches saved list after PUT
+      await load();
       setMessage("Watchdog settings saved.");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const wakeNow = async (pcId: string) => {
+    setWakingId(pcId);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/watchdog/wol", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pcId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Wake failed");
+      applyStatus(json);
+      setMessage(json.message || `Wake packet sent for ${json.pc || "PC"}.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWakingId(null);
     }
   };
 
@@ -93,9 +172,43 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
     });
   };
 
+  const updatePc = (id: string, patch: Partial<PcWatchConfig>) => {
+    setSettings((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        pcs: prev.pcs.map((pc) => (pc.id === id ? { ...pc, ...patch } : pc)),
+      };
+    });
+  };
+
+  const removePc = (id: string) => {
+    setSettings((prev) => {
+      if (!prev) return prev;
+      return { ...prev, pcs: prev.pcs.filter((pc) => pc.id !== id) };
+    });
+  };
+
+  const addPc = () => {
+    setSettings((prev) => {
+      if (!prev) return prev;
+      return { ...prev, pcs: [...prev.pcs, emptyPc()] };
+    });
+  };
+
   const apps = serviceNames.filter(
     (service) => service.enabled && service.id !== "trash-guides",
   );
+
+  const onlineLabel = (status: PcLiveStatus | undefined) => {
+    if (!status || status.online === null || status.online === undefined) {
+      return { text: "Unknown", className: "pc-status pc-status-unknown" };
+    }
+    if (status.online) {
+      return { text: "Online", className: "pc-status pc-status-online" };
+    }
+    return { text: "Offline", className: "pc-status pc-status-offline" };
+  };
 
   return (
     <div className="settings-overlay" onClick={onClose} role="presentation">
@@ -259,6 +372,166 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
                     );
                   })}
                 </div>
+              </section>
+
+              <section className="settings-group">
+                <h3>PC power &amp; Wake-on-LAN</h3>
+                <p className="settings-hint">
+                  Monitor whole PCs by host/IP and optionally send a Wake-on-LAN
+                  magic packet when they go offline.{" "}
+                  <strong>WOL is LAN-only</strong> — it works after a power
+                  outage when Arrs Hub runs on a machine that is still on the
+                  same local network (or comes back with the network). It does{" "}
+                  <strong>not</strong> work over the internet or remote links;
+                  magic packets never leave your LAN.
+                </p>
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={settings.wolEnabled}
+                    onChange={(e) =>
+                      setSettings((prev) =>
+                        prev
+                          ? { ...prev, wolEnabled: e.target.checked }
+                          : prev,
+                      )
+                    }
+                  />
+                  <span className="toggle-label">Enable Wake-on-LAN</span>
+                </label>
+                <label className="field">
+                  <span>WOL cooldown (seconds)</span>
+                  <input
+                    type="number"
+                    min={30}
+                    max={3600}
+                    value={settings.wolCooldownSeconds}
+                    onChange={(e) =>
+                      setSettings((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              wolCooldownSeconds:
+                                Number(e.target.value) || 300,
+                            }
+                          : prev,
+                      )
+                    }
+                  />
+                </label>
+                <p className="settings-hint">
+                  MAC tip: use the wired Ethernet adapter MAC (not Wi‑Fi) when
+                  possible. In Windows:{" "}
+                  <code>getmac /v</code> or Settings → Network → adapter
+                  properties. BIOS/UEFI must have Wake-on-LAN enabled, and the
+                  NIC should allow wake from magic packet.
+                </p>
+
+                <div className="sync-presets">
+                  {settings.pcs.length === 0 && (
+                    <p className="settings-hint">
+                      No PCs yet. Add one with a local IP/hostname and MAC.
+                    </p>
+                  )}
+                  {settings.pcs.map((pc) => {
+                    const live = pcStatus[pc.id];
+                    const status = onlineLabel(live);
+                    return (
+                      <div key={pc.id} className="watchdog-service-row watchdog-pc-row">
+                        <div className="watchdog-pc-header">
+                          <strong>{pc.name.trim() || "Unnamed PC"}</strong>
+                          <span className={status.className}>{status.text}</span>
+                        </div>
+                        {live?.message && (
+                          <p className="settings-hint watchdog-pc-message">
+                            {live.message}
+                            {live.lastWakeAt
+                              ? ` · last wake ${new Date(live.lastWakeAt).toLocaleString()}`
+                              : ""}
+                          </p>
+                        )}
+                        <label className="field">
+                          <span>Name</span>
+                          <input
+                            type="text"
+                            value={pc.name}
+                            placeholder="Living room PC"
+                            onChange={(e) =>
+                              updatePc(pc.id, { name: e.target.value })
+                            }
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Host / IP</span>
+                          <input
+                            type="text"
+                            value={pc.host}
+                            placeholder="192.168.1.50"
+                            onChange={(e) =>
+                              updatePc(pc.id, { host: e.target.value })
+                            }
+                          />
+                        </label>
+                        <label className="field">
+                          <span>MAC address</span>
+                          <input
+                            type="text"
+                            value={pc.mac}
+                            placeholder="AA:BB:CC:DD:EE:FF"
+                            onChange={(e) =>
+                              updatePc(pc.id, { mac: e.target.value })
+                            }
+                          />
+                        </label>
+                        <label className="toggle">
+                          <input
+                            type="checkbox"
+                            checked={pc.monitor}
+                            onChange={(e) =>
+                              updatePc(pc.id, { monitor: e.target.checked })
+                            }
+                          />
+                          <span className="toggle-label">Monitor online</span>
+                        </label>
+                        <label className="toggle">
+                          <input
+                            type="checkbox"
+                            checked={pc.wakeOnLan}
+                            onChange={(e) =>
+                              updatePc(pc.id, { wakeOnLan: e.target.checked })
+                            }
+                          />
+                          <span className="toggle-label">Auto Wake-on-LAN</span>
+                        </label>
+                        <div className="watchdog-pc-actions">
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            disabled={wakingId === pc.id || !pc.mac.trim()}
+                            onClick={() => void wakeNow(pc.id)}
+                          >
+                            {wakingId === pc.id ? "Waking…" : "Wake now"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            onClick={() => removePc(pc.id)}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={addPc}
+                >
+                  Add PC
+                </button>
               </section>
 
               {message && (

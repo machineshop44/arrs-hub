@@ -13,11 +13,19 @@ export type ServiceHealth = {
   mode?: ConnectionMode;
 };
 
+export type PcHealth = {
+  online: boolean | null;
+  lastChecked?: string | null;
+  message?: string;
+};
+
 export function useServiceHealth(
   services: ServiceConfig[],
   activeMode: ConnectionMode,
 ) {
   const [health, setHealth] = useState<Record<string, ServiceHealth>>({});
+  const [pcs, setPcs] = useState<Record<string, PcHealth>>({});
+  const [pcCount, setPcCount] = useState(0);
   const [watchEnabled, setWatchEnabled] = useState(true);
   const [autoRestart, setAutoRestart] = useState(true);
   const [serverUp, setServerUp] = useState<boolean | null>(null);
@@ -59,6 +67,10 @@ export function useServiceHealth(
       if (!statusRes.ok) return;
       const json = await statusRes.json();
       setHealth(json.services ?? {});
+      setPcs(json.pcs ?? {});
+      setPcCount(
+        Array.isArray(json.settings?.pcs) ? json.settings.pcs.length : 0,
+      );
       setWatchEnabled(Boolean(json.settings?.enabled));
       setAutoRestart(Boolean(json.settings?.autoRestart));
       setWatchMode(activeMode);
@@ -99,6 +111,8 @@ export function useServiceHealth(
 
   return {
     health,
+    pcs,
+    pcCount,
     watchEnabled,
     autoRestart,
     serverUp,

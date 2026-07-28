@@ -21,6 +21,7 @@ import {
   updateWatchdogSettings,
   runWatchCycle,
   testDiscordWebhook,
+  wakePcNow,
 } from "./watchdog.mjs";
 import {
   discoverWorkoutDays,
@@ -63,7 +64,8 @@ app.put("/api/watchdog/targets", (req, res) => {
 app.put("/api/watchdog/settings", (req, res) => {
   try {
     updateWatchdogSettings(req.body ?? {});
-    res.json({ ok: true, settings: getWatchStatus().settings });
+    // Same shape as GET /api/watchdog/status so the panel can apply settings + live pcs
+    res.json({ ok: true, ...getWatchStatus() });
   } catch (err) {
     res.status(400).json({ error: err.message || String(err) });
   }
@@ -88,6 +90,16 @@ app.post("/api/watchdog/check", async (_req, res) => {
     res.json(status);
   } catch (err) {
     res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/watchdog/wol", async (req, res) => {
+  try {
+    const pcId = String(req.body?.pcId || "");
+    const result = await wakePcNow(pcId);
+    res.json({ ok: true, ...result, ...getWatchStatus() });
+  } catch (err) {
+    res.status(400).json({ error: err.message || String(err) });
   }
 });
 

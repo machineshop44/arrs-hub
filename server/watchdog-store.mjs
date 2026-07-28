@@ -35,6 +35,11 @@ export function defaultWatchdogSettings() {
     discordNotifyDown: true,
     discordNotifyRestart: true,
     discordNotifyRecovered: true,
+    /** Wake-on-LAN for whole PCs (LAN only) */
+    wolEnabled: true,
+    wolCooldownSeconds: 300,
+    /** @type {{ id: string, name: string, host: string, mac: string, monitor: boolean, wakeOnLan: boolean }[]} */
+    pcs: [],
     /** @type {Record<string, { monitor: boolean, autoRestart: boolean, windowsService: string }>} */
     services: Object.fromEntries(
       Object.entries(DEFAULT_WINDOWS_SERVICES).map(([id, windowsService]) => [
@@ -62,6 +67,7 @@ export function loadWatchdogSettings() {
     ...defaults,
     ...raw,
     services: { ...defaults.services, ...(raw.services ?? {}) },
+    pcs: Array.isArray(raw.pcs) ? raw.pcs : defaults.pcs,
   };
 }
 

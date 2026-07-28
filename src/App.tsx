@@ -61,6 +61,12 @@ export default function App() {
   const upCount = Object.values(watchdog.health).filter(
     (item) => item.up === true,
   ).length;
+  const pcsOnline = Object.values(watchdog.pcs).filter(
+    (item) => item.online === true,
+  ).length;
+  const pcsOffline = Object.values(watchdog.pcs).filter(
+    (item) => item.online === false,
+  ).length;
 
   const statusLabel = checking
     ? "Detecting network…"
@@ -164,6 +170,9 @@ export default function App() {
               <strong>Port watch</strong>
               <span>
                 {upCount} up · {downCount} down
+                {watchdog.pcCount > 0
+                  ? ` · PCs ${pcsOnline} online / ${pcsOffline} offline`
+                  : ""}
                 {activeMode === "remote"
                   ? " · remote status"
                   : watchdog.autoRestart
