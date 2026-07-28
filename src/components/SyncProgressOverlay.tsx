@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { createPortal } from "react-dom";
 
 interface SyncProgressOverlayProps {
   title: string;
@@ -60,9 +61,30 @@ export function SyncProgressOverlay({
     }
   };
 
-  return (
-    <div className="progress-overlay" role="alertdialog" aria-modal="true">
-      <div className={`progress-card${success ? " progress-card-success" : ""}`}>
+  const handleApply = (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onApply?.();
+  };
+
+  const handleClose = (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onClose();
+  };
+
+  const overlay = (
+    <div
+      className="progress-overlay"
+      role="alertdialog"
+      aria-modal="true"
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <div
+        className={`progress-card${success ? " progress-card-success" : ""}`}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="progress-header">
           {!done && <span className="progress-spinner" aria-hidden="true" />}
           {success && (
@@ -86,9 +108,23 @@ export function SyncProgressOverlay({
           </div>
         </div>
 
-        {success && (
+        {success && showApply && (
           <div className="progress-success-banner">
-            Completed successfully — review the log below, then Close.
+            Pending changes are listed below. Click <strong>Apply sync</strong>{" "}
+            to write them — this popup will stay open and show the live log
+            until Apply finishes.
+          </div>
+        )}
+
+        {success && !showApply && (
+          <div className="progress-success-banner">
+            Completed successfully — review the activity log below, then Close.
+          </div>
+        )}
+
+        {error && (
+          <div className="progress-error-banner">
+            Sync failed — see the log below for details.
           </div>
         )}
 
@@ -99,15 +135,18 @@ export function SyncProgressOverlay({
         <div className="progress-footer">
           {!done ? (
             <span className="progress-hint">
-              Keep this popup open — ignore any brief console flash. Status
-              updates here.
+              Keep this popup open — status and Recyclarr activity appear here.
+              A brief console flash on Windows is normal.
             </span>
           ) : (
             <div className="progress-actions">
               <button
                 type="button"
                 className="btn btn-secondary"
-                onClick={() => void copyText()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void copyText();
+                }}
               >
                 {copied ? "Copied!" : "Copy log"}
               </button>
@@ -115,7 +154,7 @@ export function SyncProgressOverlay({
                 <button
                   type="button"
                   className="btn btn-primary"
-                  onClick={onApply}
+                  onClick={handleApply}
                 >
                   Apply sync
                 </button>
@@ -123,7 +162,7 @@ export function SyncProgressOverlay({
               <button
                 type="button"
                 className={showApply ? "btn btn-secondary" : "btn btn-primary"}
-                onClick={onClose}
+                onClick={handleClose}
               >
                 Close
               </button>
@@ -133,4 +172,6 @@ export function SyncProgressOverlay({
       </div>
     </div>
   );
+
+  return createPortal(overlay, document.body);
 }

@@ -380,9 +380,9 @@ export function SyncPanel({ onClose, connectionMode, services }: SyncPanelProps)
           return {
             ...prev,
             done: true,
-            status: preview
-              ? "Preview finished — review pending changes below."
-              : "Sync finished successfully.",
+                status: preview
+                  ? "Preview finished — pending changes are listed below."
+                  : "Sync finished successfully.",
             log: combined,
           };
         });
@@ -436,7 +436,16 @@ export function SyncPanel({ onClose, connectionMode, services }: SyncPanelProps)
   };
 
   return (
-    <div className="settings-overlay" onClick={onClose} role="presentation">
+    <div
+      className="settings-overlay"
+      onClick={() => {
+        // Never dismiss while progress popup is open — Apply used to bubble
+        // here and close the whole sync flow.
+        if (progress) return;
+        onClose();
+      }}
+      role="presentation"
+    >
       <div
         className="settings-panel sync-panel"
         onClick={(e) => e.stopPropagation()}
