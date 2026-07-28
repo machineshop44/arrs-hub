@@ -392,10 +392,11 @@ export function WorkoutsPanel({
                         />
                       </label>
                       <p className="settings-hint">
-                        For <strong>Fit With the Force Series</strong> season 1:
-                        episode 2 = warm-up, episode 3 = Day 1, episode 4 = Day
-                        2, and so on. Pick the TV library that contains the
-                        show.
+                        Looks inside the TV show for episode titles like{" "}
+                        <strong>Day 1</strong>, <strong>Day 2</strong>, and a
+                        warm-up title containing <strong>Warm Up</strong> (e.g.
+                        &quot;Full Body Warm Up In 5 Minutes&quot;). Episode #
+                        fields are only a fallback if a title has no Day N.
                       </p>
                     </>
                   ) : (

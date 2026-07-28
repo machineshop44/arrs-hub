@@ -249,6 +249,10 @@ function discoverByEpisode(settings, episodes) {
   const warmupEpisode = Number(settings.warmupEpisode) || 2;
   const firstDayEpisode = Number(settings.firstDayEpisode) || warmupEpisode + 1;
   const dayCount = Math.max(1, Number(settings.dayCount) || 30);
+  const pattern = settings.dayTitlePattern || "Day {n}";
+  const warmupNeedle = String(settings.warmupTitle || "Warm Up")
+    .trim()
+    .toLowerCase();
 
   const inShow = episodes
     .filter((ep) => showTitleMatches(showTitle, ep))
@@ -272,21 +276,36 @@ function discoverByEpisode(settings, episodes) {
     if (ep.index != null) byIndex.set(ep.index, ep);
   }
 
+  // Prefer titles: "Full Body Warm Up…" and "… | Day 1"
   const warmup =
+    inShow.find((ep) => ep.title.toLowerCase().includes(warmupNeedle)) ||
     byIndex.get(warmupEpisode) ||
-    inShow.find((ep) => /warm\s*-?\s*up/i.test(ep.title)) ||
     null;
 
   /** @type {{ day: number, title: string, ratingKey: string, episode: number|null }[]} */
   const days = [];
   for (let day = 1; day <= dayCount; day += 1) {
-    const episodeNum = firstDayEpisode + day - 1;
-    const match = byIndex.get(episodeNum);
-    if (match) {
+    const byTitle = inShow.find((ep) =>
+      titleMatchesDay(day, pattern, ep.title),
+    );
+    if (byTitle) {
       days.push({
         day,
-        title: match.title,
-        ratingKey: match.ratingKey,
+        title: byTitle.title,
+        ratingKey: byTitle.ratingKey,
+        episode: byTitle.index,
+      });
+      continue;
+    }
+
+    // Fallback: Day 1 = firstDayEpisode, Day 2 = next, …
+    const episodeNum = firstDayEpisode + day - 1;
+    const byEp = byIndex.get(episodeNum);
+    if (byEp) {
+      days.push({
+        day,
+        title: byEp.title,
+        ratingKey: byEp.ratingKey,
         episode: episodeNum,
       });
     }
