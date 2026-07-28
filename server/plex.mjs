@@ -125,6 +125,9 @@ export async function listLibraries(settings = getWorkoutConfig()) {
 
 export const LOCAL_CLIENT_ID = "arrs-hub-local";
 
+/**
+ * Merge local playback + Plex controllable players + Chromecast devices.
+ */
 export async function listClients(settings = getWorkoutConfig()) {
   requireToken(settings);
   const local = {
@@ -135,9 +138,38 @@ export async function listClients(settings = getWorkoutConfig()) {
     machineIdentifier: LOCAL_CLIENT_ID,
     product: "Arrs Hub",
     deviceClass: "local",
+    castType: "local",
     protocolCapabilities: ["playback"],
   };
 
+  const [plexPlayers, castDevices] = await Promise.all([
+    listPlexPlayers(settings).catch((err) => {
+      console.error("Plex player discovery failed:", err?.message || err);
+      return [];
+    }),
+    import("./cast.mjs")
+      .then((mod) => mod.discoverCastDevices(3500))
+      .catch((err) => {
+        console.error("Cast discovery failed:", err?.message || err);
+        return [];
+      }),
+  ]);
+
+  /** @type {Map<string, any>} */
+  const byId = new Map();
+  byId.set(local.machineIdentifier, local);
+  for (const player of [...plexPlayers, ...castDevices]) {
+    if (!player?.machineIdentifier) continue;
+    byId.set(player.machineIdentifier, player);
+  }
+  return [...byId.values()];
+}
+
+async function listPlexPlayers(settings) {
+  /** @type {Map<string, any>} */
+  const players = new Map();
+
+  // 1) Players currently visible to the PMS
   try {
     const json = await plexFetch(
       settings.plexBaseUrl,
@@ -145,23 +177,76 @@ export async function listClients(settings = getWorkoutConfig()) {
       "/clients",
     );
     const container = mediaContainer(json);
-    const remote = asArray(container.Server).map((client) => ({
-      name: client.name,
-      host: client.host || client.address,
-      address: client.address || client.host,
-      port: Number(client.port) || 32400,
-      machineIdentifier: client.machineIdentifier,
-      product: client.product,
-      deviceClass: client.deviceClass,
-      protocolCapabilities: String(client.protocolCapabilities || "")
+    for (const client of asArray(container.Server)) {
+      if (!client.machineIdentifier) continue;
+      const caps = String(client.protocolCapabilities || "")
         .split(",")
         .map((s) => s.trim())
-        .filter(Boolean),
-    }));
-    return [local, ...remote];
+        .filter(Boolean);
+      players.set(client.machineIdentifier, {
+        name: client.name,
+        host: client.host || client.address,
+        address: client.address || client.host,
+        port: Number(client.port) || 32400,
+        machineIdentifier: client.machineIdentifier,
+        product: client.product || "Plex",
+        deviceClass: client.deviceClass || "plex",
+        castType: "plex",
+        protocolCapabilities: caps.length ? caps : ["playback"],
+      });
+    }
   } catch {
-    return [local];
+    // ignore — plex.tv resources may still work
   }
+
+  // 2) Account devices that provide player + are present
+  try {
+    const url = new URL("https://plex.tv/api/resources");
+    url.searchParams.set("includeHttps", "1");
+    url.searchParams.set("includeRelay", "1");
+    url.searchParams.set("X-Plex-Token", settings.plexToken.trim());
+    const res = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "X-Plex-Token": settings.plexToken.trim(),
+        "X-Plex-Client-Identifier": HUB_CLIENT_ID,
+        "X-Plex-Product": "Arrs Hub",
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok) {
+      const json = await res.json();
+      const devices = asArray(json?.MediaContainer?.Device || json?.Device || json);
+      for (const device of devices) {
+        const provides = String(device.provides || "");
+        if (!provides.includes("player")) continue;
+        if (device.presence === false || device.presence === "0") continue;
+        const id = device.clientIdentifier || device.machineIdentifier;
+        if (!id || players.has(id)) continue;
+
+        const connections = asArray(device.Connection || device.connections);
+        const localConn =
+          connections.find((c) => c.local === true || c.local === 1) ||
+          connections[0];
+        players.set(id, {
+          name: device.name || device.device || "Plex player",
+          host: localConn?.address || device.publicAddress || "",
+          address: localConn?.address || device.publicAddress || "",
+          port: Number(localConn?.port) || 32400,
+          machineIdentifier: id,
+          product: device.product || "Plex",
+          deviceClass: device.device || "plex",
+          castType: "plex",
+          protocolCapabilities: ["playback"],
+          presence: true,
+        });
+      }
+    }
+  } catch (err) {
+    console.error("plex.tv resources failed:", err?.message || err);
+  }
+
+  return [...players.values()];
 }
 
 /**
@@ -481,9 +566,45 @@ export async function playWorkoutDay(
   const client = clients.find(
     (item) => item.machineIdentifier === clientMachineId,
   );
-  if (!client || client.machineIdentifier === LOCAL_CLIENT_ID) {
+  if (!client) {
     throw new Error(
-      "Selected Plex client is not online. Open Plex on your TV/phone/tablet, then refresh — or choose This device.",
+      "Selected device is not available. Hit Refresh, or choose This device.",
+    );
+  }
+
+  // Chromecast / Cast receivers on the LAN
+  if (client.castType === "chromecast") {
+    const warmupMedia = await getBrowserPlayable(
+      settings,
+      discovery.warmup.ratingKey,
+      discovery.warmup.title,
+    );
+    const dayMedia = await getBrowserPlayable(
+      settings,
+      dayItem.ratingKey,
+      dayItem.title,
+    );
+    const { castPlaylistToDevice } = await import("./cast.mjs");
+    await castPlaylistToDevice(client.address || client.host, [
+      warmupMedia,
+      dayMedia,
+    ]);
+    return {
+      ok: true,
+      mode: "cast",
+      client: client.name,
+      warmup: discovery.warmup.title,
+      day: dayItem.title,
+    };
+  }
+
+  if (client.castType !== "plex" && client.castType !== "chromecast") {
+    throw new Error("Choose This device, a Cast device, or a Plex player.");
+  }
+
+  if (!client.address || client.address === "local") {
+    throw new Error(
+      `"${client.name}" can’t be controlled remotely right now. Plex Desktop often doesn’t advertise as a castable player — use This device for this laptop, or cast to a TV/Chromecast.`,
     );
   }
 

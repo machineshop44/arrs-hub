@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
+    "chromecast-api": "^0.4.2",
     "express": "^4.21.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

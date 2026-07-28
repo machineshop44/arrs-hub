@@ -24,6 +24,7 @@ type Client = {
   port: number;
   machineIdentifier: string;
   product?: string;
+  castType?: string;
 };
 type DayItem = { day: number; title: string; ratingKey: string };
 type PlaylistItem = {
@@ -683,6 +684,11 @@ export function WorkoutsPanel({
                           key={client.machineIdentifier}
                           value={client.machineIdentifier}
                         >
+                          {client.castType === "chromecast"
+                            ? "Cast · "
+                            : client.castType === "plex"
+                              ? "Plex · "
+                              : ""}
                           {client.name}
                           {client.product ? ` · ${client.product}` : ""}
                         </option>
@@ -691,9 +697,12 @@ export function WorkoutsPanel({
                   </label>
                 )}
                 <p className="settings-hint">
-                  Choose the device each time you work out.{" "}
-                  <strong>This device</strong> plays here; other Plex apps show
-                  up when they’re open — hit Refresh to update the list.
+                  Pick where to play each time. <strong>This device</strong>{" "}
+                  plays in Arrs Hub. <strong>Cast</strong> devices
+                  (Chromecast/Cast TVs) and controllable <strong>Plex</strong>{" "}
+                  apps appear when they&apos;re on the network — hit Refresh.
+                  Plex Desktop on this laptop often won&apos;t list as
+                  castable; use This device for local playback.
                 </p>
                 {!configured && (
                   <p className="settings-hint">
