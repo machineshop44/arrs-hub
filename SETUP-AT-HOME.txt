@@ -1,0 +1,82 @@
+Arrs Hub — setup on your home / Plex PC
+========================================
+
+You do NOT need an .exe or .msi. This is a small Node.js app.
+Double-click start-hub.bat after the one-time install below.
+
+
+1) ONE-TIME DOWNLOADS (installers, not cmd commands)
+----------------------------------------------------
+A) Node.js LTS (required)
+   https://nodejs.org
+   - Download the Windows LTS installer
+   - Install with default options (include "Add to PATH")
+   - Close and reopen any Command Prompt / PowerShell windows after install
+
+B) Git for Windows (recommended — Recyclarr / TRaSH sync uses it)
+   https://git-scm.com/download/win
+   - Default options are fine
+
+
+2) ONE-TIME CHECK IN COMMAND PROMPT
+-----------------------------------
+Open Command Prompt and run:
+
+   node -v
+   npm -v
+   git --version
+
+You should see version numbers for each. If "node" is not recognized,
+reinstall Node.js and reboot, then try again.
+
+
+3) COPY THIS FOLDER
+-------------------
+Put the whole Arrs-Hub folder somewhere stable on the Plex PC, e.g.:
+
+   C:\Apps\Arrs-Hub
+
+Keep the data\ folder — it already has your Sonarr/Radarr API keys,
+workout/Plex settings, and watchdog settings from the other PC.
+
+
+4) FIRST RUN
+------------
+Double-click:
+
+   start-hub.bat
+
+The first time it will run "npm install" (needs internet).
+Then it opens the hub. Leave that window open while you use the dashboard.
+
+Dashboard:  http://localhost:3000
+
+
+5) OPTIONAL — START WITH WINDOWS (taskbar / startup)
+----------------------------------------------------
+Easiest option (no .exe needed):
+
+   Double-click:  install-startup.bat
+
+That adds a Startup shortcut so Arrs Hub launches when you sign in.
+A console window will open — leave it running (that is the hub).
+
+To remove later, double-click:  uninstall-startup.bat
+
+Or manually:
+   Win+R → shell:startup → create a shortcut to start-hub.bat
+
+
+6) WHY NOT AN .EXE / .MSI?
+--------------------------
+An installer wrapper is possible later (Electron, etc.), but it would still
+bundle Node under the hood, be larger, and harder to update. For this hub,
+Node + start-hub.bat + optional Startup shortcut is the simple reliable path.
+
+
+TROUBLESHOOTING
+---------------
+- Port already in use: start-hub.bat frees ports 3000 and 3847 automatically.
+- Hub offline / wrong page: make sure you open http://localhost:3000 (not 3001).
+- Sync / Recyclarr: open Sync in the hub and use Download Recyclarr if needed.
+- Settings missing: confirm the data\ folder was copied with the project.
