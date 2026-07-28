@@ -482,8 +482,20 @@ export function SyncPanel({ onClose, connectionMode, services }: SyncPanelProps)
                   open). It uses your hub <strong>{modeLabel}</strong> URLs for
                   Sonarr/Radarr — no need to type them again. At work that means
                   your Remote URLs must be reachable from here (VPN, Tailscale,
-                  or a domain). API keys are saved once on this PC.
+                  or a domain). Paste API keys in hub <strong>Settings</strong>
+                  (Sonarr/Radarr only — Recyclarr does not support Lidarr or
+                  Readarr).
                 </p>
+                {(!sonarrKeySet || !radarrKeySet) && (
+                  <p className="settings-hint">
+                    {!sonarrKeySet && !radarrKeySet
+                      ? "Sonarr and Radarr API keys are not set yet."
+                      : !sonarrKeySet
+                        ? "Sonarr API key is not set yet."
+                        : "Radarr API key is not set yet."}{" "}
+                    Add them under Settings → TRaSH Sync API keys.
+                  </p>
+                )}
                 <p className="sync-status-line">
                   Active link mode: <strong>{modeLabel}</strong>
                   {" · "}
@@ -529,25 +541,12 @@ export function SyncPanel({ onClose, connectionMode, services }: SyncPanelProps)
                     placeholder={`No ${modeLabel} URL set for Sonarr`}
                   />
                 </label>
-                <label className="field">
-                  <span>
-                    API key
-                    {sonarrKeySet ? " (saved — leave blank to keep)" : ""}
-                  </span>
-                  <input
-                    type="password"
-                    autoComplete="off"
-                    placeholder={sonarrKeySet ? "•••• saved ••••" : "Paste API key"}
-                    value={form.sonarr.apiKey}
-                    disabled={!form.sonarr.enabled}
-                    onChange={(e) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        sonarr: { ...prev.sonarr, apiKey: e.target.value },
-                      }))
-                    }
-                  />
-                </label>
+                <p className="settings-hint">
+                  API key:{" "}
+                  {sonarrKeySet
+                    ? "saved in Settings"
+                    : "not set — add in Settings"}
+                </p>
               </section>
 
               <section className="settings-group">
@@ -575,25 +574,12 @@ export function SyncPanel({ onClose, connectionMode, services }: SyncPanelProps)
                     placeholder={`No ${modeLabel} URL set for Radarr`}
                   />
                 </label>
-                <label className="field">
-                  <span>
-                    API key
-                    {radarrKeySet ? " (saved — leave blank to keep)" : ""}
-                  </span>
-                  <input
-                    type="password"
-                    autoComplete="off"
-                    placeholder={radarrKeySet ? "•••• saved ••••" : "Paste API key"}
-                    value={form.radarr.apiKey}
-                    disabled={!form.radarr.enabled}
-                    onChange={(e) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        radarr: { ...prev.radarr, apiKey: e.target.value },
-                      }))
-                    }
-                  />
-                </label>
+                <p className="settings-hint">
+                  API key:{" "}
+                  {radarrKeySet
+                    ? "saved in Settings"
+                    : "not set — add in Settings"}
+                </p>
               </section>
 
               <section className="settings-group">
