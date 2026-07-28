@@ -35,7 +35,7 @@ export default function App() {
     (s) => s.id === "trash-guides" && s.enabled,
   );
   const trash = useTrashUpdates(trashEnabled);
-  const watchdog = useServiceHealth(settings.services);
+  const watchdog = useServiceHealth(settings.services, activeMode);
 
   const [showWatchdog, setShowWatchdog] = useState(false);
   const [showWorkouts, setShowWorkouts] = useState(false);
@@ -164,14 +164,26 @@ export default function App() {
               <strong>Port watch</strong>
               <span>
                 {upCount} up · {downCount} down
-                {watchdog.autoRestart
-                  ? " · auto-restart on"
-                  : " · auto-restart off"}
+                {activeMode === "remote"
+                  ? " · remote status"
+                  : watchdog.autoRestart
+                    ? " · auto-restart on"
+                    : " · auto-restart off"}
               </span>
               <small>
-                Watching <strong>Home</strong> ports on this Plex PC. If a port
-                stays down, Auto-restart starts the Windows service. Configure
-                service names under <strong>Port Watch</strong>.
+                {activeMode === "remote" ? (
+                  <>
+                    Watching <strong>Remote</strong> URLs from this PC (status
+                    board while you&apos;re away). Auto-restart stays Home /
+                    Plex-PC only.
+                  </>
+                ) : (
+                  <>
+                    Watching <strong>Home</strong> ports on this Plex PC. If a
+                    port stays down, Auto-restart starts the Windows service.
+                    Configure service names under <strong>Port Watch</strong>.
+                  </>
+                )}
               </small>
             </div>
             <div className="watchdog-bar-actions">
@@ -189,6 +201,7 @@ export default function App() {
                 <input
                   type="checkbox"
                   checked={watchdog.autoRestart}
+                  disabled={activeMode === "remote"}
                   onChange={(e) =>
                     void watchdog.updateSettings({
                       autoRestart: e.target.checked,

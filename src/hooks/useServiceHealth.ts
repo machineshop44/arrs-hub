@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ServiceConfig } from "../types";
+import type { ConnectionMode, ServiceConfig } from "../types";
 import { getServiceUrl } from "../types";
 
 export type ServiceHealth = {
@@ -10,26 +10,37 @@ export type ServiceHealth = {
   lastRestartAt: string | null;
   lastRestartResult: string | null;
   message: string;
+  mode?: ConnectionMode;
 };
 
-export function useServiceHealth(services: ServiceConfig[]) {
+export function useServiceHealth(
+  services: ServiceConfig[],
+  activeMode: ConnectionMode,
+) {
   const [health, setHealth] = useState<Record<string, ServiceHealth>>({});
   const [watchEnabled, setWatchEnabled] = useState(true);
   const [autoRestart, setAutoRestart] = useState(true);
   const [serverUp, setServerUp] = useState<boolean | null>(null);
+  const [watchMode, setWatchMode] = useState<ConnectionMode>(activeMode);
 
-  // Always monitor Home URLs — restart only makes sense on the Plex PC itself
+  // Probe Home when home (restart possible). Probe Remote when away (status board only).
   const targets = useMemo(
     () =>
       services
         .filter((service) => service.enabled && service.id !== "trash-guides")
         .map((service) => {
-          const url = getServiceUrl(service, "home");
+          const url = getServiceUrl(service, activeMode);
           if (!url) return null;
-          return { id: service.id, name: service.name, url };
+          return {
+            id: service.id,
+            name: service.name,
+            url,
+            mode: activeMode,
+            allowRestart: activeMode === "home",
+          };
         })
         .filter(Boolean),
-    [services],
+    [services, activeMode],
   );
 
   const refresh = useCallback(async () => {
@@ -50,10 +61,11 @@ export function useServiceHealth(services: ServiceConfig[]) {
       setHealth(json.services ?? {});
       setWatchEnabled(Boolean(json.settings?.enabled));
       setAutoRestart(Boolean(json.settings?.autoRestart));
+      setWatchMode(activeMode);
     } catch {
       setServerUp(false);
     }
-  }, [targets]);
+  }, [targets, activeMode]);
 
   useEffect(() => {
     void refresh();
@@ -90,6 +102,7 @@ export function useServiceHealth(services: ServiceConfig[]) {
     watchEnabled,
     autoRestart,
     serverUp,
+    watchMode,
     refresh,
     checkNow,
     updateSettings,

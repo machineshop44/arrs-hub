@@ -49,6 +49,7 @@ export function setWatchTargets(nextTargets) {
         lastRestartResult: null,
         message: "Waiting for first check",
         downAlertSent: false,
+        mode: target.mode || "home",
       });
     }
   }
@@ -253,6 +254,13 @@ async function checkOne(target) {
   }
 
   // Alert once when failures hit the threshold (not every check while down)
+  const canRestart =
+    target.allowRestart !== false &&
+    target.mode !== "remote" &&
+    settings.autoRestart &&
+    serviceCfg.autoRestart &&
+    Boolean(serviceCfg.windowsService);
+
   if (
     !result.up &&
     !downAlertSent &&
@@ -263,12 +271,15 @@ async function checkOne(target) {
     await notifyDiscord(settings, {
       title: `${target.name} port is down`,
       description: [
+        `Mode: **${target.mode === "remote" ? "Remote" : "Home"}**`,
         `Host: \`${parsed.host}:${parsed.port}\``,
         `Failed checks: **${consecutiveFails}** (threshold ${settings.failThreshold})`,
         `Detail: ${result.message}`,
-        settings.autoRestart && serviceCfg.autoRestart && serviceCfg.windowsService
+        canRestart
           ? "Arrs Hub will try to restart the Windows service."
-          : "Auto-restart is not enabled for this app.",
+          : target.mode === "remote"
+            ? "Remote status only — restart is Home/Plex-PC only."
+            : "Auto-restart is not enabled for this app.",
       ].join("\n"),
       color: DISCORD_COLORS.down,
     });
@@ -276,9 +287,7 @@ async function checkOne(target) {
 
   const shouldRestart =
     !result.up &&
-    settings.autoRestart &&
-    serviceCfg.autoRestart &&
-    Boolean(serviceCfg.windowsService) &&
+    canRestart &&
     consecutiveFails >= settings.failThreshold;
 
   if (shouldRestart) {
@@ -326,8 +335,14 @@ async function checkOne(target) {
     consecutiveFails,
     lastRestartAt,
     lastRestartResult,
-    message: result.message,
+    message:
+      target.mode === "remote"
+        ? result.up
+          ? "Remote port open"
+          : result.message || "Remote unreachable"
+        : result.message,
     downAlertSent,
+    mode: target.mode || "home",
   });
 }
 

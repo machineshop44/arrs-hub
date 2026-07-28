@@ -131,11 +131,13 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
               <section className="settings-group">
                 <h3>Plex PC watchdog</h3>
                 <p className="settings-hint">
-                  Keep Arr&apos;s Hub running on this PC. It checks each app&apos;s{" "}
-                  <strong>Home</strong> port and can start the Windows service if
-                  it goes down. Apps must be installed as Windows services
-                  (Sonarr/Radarr installers usually offer that). Discord webhook
-                  for down/restart alerts is under hub <strong>Settings</strong>.
+                  Keep Arr&apos;s Hub running on this PC. Status uses your
+                  current link mode: <strong>Home</strong> ports when Home/Auto
+                  says you&apos;re home (restart allowed),{" "}
+                  <strong>Remote</strong> URLs when you&apos;re away (status
+                  only — no remote restart). Apps must be installed as Windows
+                  services for auto-restart at home. Discord webhook for
+                  down/restart alerts is under hub <strong>Settings</strong>.
                   {settings.discordWebhookSet ? " (webhook saved)" : ""}
                 </p>
                 <label className="toggle">
