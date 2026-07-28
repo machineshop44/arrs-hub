@@ -238,11 +238,12 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
               </section>
 
               <section className="settings-group">
-                <h3>Discord alerts</h3>
+                <h3>Discord notifications</h3>
                 <p className="settings-hint">
-                  Paste a Discord channel webhook. Arrs Hub will ping you when a
-                  monitored port goes down, and when an auto-restart succeeds or
-                  fails — usually faster than waiting on Tautulli for Plex.
+                  Optional webhook for the same ports Port Watch already
+                  monitors above (Sonarr, Radarr, Plex, etc.). Discord itself is
+                  not scanned — you only get messages when those app ports go
+                  down, a restart succeeds/fails, or a port comes back up.
                 </p>
                 <label className="field">
                   <span>
