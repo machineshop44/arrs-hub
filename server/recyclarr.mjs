@@ -104,7 +104,7 @@ function findFile(dir, name) {
 
 /**
  * @param {string[]} args
- * @param {{ timeoutMs?: number, onOutput?: (chunk: string, stream: 'stdout'|'stderr') => void, needsConsole?: boolean }} [options]
+ * @param {{ timeoutMs?: number, onOutput?: (chunk: string, stream: 'stdout'|'stderr') => void, onStatus?: (message: string) => void, needsConsole?: boolean }} [options]
  */
 export function runRecyclarr(args, options = {}) {
   if (options.needsConsole && process.platform === "win32") {
@@ -187,11 +187,12 @@ function runRecyclarrPiped(args, options = {}) {
  * "The handle is invalid" when stdout is piped. On Windows we open a
  * minimized console via `start /wait` and stream Recyclarr's log file instead.
  * @param {string[]} args
- * @param {{ timeoutMs?: number, onOutput?: (chunk: string, stream: 'stdout'|'stderr') => void }} [options]
+ * @param {{ timeoutMs?: number, onOutput?: (chunk: string, stream: 'stdout'|'stderr') => void, onStatus?: (message: string) => void }} [options]
  */
 function runRecyclarrWindowsConsole(args, options = {}) {
   const timeoutMs = options.timeoutMs ?? 300000;
   const onOutput = options.onOutput;
+  const onStatus = options.onStatus;
 
   return new Promise((resolve, reject) => {
     if (!fs.existsSync(EXE_PATH)) {
@@ -211,8 +212,9 @@ function runRecyclarrWindowsConsole(args, options = {}) {
     const argLine = args.map(quoteCmdArg).join(" ");
     const cmdline = `start "Arrs Hub Sync" /wait /min ${quoteCmdArg(EXE_PATH)} ${argLine} & echo %ERRORLEVEL%>${quoteCmdArg(exitFile)}`;
 
+    onStatus?.("Applying sync — watch this popup (a brief console may flash)…");
     onOutput?.(
-      "[hub] Starting Recyclarr in a console window (required for Apply on Windows)…\n",
+      "[hub] Apply started. Keep this popup open until you see SUCCESS or FAILED.\n",
       "stdout",
     );
 
@@ -227,11 +229,23 @@ function runRecyclarrWindowsConsole(args, options = {}) {
     let offset = 0;
     /** @type {string|null} */
     let activeLog = null;
+    let lastStatusAt = Date.now();
 
     const pushText = (text) => {
       if (!text) return;
       stdout += text;
       onOutput?.(text, "stdout");
+
+      const lines = text.split(/\r?\n/);
+      for (const line of lines) {
+        if (/Processing (Radarr|Sonarr)/i.test(line)) {
+          onStatus?.(line.replace(/^\[INF\]\s*/i, "").trim());
+        } else if (/Completed at /i.test(line)) {
+          onStatus?.(line.replace(/^\[INF\]\s*/i, "").trim());
+        } else if (/Created |Updated |Synced /i.test(line)) {
+          onStatus?.(line.replace(/^\[INF\]\s*/i, "").trim());
+        }
+      }
     };
 
     const pollLogs = () => {
@@ -263,7 +277,6 @@ function runRecyclarrWindowsConsole(args, options = {}) {
           fs.readSync(fd, buffer, 0, length, offset);
           offset = stat.size;
           const chunk = buffer.toString("utf8");
-          // Convert file log lines like `[21:27:50 INF] message` → `[INF] message`
           const cleaned = chunk
             .split(/\r?\n/)
             .map((line) =>
@@ -279,6 +292,12 @@ function runRecyclarrWindowsConsole(args, options = {}) {
         }
       } catch {
         // ignore transient read errors while log rotates
+      }
+
+      if (Date.now() - lastStatusAt > 8000) {
+        lastStatusAt = Date.now();
+        const secs = Math.round((Date.now() - startedAt) / 1000);
+        onStatus?.(`Still applying… ${secs}s elapsed`);
       }
     };
 
@@ -377,6 +396,7 @@ export async function runSync(yaml, options = {}) {
   let rawLog = "";
   const result = await runRecyclarr(args, {
     needsConsole: !preview,
+    onStatus: (message) => onStatus?.(message),
     onOutput: (chunk) => {
       rawLog += chunk;
       const filtered = filterRecyclarrLogForUi(chunk);
@@ -396,6 +416,10 @@ export async function runSync(yaml, options = {}) {
       }`;
       onOutput?.(`\n${summary}\n`);
     }
+  } else {
+    onStatus?.("Sync finished successfully.");
+    summary = buildApplyCompletionSummary(rawLog || result.stdout);
+    onOutput?.(`\n${summary}\n`);
   }
 
   const uiStdout = [filterRecyclarrLogForUi(result.stdout), summary]
@@ -408,6 +432,30 @@ export async function runSync(yaml, options = {}) {
     stderr: filterRecyclarrLogForUi(result.stderr),
     summary,
   };
+}
+
+/** @param {string} logText */
+function buildApplyCompletionSummary(logText) {
+  const lines = String(logText || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const highlights = lines.filter((line) =>
+    /\[INF\].*(Created|Updated|Synced|Deleted|Processing|Completed)/i.test(
+      line,
+    ),
+  );
+
+  return [
+    "=== SYNC COMPLETED SUCCESSFULLY ===",
+    "Changes were written to Sonarr/Radarr.",
+    highlights.length
+      ? highlights.slice(-20).join("\n")
+      : "Recyclarr finished with exit code 0.",
+    "",
+    "You can Close this popup now.",
+  ].join("\n");
 }
 
 export { CONFIG_PATH, EXE_PATH };

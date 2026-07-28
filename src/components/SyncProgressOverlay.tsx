@@ -23,6 +23,7 @@ export function SyncProgressOverlay({
 }: SyncProgressOverlayProps) {
   const logRef = useRef<HTMLPreElement>(null);
   const [copied, setCopied] = useState(false);
+  const success = done && !error;
 
   useEffect(() => {
     const el = logRef.current;
@@ -61,16 +62,35 @@ export function SyncProgressOverlay({
 
   return (
     <div className="progress-overlay" role="alertdialog" aria-modal="true">
-      <div className="progress-card">
+      <div className={`progress-card${success ? " progress-card-success" : ""}`}>
         <div className="progress-header">
           {!done && <span className="progress-spinner" aria-hidden="true" />}
+          {success && (
+            <span className="progress-check" aria-hidden="true">
+              ✓
+            </span>
+          )}
           <div>
             <h3>{title}</h3>
-            <p className={error ? "progress-status err" : "progress-status"}>
+            <p
+              className={
+                error
+                  ? "progress-status err"
+                  : success
+                    ? "progress-status ok"
+                    : "progress-status"
+              }
+            >
               {error || status}
             </p>
           </div>
         </div>
+
+        {success && (
+          <div className="progress-success-banner">
+            Completed successfully — review the log below, then Close.
+          </div>
+        )}
 
         <pre ref={logRef} className="progress-log" aria-live="polite">
           {log || (done ? "No log output." : "Waiting for Recyclarr output…")}
@@ -79,7 +99,8 @@ export function SyncProgressOverlay({
         <div className="progress-footer">
           {!done ? (
             <span className="progress-hint">
-              Keep this open — syncing can take 30–90 seconds.
+              Keep this popup open — ignore any brief console flash. Status
+              updates here.
             </span>
           ) : (
             <div className="progress-actions">

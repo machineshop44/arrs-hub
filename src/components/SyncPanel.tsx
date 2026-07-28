@@ -366,23 +366,32 @@ export function SyncPanel({ onClose, connectionMode, services }: SyncPanelProps)
             );
           },
         );
-        const combined = [result.stdout, result.stderr]
-          .filter(Boolean)
-          .join("\n\n");
-        setLog(combined);
         if (!result.ok) throw new Error(result.error || "Sync failed");
-        setProgress((prev) =>
-          prev
-            ? {
-                ...prev,
-                done: true,
-                status: preview
-                  ? "Preview finished — review pending changes below."
-                  : "Sync finished successfully.",
-                log: combined || prev.log,
-              }
-            : prev,
-        );
+        setProgress((prev) => {
+          if (!prev) return prev;
+          const streamed = prev.log || "";
+          const fromServer = [result.stdout, result.stderr]
+            .filter(Boolean)
+            .join("\n\n");
+          const combined =
+            fromServer.trim().length > streamed.trim().length
+              ? fromServer
+              : streamed;
+          return {
+            ...prev,
+            done: true,
+            status: preview
+              ? "Preview finished — review pending changes below."
+              : "Sync finished successfully.",
+            log: combined,
+          };
+        });
+        setLog((prevLog) => {
+          const fromServer = [result.stdout, result.stderr]
+            .filter(Boolean)
+            .join("\n\n");
+          return fromServer.trim() || prevLog;
+        });
       } else {
         const json = await res.json();
         setLog([json.stdout, json.stderr].filter(Boolean).join("\n\n"));

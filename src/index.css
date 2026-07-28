@@ -483,6 +483,37 @@ input {
   color: #fca5a5;
 }
 
+.progress-status.ok {
+  color: #86efac;
+}
+
+.progress-card-success {
+  border-color: color-mix(in srgb, #4ade80 45%, var(--border));
+}
+
+.progress-check {
+  width: 1.35rem;
+  height: 1.35rem;
+  margin-top: 0.1rem;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, #4ade80 25%, transparent);
+  color: #86efac;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.progress-success-banner {
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, #4ade80 14%, transparent);
+  border: 1px solid color-mix(in srgb, #4ade80 35%, var(--border));
+  color: #bbf7d0;
+  font-size: 0.88rem;
+}
+
 .progress-spinner {
   width: 1.25rem;
   height: 1.25rem;
