@@ -52,9 +52,15 @@ That creates:
 To remove Startup later: uninstall-startup.bat
 
 
-5) DAY-TO-DAY
--------------
+5) DAY-TO-DAY / RESTART AFTER QUIT
+----------------------------------
 Click the Desktop "Arrs Hub" icon (or Start Arrs Hub.vbs).
+
+- Close the window  → hub stays in the system tray (near the clock)
+- Double-click tray  → opens the window again
+- Tray → Quit        → fully stops the hub
+- After Quit         → double-click the Desktop icon (or Start Arrs Hub.vbs) to start again
+
 Dashboard also available at: http://localhost:3000
 
 
@@ -71,3 +77,4 @@ TROUBLESHOOTING
 - Port in use → Start Arrs Hub.bat frees ports 3000/3847 automatically
 - Blank/old UI → delete the dist\ folder and run Start Arrs Hub.bat again
 - Settings missing → confirm data\ was copied with the project
+- Icon looks wrong → run install-startup.bat again to refresh shortcuts

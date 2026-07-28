@@ -6,7 +6,8 @@ const http = require("node:http");
 
 const ROOT = path.resolve(__dirname, "..");
 const DIST = path.join(ROOT, "dist");
-const ICON_PATH = path.join(__dirname, "icon.png");
+const ICON_ICO = path.join(__dirname, "icon.ico");
+const ICON_PNG = path.join(__dirname, "icon.png");
 const HUB_URL = "http://127.0.0.1:3000";
 const HEALTH_URL = "http://127.0.0.1:3000/api/health";
 
@@ -18,8 +19,11 @@ let isQuitting = false;
 app.setAppUserModelId("com.machineshop44.arrs-hub");
 
 function loadIcon() {
-  if (fs.existsSync(ICON_PATH)) {
-    return nativeImage.createFromPath(ICON_PATH);
+  if (fs.existsSync(ICON_ICO)) {
+    return nativeImage.createFromPath(ICON_ICO);
+  }
+  if (fs.existsSync(ICON_PNG)) {
+    return nativeImage.createFromPath(ICON_PNG);
   }
   return nativeImage.createEmpty();
 }

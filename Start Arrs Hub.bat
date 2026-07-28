@@ -45,5 +45,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ports = 3000,3847; foreach ($port in $ports) { Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object { $procId = $_.OwningProcess; if ($procId -and $procId -ne 0) { Write-Host ('Stopping PID ' + $procId + ' on port ' + $port); Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue } } }"
 
 echo Starting Arrs Hub ^(app window + tray icon^)...
-start "" "%~dp0node_modules\electron\dist\electron.exe" "%~dp0"
+REM Use "." after cd — a trailing backslash in %%~dp0 breaks Electron's path parsing.
+start "" "%CD%\node_modules\electron\dist\electron.exe" .
 exit /b 0
