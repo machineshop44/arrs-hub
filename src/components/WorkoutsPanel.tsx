@@ -26,6 +26,9 @@ type Client = {
   product?: string;
 };
 type DayItem = { day: number; title: string; ratingKey: string };
+type PlaylistItem = { title: string; ratingKey: string; url: string };
+
+const LOCAL_CLIENT_ID = "arrs-hub-local";
 
 interface WorkoutsPanelProps {
   onClose: () => void;
@@ -50,6 +53,8 @@ export function WorkoutsPanel({
   const [error, setError] = useState<string | null>(null);
   const [serverUp, setServerUp] = useState<boolean | null>(null);
   const [showSetup, setShowSetup] = useState(false);
+  const [playlist, setPlaylist] = useState<PlaylistItem[] | null>(null);
+  const [playlistIndex, setPlaylistIndex] = useState(0);
 
   const configured = Boolean(
     settings?.plexTokenSet &&
@@ -94,8 +99,8 @@ export function WorkoutsPanel({
       firstDayEpisode: loaded.firstDayEpisode ?? 3,
       warmupTitle: loaded.warmupTitle || "Warm Up",
       dayTitlePattern: loaded.dayTitlePattern || "Day {n}",
-      clientMachineId: loaded.clientMachineId || "",
-      clientName: loaded.clientName || "",
+      clientMachineId: loaded.clientMachineId || LOCAL_CLIENT_ID,
+      clientName: loaded.clientName || "This device (play here)",
       dayCount: loaded.dayCount || 30,
     };
     if (!next.plexBaseUrl && suggestedPlexUrl) {
@@ -210,12 +215,23 @@ export function WorkoutsPanel({
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Play failed");
-      setMessage(`Playing on ${json.client}: ${json.warmup} → ${json.day}`);
+      if (json.mode === "local" && Array.isArray(json.playlist)) {
+        setPlaylist(json.playlist);
+        setPlaylistIndex(0);
+        setMessage(`Playing here: ${json.warmup} → ${json.day}`);
+      } else {
+        setMessage(`Playing on ${json.client}: ${json.warmup} → ${json.day}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setPlayingDay(null);
     }
+  };
+
+  const closePlayer = () => {
+    setPlaylist(null);
+    setPlaylistIndex(0);
   };
 
   return (
@@ -469,7 +485,7 @@ export function WorkoutsPanel({
                     </select>
                   </label>
                   <label className="field">
-                    <span>Plex client (TV / stick)</span>
+                    <span>Play on</span>
                     <select
                       value={settings.clientMachineId}
                       onChange={(e) => {
@@ -483,7 +499,7 @@ export function WorkoutsPanel({
                         });
                       }}
                     >
-                      <option value="">Select client…</option>
+                      <option value="">Select device…</option>
                       {clients.map((client) => (
                         <option
                           key={client.machineIdentifier}
@@ -496,8 +512,10 @@ export function WorkoutsPanel({
                     </select>
                   </label>
                   <p className="settings-hint">
-                    Open the Plex app on your TV/stick first, then hit Refresh if
-                    the list is empty.
+                    Choose <strong>This device (play here)</strong> for phone,
+                    tablet, or this PC. Other Plex apps (TV/stick/phone) only
+                    appear when that app is open on your network — then hit
+                    Refresh.
                   </p>
                   <div className="workouts-toolbar">
                     <button
@@ -530,9 +548,8 @@ export function WorkoutsPanel({
                 )}
                 {configured && days.length > 0 && clients.length === 0 && (
                   <div className="sync-alert sync-alert-err">
-                    No Plex clients online. Open the Plex app on your TV/stick
-                    (on the home network), then Refresh. Playback is meant to
-                    run from the hub on your Plex PC at home.
+                    No playback targets found. Hit Refresh — you should at least
+                    see &quot;This device (play here)&quot;.
                   </div>
                 )}
                 {warmup ? (
@@ -595,6 +612,48 @@ export function WorkoutsPanel({
           )}
           {error && <div className="sync-alert sync-alert-err">{error}</div>}
         </div>
+
+        {playlist && playlist[playlistIndex] && (
+          <div className="workout-player-overlay" role="presentation">
+            <div className="workout-player">
+              <header className="workout-player-header">
+                <div>
+                  <strong>
+                    {playlistIndex === 0 ? "Warm-up" : "Workout"} ·{" "}
+                    {playlist[playlistIndex].title}
+                  </strong>
+                  <p className="settings-hint">
+                    {playlistIndex + 1} of {playlist.length}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={closePlayer}
+                  aria-label="Close player"
+                >
+                  ✕
+                </button>
+              </header>
+              <video
+                key={playlist[playlistIndex].url}
+                className="workout-player-video"
+                src={playlist[playlistIndex].url}
+                controls
+                autoPlay
+                playsInline
+                onEnded={() => {
+                  if (playlistIndex < playlist.length - 1) {
+                    setPlaylistIndex((i) => i + 1);
+                  } else {
+                    closePlayer();
+                    setMessage("Workout finished.");
+                  }
+                }}
+              />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
