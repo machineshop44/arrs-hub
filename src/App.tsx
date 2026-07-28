@@ -42,7 +42,7 @@ export default function App() {
 
   const plexService = settings.services.find((s) => s.id === "plex");
   const suggestedPlexUrl = plexService
-    ? getServiceUrl(plexService, activeMode)
+    ? getServiceUrl(plexService, activeMode) ?? undefined
     : undefined;
 
   const servicesByCategory = useMemo(() => {

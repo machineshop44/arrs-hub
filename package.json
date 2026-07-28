@@ -3,12 +3,15 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "main": "desktop/main.cjs",
   "scripts": {
     "dev": "concurrently -n server,web -c magenta,cyan \"npm run server\" \"npm run web\"",
     "web": "vite",
     "server": "node server/index.mjs",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "desktop": "electron .",
+    "desktop:build": "npm run build && electron ."
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
@@ -21,7 +24,11 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
+    "electron": "^37.2.0",
     "typescript": "~5.7.2",
     "vite": "^6.0.0"
+  },
+  "allowScripts": {
+    "electron@37.10.3": true
   }
 }

@@ -1,82 +1,73 @@
 Arrs Hub — setup on your home / Plex PC
 ========================================
 
-You do NOT need an .exe or .msi. This is a small Node.js app.
-Double-click start-hub.bat after the one-time install below.
+GOAL: run it like Sonarr/Radarr — click an icon, app window opens,
+lives in the tray/taskbar. No need to leave a black Command Prompt open.
 
 
-1) ONE-TIME DOWNLOADS (installers, not cmd commands)
-----------------------------------------------------
+1) ONE-TIME DOWNLOADS (installers)
+---------------------------------
 A) Node.js LTS (required)
    https://nodejs.org
-   - Download the Windows LTS installer
-   - Install with default options (include "Add to PATH")
-   - Close and reopen any Command Prompt / PowerShell windows after install
+   - Windows LTS installer, defaults are fine (keep "Add to PATH")
 
-B) Git for Windows (recommended — Recyclarr / TRaSH sync uses it)
+B) Git for Windows (recommended for TRaSH / Recyclarr sync)
    https://git-scm.com/download/win
-   - Default options are fine
 
 
-2) ONE-TIME CHECK IN COMMAND PROMPT
------------------------------------
-Open Command Prompt and run:
-
-   node -v
-   npm -v
-   git --version
-
-You should see version numbers for each. If "node" is not recognized,
-reinstall Node.js and reboot, then try again.
-
-
-3) COPY THIS FOLDER
+2) COPY THIS FOLDER
 -------------------
-Put the whole Arrs-Hub folder somewhere stable on the Plex PC, e.g.:
+Put the whole Arrs-Hub folder somewhere stable, e.g.:
 
    C:\Apps\Arrs-Hub
 
-Keep the data\ folder — it already has your Sonarr/Radarr API keys,
-workout/Plex settings, and watchdog settings from the other PC.
+Keep the data\ folder — it already has Sonarr/Radarr API keys,
+workout/Plex settings, and watchdog settings.
 
 
-4) FIRST RUN
-------------
+3) FIRST RUN (creates the real app experience)
+----------------------------------------------
 Double-click:
 
-   start-hub.bat
+   Start Arrs Hub.vbs
 
-The first time it will run "npm install" (needs internet).
-Then it opens the hub. Leave that window open while you use the dashboard.
+   (or Start Arrs Hub.bat)
 
-Dashboard:  http://localhost:3000
-
-
-5) OPTIONAL — START WITH WINDOWS (taskbar / startup)
-----------------------------------------------------
-Easiest option (no .exe needed):
-
-   Double-click:  install-startup.bat
-
-That adds a Startup shortcut so Arrs Hub launches when you sign in.
-A console window will open — leave it running (that is the hub).
-
-To remove later, double-click:  uninstall-startup.bat
-
-Or manually:
-   Win+R → shell:startup → create a shortcut to start-hub.bat
+The first run may take a minute (npm install + UI build).
+Then an Arrs Hub window opens. Closing the window keeps it running
+in the system tray (near the clock). Right-click tray icon → Quit
+to fully stop — same idea as Sonarr/Radarr.
 
 
-6) WHY NOT AN .EXE / .MSI?
---------------------------
-An installer wrapper is possible later (Electron, etc.), but it would still
-bundle Node under the hood, be larger, and harder to update. For this hub,
-Node + start-hub.bat + optional Startup shortcut is the simple reliable path.
+4) DESKTOP ICON + START WITH WINDOWS
+------------------------------------
+Double-click once:
+
+   install-startup.bat
+
+That creates:
+  - a Desktop shortcut "Arrs Hub"
+  - a Startup entry so it launches when you sign in
+
+To remove Startup later: uninstall-startup.bat
+
+
+5) DAY-TO-DAY
+-------------
+Click the Desktop "Arrs Hub" icon (or Start Arrs Hub.vbs).
+Dashboard also available at: http://localhost:3000
+
+
+WHY NOT A PLAIN .EXE / .MSI?
+----------------------------
+This wraps the hub in Electron so you get a normal window + tray icon.
+You still need Node.js installed once (same as many modern tools).
+A full single .msi is possible later, but this is the simple reliable path.
 
 
 TROUBLESHOOTING
 ---------------
-- Port already in use: start-hub.bat frees ports 3000 and 3847 automatically.
-- Hub offline / wrong page: make sure you open http://localhost:3000 (not 3001).
-- Sync / Recyclarr: open Sync in the hub and use Download Recyclarr if needed.
-- Settings missing: confirm the data\ folder was copied with the project.
+- "node is not recognized" → install Node.js LTS, reboot, try again
+- Port in use → Start Arrs Hub.bat frees ports 3000/3847 automatically
+- Blank/old UI → delete the dist\ folder and run Start Arrs Hub.bat again
+- Settings missing → confirm data\ was copied with the project

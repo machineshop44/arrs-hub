@@ -1,4 +1,7 @@
 import express from "express";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   buildRecyclarrYaml,
   loadSyncSettings,
@@ -28,7 +31,13 @@ import {
   updateWorkoutConfig,
 } from "./plex.mjs";
 
-const PORT = Number(process.env.ARRS_HUB_SYNC_PORT || 3847);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(__dirname, "..");
+const DIST = path.join(ROOT, "dist");
+const desktopMode = process.env.ARRS_HUB_DESKTOP === "1";
+const PORT = Number(
+  process.env.ARRS_HUB_SYNC_PORT || (desktopMode ? 3000 : 3847),
+);
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -309,8 +318,19 @@ app.post("/api/sync/run", async (req, res) => {
 
 process.title = "arrs-hub-server";
 
+if (desktopMode && fs.existsSync(DIST)) {
+  app.use(express.static(DIST));
+  app.get(/^(?!\/api).*/, (_req, res) => {
+    res.sendFile(path.join(DIST, "index.html"));
+  });
+}
+
 app.listen(PORT, "127.0.0.1", () => {
-  console.log(`Arrs Hub sync server listening on http://127.0.0.1:${PORT}`);
+  console.log(
+    desktopMode
+      ? `Arrs Hub desktop server listening on http://127.0.0.1:${PORT}`
+      : `Arrs Hub sync server listening on http://127.0.0.1:${PORT}`,
+  );
   try {
     startWatchdog();
   } catch (err) {
