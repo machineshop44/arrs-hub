@@ -1,15 +1,17 @@
 ---
-description: Keep GitHub updated for Arrs Hub after feature work
+description: Keep GitHub and Google Drive updated for Arrs Hub after feature work
 alwaysApply: true
 ---
 
-# Push Arrs Hub to GitHub
+# Push Arrs Hub to GitHub (+ Drive mirror)
 
 When finishing a meaningful chunk of work in this repo (new feature, fix, or multi-file change):
 
 1. Commit the changes with a clear message (do not wait to be asked).
 2. Push to `origin` on the current branch (`git push -u origin HEAD` if needed).
-3. Never commit `data/`, `.env`, tokens, API keys, or Plex credentials.
-4. Skip empty commits. If only secrets/local data changed, do not commit.
+3. Also refresh the Google Drive mirror at `G:\My Drive\Python Scripts\Arrs-Hub` so home-PC copy stays current (robocopy/mirror source files; include `data/` settings there when Andrew wants a full home restore, but never commit secrets to Git).
+4. Never commit `data/`, `.env`, tokens, API keys, or Plex credentials to GitHub.
+5. Skip empty commits. If only secrets/local data changed, do not commit (Drive-only update is fine).
 
 Do this at natural stopping points (feature done, bug fixed), not after every tiny edit.
+Keep GitHub updated periodically through these stop points — don’t wait for Andrew to ask to push.
