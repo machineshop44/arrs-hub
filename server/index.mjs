@@ -25,10 +25,15 @@ import {
 } from "./watchdog.mjs";
 import {
   discoverWorkoutDays,
+  getPlexAuthStatus,
   getWorkoutConfig,
   listClients,
   listLibraries,
+  logoutPlex,
   playWorkoutDay,
+  pollPlexLogin,
+  publicWorkoutSettings,
+  startPlexLogin,
   testPlexConnection,
   updateWorkoutConfig,
 } from "./plex.mjs";
@@ -104,14 +109,7 @@ app.post("/api/watchdog/wol", async (req, res) => {
 });
 
 app.get("/api/workouts/settings", (_req, res) => {
-  const settings = getWorkoutConfig();
-  res.json({
-    settings: {
-      ...settings,
-      plexToken: settings.plexToken ? maskKey(settings.plexToken) : "",
-      plexTokenSet: Boolean(settings.plexToken),
-    },
-  });
+  res.json({ settings: publicWorkoutSettings() });
 });
 
 app.put("/api/workouts/settings", (req, res) => {
@@ -144,14 +142,47 @@ app.put("/api/workouts/settings", (req, res) => {
     });
     res.json({
       ok: true,
-      settings: {
-        ...settings,
-        plexToken: settings.plexToken ? maskKey(settings.plexToken) : "",
-        plexTokenSet: Boolean(settings.plexToken),
-      },
+      settings: publicWorkoutSettings(settings),
     });
   } catch (err) {
     res.status(400).json({ error: err.message || String(err) });
+  }
+});
+
+app.get("/api/workouts/plex/auth", async (_req, res) => {
+  try {
+    const status = await getPlexAuthStatus();
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/workouts/plex/auth/start", async (_req, res) => {
+  try {
+    const started = await startPlexLogin();
+    res.json({ ok: true, ...started });
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.get("/api/workouts/plex/auth/poll", async (req, res) => {
+  try {
+    const pinId = String(req.query?.pinId || "");
+    const result = await pollPlexLogin(pinId);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/workouts/plex/auth/logout", async (_req, res) => {
+  try {
+    const result = await logoutPlex();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
   }
 });
 

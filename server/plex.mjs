@@ -1,10 +1,44 @@
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { DATA_DIR, ensureDataDirs } from "./config.mjs";
 import {
   loadWorkoutSettings,
   normalizePlexBaseUrl,
   saveWorkoutSettings,
 } from "./workout-store.mjs";
 
-const HUB_CLIENT_ID = "arrs-hub-workouts";
+const PLEX_PRODUCT = "Arrs Hub";
+const CLIENT_ID_PATH = path.join(DATA_DIR, "plex-client-id");
+
+/** @type {Map<string, { code: string, expiresAt: number }>} */
+const pendingPins = new Map();
+
+/**
+ * Stable client id for plex.tv OAuth + local PMS calls (persisted in data/).
+ */
+export function getPlexClientId() {
+  ensureDataDirs();
+  if (fs.existsSync(CLIENT_ID_PATH)) {
+    const existing = fs.readFileSync(CLIENT_ID_PATH, "utf8").trim();
+    if (existing) return existing;
+  }
+  const id = crypto.randomUUID();
+  fs.writeFileSync(CLIENT_ID_PATH, `${id}\n`, "utf8");
+  return id;
+}
+
+function plexHeaders(extra = {}) {
+  return {
+    Accept: "application/json",
+    "X-Plex-Product": PLEX_PRODUCT,
+    "X-Plex-Client-Identifier": getPlexClientId(),
+    "X-Plex-Device-Name": PLEX_PRODUCT,
+    "X-Plex-Platform": "Windows",
+    "X-Plex-Device": "PC",
+    ...extra,
+  };
+}
 
 /**
  * @param {string} baseUrl
@@ -23,13 +57,10 @@ async function plexFetch(baseUrl, token, apiPath, options = {}) {
   const res = await fetch(url, {
     method: options.method || "GET",
     headers: {
-      Accept: "application/json",
-      "X-Plex-Token": token,
-      "X-Plex-Client-Identifier": HUB_CLIENT_ID,
-      "X-Plex-Product": "Arrs Hub",
-      "X-Plex-Device-Name": "Arrs Hub",
-      "X-Plex-Platform": "Windows",
-      ...(options.headers ?? {}),
+      ...plexHeaders({
+        "X-Plex-Token": token,
+        ...(options.headers ?? {}),
+      }),
     },
     signal: AbortSignal.timeout(20000),
   });
@@ -71,6 +102,23 @@ export function getWorkoutConfig() {
   };
 }
 
+/** Public workout settings shape (token masked). */
+export function publicWorkoutSettings(settings = getWorkoutConfig()) {
+  const token = settings.plexToken?.trim() || "";
+  return {
+    ...settings,
+    plexToken: token ? maskSecret(token) : "",
+    plexTokenSet: Boolean(token),
+    plexUsername: settings.plexUsername || "",
+  };
+}
+
+function maskSecret(key) {
+  if (!key) return "";
+  if (key.length <= 8) return "••••••••";
+  return `${key.slice(0, 4)}…${key.slice(-4)}`;
+}
+
 export function updateWorkoutConfig(patch = {}) {
   const current = loadWorkoutSettings();
   const next = {
@@ -90,9 +138,180 @@ export function updateWorkoutConfig(patch = {}) {
   return next;
 }
 
+/**
+ * Start Plex PIN / OAuth login. Returns auth URL for the user to open.
+ */
+export async function startPlexLogin() {
+  const clientId = getPlexClientId();
+  const url = new URL("https://plex.tv/api/v2/pins");
+  url.searchParams.set("strong", "true");
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: plexHeaders(),
+    signal: AbortSignal.timeout(20000),
+  });
+  const text = await res.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  if (!res.ok) {
+    throw new Error(
+      json?.error || json?.message || text.slice(0, 240) || `HTTP ${res.status}`,
+    );
+  }
+
+  const pinId = String(json?.id ?? "");
+  const code = String(json?.code ?? "");
+  if (!pinId || !code) {
+    throw new Error("Plex did not return a login PIN.");
+  }
+
+  const expiresIn = Number(json?.expiresIn) || 1800;
+  pendingPins.set(pinId, {
+    code,
+    expiresAt: Date.now() + expiresIn * 1000,
+  });
+
+  const params = new URLSearchParams({
+    clientID: clientId,
+    code,
+    "context[device][product]": PLEX_PRODUCT,
+  });
+  const authUrl = `https://app.plex.tv/auth#?${params.toString()}`;
+
+  return {
+    pinId,
+    authUrl,
+    expiresIn,
+  };
+}
+
+/**
+ * Poll a pending PIN. When authorized, persist the token server-side.
+ */
+export async function pollPlexLogin(pinId) {
+  const id = String(pinId || "").trim();
+  if (!id) throw new Error("Missing login PIN id.");
+
+  const pending = pendingPins.get(id);
+  if (!pending) {
+    throw new Error("Login session expired. Click Sign in with Plex again.");
+  }
+  if (Date.now() > pending.expiresAt) {
+    pendingPins.delete(id);
+    throw new Error("Login PIN expired. Click Sign in with Plex again.");
+  }
+
+  const url = new URL(`https://plex.tv/api/v2/pins/${encodeURIComponent(id)}`);
+  url.searchParams.set("code", pending.code);
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: plexHeaders(),
+    signal: AbortSignal.timeout(20000),
+  });
+  const text = await res.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  if (!res.ok) {
+    throw new Error(
+      json?.error || json?.message || text.slice(0, 240) || `HTTP ${res.status}`,
+    );
+  }
+
+  const authToken = json?.authToken;
+  if (!authToken) {
+    return {
+      ok: false,
+      pending: true,
+      authenticated: false,
+    };
+  }
+
+  pendingPins.delete(id);
+  const user = await fetchPlexAccount(authToken).catch(() => null);
+  updateWorkoutConfig({
+    plexToken: authToken,
+    plexUsername: user?.username || user?.title || "",
+  });
+
+  return {
+    ok: true,
+    pending: false,
+    authenticated: true,
+    username: user?.username || user?.title || "",
+    settings: publicWorkoutSettings(),
+  };
+}
+
+export async function logoutPlex() {
+  pendingPins.clear();
+  updateWorkoutConfig({ plexToken: "", plexUsername: "" });
+  return { ok: true, settings: publicWorkoutSettings() };
+}
+
+export async function getPlexAuthStatus() {
+  const settings = getWorkoutConfig();
+  const token = settings.plexToken?.trim() || "";
+  if (!token) {
+    return {
+      authenticated: false,
+      plexTokenSet: false,
+      username: "",
+      plexToken: "",
+    };
+  }
+
+  let username = settings.plexUsername || "";
+  try {
+    const user = await fetchPlexAccount(token);
+    username = user?.username || user?.title || username;
+    if (username && username !== settings.plexUsername) {
+      updateWorkoutConfig({ plexUsername: username });
+    }
+  } catch {
+    // Token may still work against local PMS even if plex.tv is unreachable
+  }
+
+  return {
+    authenticated: true,
+    plexTokenSet: true,
+    username,
+    plexToken: maskSecret(token),
+  };
+}
+
+async function fetchPlexAccount(token) {
+  const res = await fetch("https://plex.tv/api/v2/user", {
+    headers: plexHeaders({ "X-Plex-Token": token }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const text = await res.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  if (!res.ok) {
+    throw new Error(
+      json?.error || json?.message || text.slice(0, 240) || `HTTP ${res.status}`,
+    );
+  }
+  return json;
+}
+
 export async function testPlexConnection(settings = getWorkoutConfig()) {
   if (!settings.plexToken?.trim()) {
-    throw new Error("Add your Plex token first.");
+    throw new Error("Sign in with Plex first.");
   }
   const json = await plexFetch(
     settings.plexBaseUrl,
@@ -209,7 +428,7 @@ async function listPlexPlayers(settings) {
       headers: {
         Accept: "application/json",
         "X-Plex-Token": settings.plexToken.trim(),
-        "X-Plex-Client-Identifier": HUB_CLIENT_ID,
+        "X-Plex-Client-Identifier": getPlexClientId(),
         "X-Plex-Product": "Arrs Hub",
       },
       signal: AbortSignal.timeout(10000),
@@ -681,7 +900,7 @@ export async function playWorkoutDay(
     headers: {
       Accept: "application/json",
       "X-Plex-Token": settings.plexToken.trim(),
-      "X-Plex-Client-Identifier": HUB_CLIENT_ID,
+      "X-Plex-Client-Identifier": getPlexClientId(),
       "X-Plex-Target-Client-Identifier": client.machineIdentifier,
       "X-Plex-Product": "Arrs Hub",
       "X-Plex-Device-Name": "Arrs Hub",
@@ -755,7 +974,7 @@ async function getBrowserPlayable(settings, ratingKey, title) {
     stream.searchParams.set("addDebugOverlay", "0");
     stream.searchParams.set("autoAdjustQuality", "0");
     stream.searchParams.set("X-Plex-Platform", "Chrome");
-    stream.searchParams.set("X-Plex-Client-Identifier", HUB_CLIENT_ID);
+    stream.searchParams.set("X-Plex-Client-Identifier", getPlexClientId());
     stream.searchParams.set("X-Plex-Product", "Arrs Hub");
     stream.searchParams.set("X-Plex-Device-Name", "Arrs Hub");
     stream.searchParams.set("X-Plex-Token", token);
@@ -779,6 +998,6 @@ function libraryUri(serverId, ratingKey) {
 
 function requireToken(settings) {
   if (!settings?.plexToken?.trim()) {
-    throw new Error("Add your Plex token first.");
+    throw new Error("Sign in with Plex first.");
   }
 }

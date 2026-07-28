@@ -8,6 +8,8 @@ export function defaultWorkoutSettings() {
   return {
     plexBaseUrl: "http://localhost:32400",
     plexToken: "",
+    /** Display name from plex.tv after Sign in with Plex */
+    plexUsername: "",
     librarySectionId: "",
     /** "episode" = TV show S/E mapping; "title" = match video titles */
     matchMode: "episode",

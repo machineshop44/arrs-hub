@@ -581,6 +581,43 @@ input {
   margin-bottom: 0.85rem;
 }
 
+.workouts-plex-auth {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.workouts-plex-auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.workouts-plex-signed-in {
+  margin: 0;
+}
+
+.workouts-advanced-token {
+  margin: 0.35rem 0 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-elevated) 70%, transparent);
+}
+
+.workouts-advanced-token summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.workouts-advanced-token[open] summary {
+  margin-bottom: 0.5rem;
+  color: var(--text);
+}
+
 .workout-day-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(4.5rem, 1fr));

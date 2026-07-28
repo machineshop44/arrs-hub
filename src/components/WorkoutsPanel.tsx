@@ -4,6 +4,7 @@ type WorkoutSettings = {
   plexBaseUrl: string;
   plexToken: string;
   plexTokenSet?: boolean;
+  plexUsername?: string;
   librarySectionId: string;
   matchMode: "episode" | "title";
   showTitle: string;
@@ -216,6 +217,9 @@ export function WorkoutsPanel({
   const [showSetup, setShowSetup] = useState(false);
   const [playlist, setPlaylist] = useState<PlaylistItem[] | null>(null);
   const [playlistIndex, setPlaylistIndex] = useState(0);
+  const [authPolling, setAuthPolling] = useState(false);
+  const [showManualToken, setShowManualToken] = useState(false);
+  const authPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const configured = Boolean(
     settings?.plexTokenSet && settings.librarySectionId,
@@ -250,6 +254,7 @@ export function WorkoutsPanel({
       plexBaseUrl: loaded.plexBaseUrl || "",
       plexToken: loaded.plexToken || "",
       plexTokenSet: loaded.plexTokenSet,
+      plexUsername: loaded.plexUsername || "",
       librarySectionId: loaded.librarySectionId || "",
       matchMode: loaded.matchMode === "title" ? "title" : "episode",
       showTitle: loaded.showTitle || "Fit With the Force",
@@ -323,6 +328,118 @@ export function WorkoutsPanel({
       }
     })();
   }, [loadSettings, refreshMeta]);
+
+  useEffect(() => {
+    return () => {
+      if (authPollRef.current) clearInterval(authPollRef.current);
+    };
+  }, []);
+
+  const stopAuthPoll = () => {
+    if (authPollRef.current) {
+      clearInterval(authPollRef.current);
+      authPollRef.current = null;
+    }
+    setAuthPolling(false);
+  };
+
+  const signInWithPlex = async () => {
+    setBusy(true);
+    setMessage(null);
+    setError(null);
+    stopAuthPoll();
+    try {
+      const res = await fetch("/api/workouts/plex/auth/start", {
+        method: "POST",
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Could not start Plex login");
+
+      const authUrl = String(json.authUrl || "");
+      const pinId = String(json.pinId || "");
+      if (!authUrl || !pinId) {
+        throw new Error("Plex login did not return an auth URL.");
+      }
+
+      window.open(authUrl, "arrs-hub-plex-auth", "noopener,noreferrer");
+      setAuthPolling(true);
+      setMessage("Waiting for Plex sign-in… finish in the browser tab that opened.");
+
+      authPollRef.current = setInterval(() => {
+        void (async () => {
+          try {
+            const pollRes = await fetch(
+              `/api/workouts/plex/auth/poll?pinId=${encodeURIComponent(pinId)}`,
+            );
+            const pollJson = await pollRes.json();
+            if (!pollRes.ok) {
+              stopAuthPoll();
+              setError(pollJson.error || "Plex login failed");
+              setMessage(null);
+              return;
+            }
+            if (pollJson.authenticated && pollJson.settings) {
+              stopAuthPoll();
+              setSettings(pollJson.settings as WorkoutSettings);
+              setMessage(
+                pollJson.username
+                  ? `Signed in as ${pollJson.username}.`
+                  : "Signed in with Plex.",
+              );
+              setError(null);
+              await refreshMeta();
+            }
+          } catch (err) {
+            stopAuthPoll();
+            setError(err instanceof Error ? err.message : String(err));
+            setMessage(null);
+          }
+        })();
+      }, 1500);
+    } catch (err) {
+      stopAuthPoll();
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const signOutPlex = async () => {
+    setBusy(true);
+    setMessage(null);
+    setError(null);
+    stopAuthPoll();
+    try {
+      const res = await fetch("/api/workouts/plex/auth/logout", {
+        method: "POST",
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Sign out failed");
+      if (json.settings) setSettings(json.settings as WorkoutSettings);
+      else {
+        setSettings((prev) =>
+          prev
+            ? {
+                ...prev,
+                plexToken: "",
+                plexTokenSet: false,
+                plexUsername: "",
+              }
+            : prev,
+        );
+      }
+      setLibraries([]);
+      setClients([]);
+      setDays([]);
+      setWarmup(null);
+      setMessage("Signed out of Plex.");
+      setShowSetup(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const dayButtons = useMemo(() => {
     const max = Math.max(
@@ -452,15 +569,9 @@ export function WorkoutsPanel({
                 <section className="settings-group">
                   <h3>Plex connection</h3>
                   <p className="settings-hint">
-                    Need a token?{" "}
-                    <a
-                      href="https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Find your X-Plex-Token
-                    </a>
-                    . Use the server URL without <code>/web</code> (example:{" "}
+                    Sign in with your Plex account — Arrs Hub keeps the token on
+                    this PC (never pasted into chat). Use the server URL without{" "}
+                    <code>/web</code> (example:{" "}
                     <code>http://localhost:32400</code>).
                   </p>
                   <label className="field">
@@ -476,24 +587,107 @@ export function WorkoutsPanel({
                       placeholder="http://localhost:32400"
                     />
                   </label>
-                  <label className="field">
-                    <span>Plex token</span>
-                    <input
-                      value={settings.plexToken}
-                      onChange={(e) =>
-                        setSettings({
-                          ...settings,
-                          plexToken: e.target.value,
-                        })
-                      }
-                      placeholder={
-                        settings.plexTokenSet
-                          ? "Token saved — paste a new one to replace"
-                          : "Paste X-Plex-Token"
-                      }
-                      autoComplete="off"
-                    />
-                  </label>
+                  <div className="field">
+                    <span>Plex account</span>
+                    <div className="workouts-plex-auth">
+                      {settings.plexTokenSet ? (
+                        <>
+                          <p className="settings-hint workouts-plex-signed-in">
+                            Signed in
+                            {settings.plexUsername
+                              ? ` as ${settings.plexUsername}`
+                              : ""}
+                            {settings.plexToken
+                              ? ` · token ${settings.plexToken}`
+                              : ""}
+                          </p>
+                          <div className="workouts-plex-auth-actions">
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              disabled={busy || authPolling}
+                              onClick={() => void signInWithPlex()}
+                            >
+                              Re-sign in
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              disabled={busy || authPolling}
+                              onClick={() => void signOutPlex()}
+                            >
+                              Sign out
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="workouts-plex-auth-actions">
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            disabled={busy || authPolling}
+                            onClick={() => void signInWithPlex()}
+                          >
+                            {authPolling
+                              ? "Waiting for Plex…"
+                              : "Sign in with Plex"}
+                          </button>
+                          {authPolling && (
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={() => {
+                                stopAuthPoll();
+                                setMessage(null);
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <details
+                    className="workouts-advanced-token"
+                    open={showManualToken}
+                    onToggle={(e) =>
+                      setShowManualToken(
+                        (e.target as HTMLDetailsElement).open,
+                      )
+                    }
+                  >
+                    <summary>Advanced: paste token manually</summary>
+                    <p className="settings-hint">
+                      Only needed if browser login fails.{" "}
+                      <a
+                        href="https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Find your X-Plex-Token
+                      </a>
+                      .
+                    </p>
+                    <label className="field">
+                      <span>Plex token</span>
+                      <input
+                        value={settings.plexToken}
+                        onChange={(e) =>
+                          setSettings({
+                            ...settings,
+                            plexToken: e.target.value,
+                          })
+                        }
+                        placeholder={
+                          settings.plexTokenSet
+                            ? "Token saved — paste a new one to replace"
+                            : "Paste X-Plex-Token"
+                        }
+                        autoComplete="off"
+                      />
+                    </label>
+                  </details>
                   <label className="field">
                     <span>Match mode</span>
                     <select
