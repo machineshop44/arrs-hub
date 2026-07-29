@@ -45,9 +45,40 @@ const desktopMode = process.env.ARRS_HUB_DESKTOP === "1";
 const PORT = Number(
   process.env.ARRS_HUB_SYNC_PORT || (desktopMode ? 3000 : 3847),
 );
+/** Loopback by default; set ARRS_HUB_BIND=0.0.0.0 for phone companion on LAN */
+const BIND = process.env.ARRS_HUB_BIND || "127.0.0.1";
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
+
+// Allow Capacitor / browser status companion (read-only GETs from phone WebView)
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (
+    origin &&
+    (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin) ||
+      /^capacitor:\/\//i.test(origin) ||
+      /^ionic:\/\//i.test(origin))
+  ) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization",
+    );
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET, HEAD, OPTIONS",
+    );
+  }
+  // Also allow null/file origins used by some WebViews by echoing nothing special —
+  // Capacitor Android typically uses https://localhost
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return;
+  }
+  next();
+});
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
@@ -400,12 +431,19 @@ if (desktopMode && fs.existsSync(DIST)) {
   });
 }
 
-app.listen(PORT, "127.0.0.1", () => {
+app.listen(PORT, BIND, () => {
+  const where = `http://${BIND === "0.0.0.0" ? "0.0.0.0 (all interfaces)" : BIND}:${PORT}`;
   console.log(
     desktopMode
-      ? `Arrs Hub desktop server listening on http://127.0.0.1:${PORT}`
-      : `Arrs Hub sync server listening on http://127.0.0.1:${PORT}`,
+      ? `Arrs Hub desktop server listening on ${where}`
+      : `Arrs Hub sync server listening on ${where}`,
   );
+  if (BIND === "0.0.0.0" || BIND === "::") {
+    console.log(
+      "LAN bind enabled — phone companion can use http://<this-pc-lan-ip>:" +
+        PORT,
+    );
+  }
   try {
     startWatchdog();
   } catch (err) {
