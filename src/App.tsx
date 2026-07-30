@@ -9,6 +9,7 @@ import { TrashUpdateBanner } from "./components/TrashUpdateBanner";
 import { SyncPanel } from "./components/SyncPanel";
 import { WatchdogPanel } from "./components/WatchdogPanel";
 import { WorkoutsPanel } from "./components/WorkoutsPanel";
+import { StreamsPanel } from "./components/StreamsPanel";
 import { CATEGORY_ORDER, getServiceUrl } from "./types";
 import type { ConnectionPreference } from "./types";
 
@@ -39,10 +40,16 @@ export default function App() {
 
   const [showWatchdog, setShowWatchdog] = useState(false);
   const [showWorkouts, setShowWorkouts] = useState(false);
+  const [showStreams, setShowStreams] = useState(false);
 
   const plexService = settings.services.find((s) => s.id === "plex");
   const suggestedPlexUrl = plexService
     ? getServiceUrl(plexService, activeMode) ?? undefined
+    : undefined;
+
+  const tautulliService = settings.services.find((s) => s.id === "tautulli");
+  const suggestedTautulliUrl = tautulliService
+    ? getServiceUrl(tautulliService, activeMode) ?? undefined
     : undefined;
 
   const servicesByCategory = useMemo(() => {
@@ -120,6 +127,14 @@ export default function App() {
                 </button>
               ))}
             </div>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              title="Live Plex streams from Tautulli"
+              onClick={() => setShowStreams(true)}
+            >
+              📡 Streams
+            </button>
             <button
               type="button"
               className="btn btn-ghost"
@@ -306,6 +321,13 @@ export default function App() {
         <WorkoutsPanel
           onClose={() => setShowWorkouts(false)}
           suggestedPlexUrl={suggestedPlexUrl}
+        />
+      )}
+
+      {showStreams && (
+        <StreamsPanel
+          onClose={() => setShowStreams(false)}
+          suggestedBaseUrl={suggestedTautulliUrl}
         />
       )}
     </div>

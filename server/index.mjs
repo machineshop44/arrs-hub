@@ -37,6 +37,12 @@ import {
   testPlexConnection,
   updateWorkoutConfig,
 } from "./plex.mjs";
+import {
+  getTautulliActivity,
+  proxyTautulliImage,
+  publicTautulliSettings,
+  updateTautulliSettings,
+} from "./tautulli.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.env.ARRS_HUB_ROOT
@@ -229,6 +235,77 @@ app.post("/api/workouts/play", async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.get("/api/tautulli/settings", (_req, res) => {
+  res.json({ settings: publicTautulliSettings() });
+});
+
+app.put("/api/tautulli/settings", (req, res) => {
+  try {
+    const body = req.body ?? {};
+    const settings = updateTautulliSettings({
+      baseUrl: body.baseUrl,
+      apiKey: body.apiKey,
+    });
+    res.json({ ok: true, settings: publicTautulliSettings(settings) });
+  } catch (err) {
+    res.status(400).json({ error: err.message || String(err) });
+  }
+});
+
+app.get("/api/tautulli/activity", async (_req, res) => {
+  try {
+    const settings = publicTautulliSettings();
+    if (!settings.apiKeySet) {
+      res.status(400).json({
+        error:
+          "Tautulli API key not set. Open Streams setup and paste the key from Tautulli → Settings → Web Interface → API.",
+        code: "TAUTULLI_NOT_CONFIGURED",
+        settings,
+      });
+      return;
+    }
+    const activity = await getTautulliActivity();
+    res.json({ ok: true, settings, activity });
+  } catch (err) {
+    const status = err?.code === "TAUTULLI_NOT_CONFIGURED" ? 400 : 500;
+    res.status(status).json({
+      error: err.message || String(err),
+      code: err?.code || undefined,
+      settings: publicTautulliSettings(),
+    });
+  }
+});
+
+app.get("/api/tautulli/image", async (req, res) => {
+  try {
+    const img = typeof req.query.img === "string" ? req.query.img : "";
+    const ratingKey =
+      typeof req.query.rating_key === "string"
+        ? req.query.rating_key
+        : typeof req.query.ratingKey === "string"
+          ? req.query.ratingKey
+          : "";
+    const width = req.query.width;
+    const height = req.query.height;
+    const fallback =
+      typeof req.query.fallback === "string" ? req.query.fallback : "poster";
+
+    const { contentType, buffer } = await proxyTautulliImage({
+      img: img || undefined,
+      ratingKey: ratingKey || undefined,
+      width,
+      height,
+      fallback,
+    });
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.send(buffer);
+  } catch (err) {
+    const status = err?.code === "TAUTULLI_NOT_CONFIGURED" ? 400 : 502;
+    res.status(status).json({ error: err.message || String(err) });
   }
 });
 

@@ -1,6 +1,6 @@
 # Arr's Hub
 
-A simple, all-in-one dashboard for your Plex and *arr stack. Launch Sonarr, Radarr, Prowlarr, Tautulli, Ombi, qBittorrent, SABnzbd, and more from one place — plus a Windows tray app with port watchdog, TRaSH sync, and workouts.
+A simple, all-in-one dashboard for your Plex and *arr stack. Launch Sonarr, Radarr, Prowlarr, Tautulli, Ombi, qBittorrent, SABnzbd, and more from one place — plus a Windows tray app with port watchdog, live Tautulli streams, TRaSH sync, and workouts.
 
 ## Install on Plex PC (recommended)
 
@@ -28,6 +28,12 @@ Windows may show a SmartScreen warning on first run (unsigned installer). Choose
 ### Optional: Recyclarr / TRaSH sync
 
 In the hub header, open **Sync**, paste Sonarr/Radarr API keys, pick a profile, **Download Recyclarr**, then **Sync now**. Recyclarr downloads into `%APPDATA%\Arrs Hub\data\recyclarr\`. Git for Windows is only needed if Recyclarr’s guide clone requires it on your machine.
+
+### Optional: Tautulli Streams
+
+In the hub header, open **Streams**. Paste your Tautulli base URL (same as the Tautulli Home URL, e.g. `http://localhost:8181`) and API key from **Tautulli → Settings → Web Interface → API**. The panel shows live sessions with posters, progress, and Direct Play / Transcode details (auto-refreshes). Settings are stored in `%APPDATA%\Arrs Hub\data\tautulli-settings.json` (or `./data/` in dev) — never commit that file.
+
+Packaged desktop builds need a new installer/release that includes this feature; `npm run dev` on `main` works immediately.
 
 ---
 

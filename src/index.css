@@ -908,6 +908,236 @@ input {
   margin-bottom: 1rem;
 }
 
+.streams-panel {
+  max-width: 820px;
+}
+
+.streams-summary {
+  margin-top: 0.2rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.streams-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.streams-setup code {
+  font-size: 0.78rem;
+}
+
+.streams-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.stream-card {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 0.9rem;
+  padding: 0.85rem;
+  background: #12151e;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.stream-poster {
+  position: relative;
+  width: 88px;
+  height: 132px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.stream-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.stream-poster-fallback {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  font-size: 1.75rem;
+  color: var(--text-muted);
+}
+
+.stream-state {
+  position: absolute;
+  left: 0.35rem;
+  bottom: 0.35rem;
+  padding: 0.12rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.stream-state-playing {
+  color: #f0c14b;
+}
+
+.stream-state-paused {
+  color: #94a3b8;
+}
+
+.stream-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.stream-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.stream-title {
+  font-size: 1rem;
+  font-weight: 650;
+  line-height: 1.25;
+  color: var(--text);
+}
+
+.stream-subtitle {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.stream-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.stream-location {
+  color: #f0c14b;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.stream-decision {
+  flex-shrink: 0;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-muted);
+}
+
+.stream-decision-direct-play {
+  color: #86efac;
+  border-color: color-mix(in srgb, #22c55e 45%, var(--border));
+  background: color-mix(in srgb, #22c55e 12%, var(--bg));
+}
+
+.stream-decision-direct-stream {
+  color: #93c5fd;
+  border-color: color-mix(in srgb, #3b82f6 45%, var(--border));
+  background: color-mix(in srgb, #3b82f6 12%, var(--bg));
+}
+
+.stream-decision-transcode {
+  color: #fdba74;
+  border-color: color-mix(in srgb, #f59e0b 45%, var(--border));
+  background: color-mix(in srgb, #f59e0b 12%, var(--bg));
+}
+
+.stream-progress {
+  margin-top: 0.15rem;
+}
+
+.stream-progress-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: #0a0c12;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.stream-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #cc7b19, #f0c14b);
+}
+
+.stream-progress-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.25rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.stream-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.streams-empty {
+  text-align: center;
+  padding: 2.5rem 1rem;
+  color: var(--text-muted);
+}
+
+.streams-empty-icon {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+  opacity: 0.85;
+}
+
+.streams-empty p {
+  margin-bottom: 0.35rem;
+  color: var(--text);
+  font-weight: 560;
+}
+
+.streams-empty small {
+  font-size: 0.8rem;
+}
+
+@media (max-width: 640px) {
+  .stream-card {
+    grid-template-columns: 72px 1fr;
+  }
+
+  .stream-poster {
+    width: 72px;
+    height: 108px;
+  }
+
+  .stream-title-row {
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+}
+
 .settings-overlay {
   position: fixed;
   inset: 0;
