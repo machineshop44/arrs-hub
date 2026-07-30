@@ -33,7 +33,7 @@ In the hub header, open **Sync**, paste Sonarr/Radarr API keys, pick a profile, 
 
 In the hub header, open **Streams**. Paste your Tautulli base URL (same as the Tautulli Home URL, e.g. `http://localhost:8181`) and API key from **Tautulli → Settings → Web Interface → API**. The panel shows live sessions with posters, progress, and Direct Play / Transcode details (auto-refreshes). Settings are stored in `%APPDATA%\Arrs Hub\data\tautulli-settings.json` (or `./data/` in dev) — never commit that file.
 
-Packaged desktop builds need a new installer/release that includes this feature; `npm run dev` on `main` works immediately.
+Get Streams on the Plex PC via the latest [GitHub Release](https://github.com/machineshop44/arrs-hub/releases/latest) installer (or `npm run dev` on `main` for development).
 
 ---
 

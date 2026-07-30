@@ -1,0 +1,17 @@
+---
+description: Ship Arrs Hub as a Windows .exe installer after meaningful hub features
+alwaysApply: true
+---
+
+# Ship Windows .exe for Plex PC users
+
+After meaningful hub features that users need on the Plex PC (new UI panels, desktop packaging, settings that only matter in the installed app):
+
+1. Bump `version` in `package.json` when shipping a new release.
+2. Build the installer: `npm run dist:win` (set `NODE_OPTIONS=--use-system-ca` if Electron/npm downloads fail TLS on this machine).
+3. Create/tag a GitHub Release `vX.Y.Z` and upload the NSIS installer from `release/` (`Arrs Hub-x.y.z-x64.exe`). Include the portable build if present. Release notes should note that no Node/Git is required to run the app.
+4. Copy the NSIS installer to `G:\My Drive\exe\` (create the folder if needed). Keep the version in the filename. Overwrite older copies of the same version if re-shipping.
+5. **Never commit** `release/`, `.exe` files, or other large binaries to git.
+6. Commit the version bump (and rule/README updates if any), then push `main`.
+
+Do this at natural stop points when the Plex PC needs the new build — not after every tiny edit. Source still goes to GitHub; the Drive `exe\` folder is the easy grab for home installs alongside Releases.
