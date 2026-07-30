@@ -20,15 +20,20 @@ Use **Auto** (default) to pick Home vs Remote from your network. Use the header 
 
 ## Run on your Plex PC (recommended)
 
-For port monitoring + auto-restart when an app dies:
+For a normal app window + tray icon (like Sonarr/Radarr), follow **`SETUP-AT-HOME.txt`**.
 
-1. Copy/clone this folder onto the Plex PC
-2. Double-click `start-hub.bat` (or run `npm run dev`)
-3. Leave that window open
-4. Open **Watch** in the hub → enable Monitor + Auto-restart
-5. Confirm each app’s **Windows service name** (usually `Sonarr`, `Radarr`, `Prowlarr`, …)
+Short version:
+
+1. Install [Node.js LTS](https://nodejs.org) (keep Add to PATH) and optionally [Git for Windows](https://git-scm.com/download/win)
+2. Copy/clone this folder onto the Plex PC (e.g. `C:\Apps\Arrs-Hub`)
+3. First run: double-click **`Start Arrs Hub.bat`** (runs `npm install` + UI build, then opens the app)
+4. Optional: run **`install-startup.bat`** for a Desktop shortcut + Start with Windows
+5. Open **Watch** in the hub → enable Monitor + Auto-restart
+6. Confirm each app’s **Windows service name** (usually `Sonarr`, `Radarr`, `Prowlarr`, …)
 
 Home URLs should point at this machine (`http://localhost:8989` or the PC’s LAN IP). The watchdog always checks **Home** ports.
+
+Developer alternative: `start-hub.bat` / `npm run dev` (keeps a console window open).
 
 The hub can apply TRaSH Guide profiles using a local Windows helper (Recyclarr under the hood — no Docker):
 

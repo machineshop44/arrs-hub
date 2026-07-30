@@ -10,33 +10,43 @@ lives in the tray/taskbar. No need to leave a black Command Prompt open.
 A) Node.js LTS (required)
    https://nodejs.org
    - Windows LTS installer, defaults are fine (keep "Add to PATH")
+   - After installing, close and reopen any open Command Prompt windows
 
 B) Git for Windows (recommended for TRaSH / Recyclarr sync)
    https://git-scm.com/download/win
 
 
-2) COPY THIS FOLDER
--------------------
-Put the whole Arrs-Hub folder somewhere stable, e.g.:
+2) GET THE FOLDER ONTO THE PLEX PC
+----------------------------------
+Option A — clone (best for updates later):
+   git clone https://github.com/machineshop44/arrs-hub.git C:\Apps\Arrs-Hub
 
+Option B — copy the whole Arrs-Hub folder somewhere stable, e.g.:
    C:\Apps\Arrs-Hub
 
-Keep the data\ folder — it already has Sonarr/Radarr API keys,
-workout/Plex settings, and watchdog settings.
+If you already use this hub elsewhere, keep the data\ folder — it has
+Sonarr/Radarr API keys, workout/Plex settings, and watchdog settings.
+A brand-new install can start without data\ (Settings are empty until you fill them in).
 
 
 3) FIRST RUN (creates the real app experience)
 ----------------------------------------------
+IMPORTANT: use the .bat the first time so you can see npm install / build.
+
 Double-click:
 
-   Start Arrs Hub.vbs
+   Start Arrs Hub.bat
 
-   (or Start Arrs Hub.bat)
-
-The first run may take a minute (npm install + UI build).
+The first run may take a few minutes (npm install + UI build).
 Then an Arrs Hub window opens. Closing the window keeps it running
 in the system tray (near the clock). Right-click tray icon → Quit
 to fully stop — same idea as Sonarr/Radarr.
+
+After the first successful run, you can use:
+
+   Start Arrs Hub.vbs
+
+   (silent launcher — no console window)
 
 
 4) DESKTOP ICON + START WITH WINDOWS
@@ -73,8 +83,14 @@ A full single .msi is possible later, but this is the simple reliable path.
 
 TROUBLESHOOTING
 ---------------
-- "node is not recognized" → install Node.js LTS, reboot, try again
+- "node is not recognized" → install Node.js LTS, reboot (or sign out/in), try again
+- "Arrs Hub failed to start" → read the dialog text (it now includes server errors).
+  Common fixes:
+    1) Run Start Arrs Hub.bat (not only the .vbs) so npm install / build finish
+    2) Delete node_modules and dist, then run Start Arrs Hub.bat again
+    3) Confirm nothing else is stuck on port 3000
 - Port in use → Start Arrs Hub.bat frees ports 3000/3847 automatically
 - Blank/old UI → delete the dist\ folder and run Start Arrs Hub.bat again
 - Settings missing → confirm data\ was copied with the project
 - Icon looks wrong → run install-startup.bat again to refresh shortcuts
+- Developer console mode → start-hub.bat (npm run dev) — optional; tray app is preferred

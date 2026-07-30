@@ -27,11 +27,16 @@ echo Freeing ports 3000 and 3847 if an old hub is still running...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ports = 3000,3847; foreach ($port in $ports) { Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object { $procId = $_.OwningProcess; if ($procId -and $procId -ne 0) { Write-Host ('Stopping PID ' + $procId + ' on port ' + $port); Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue } } }"
 
-REM Needed for plex.tv login TLS on machines with custom/corporate CAs
-set "NODE_OPTIONS=%NODE_OPTIONS% --use-system-ca"
+REM plex.tv TLS on machines with custom/corporate CAs (safe on older Node — ignored if unsupported)
+set "NODE_USE_SYSTEM_CA=1"
+node --use-system-ca -e "process.exit(0)" >nul 2>&1
+if not errorlevel 1 (
+  set "NODE_OPTIONS=%NODE_OPTIONS% --use-system-ca"
+)
 
 echo.
 echo Starting Arrs Hub (dashboard + sync + port watchdog)...
+echo Prefer the tray app for daily use: double-click "Start Arrs Hub.vbs"
 echo Leave this window open on your Plex PC.
 echo Dashboard: http://localhost:3000
 echo.
