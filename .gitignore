@@ -1,5 +1,7 @@
 node_modules
 dist
+release
+dist-installer
 .DS_Store
 *.local
 .env
@@ -9,4 +11,7 @@ server/node_modules/
 data/recyclarr/run-apply-sync.bat
 data/recyclarr/.last-sync-exit
 *.tsbuildinfo
+*.exe
+!desktop/icon.ico
+!build/icon.ico
 

@@ -1,7 +1,9 @@
 {
   "name": "arrs-hub",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "description": "Arrs Hub — dashboard and watchdog for your Plex / *arr stack",
+  "author": "machineshop44",
   "type": "module",
   "main": "desktop/main.cjs",
   "scripts": {
@@ -11,7 +13,10 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "desktop": "electron .",
-    "desktop:build": "npm run build && electron ."
+    "desktop:build": "npm run build && electron .",
+    "dist:win": "npm run build && electron-builder --win",
+    "build:win": "npm run dist:win",
+    "pack:win": "npm run build && electron-builder --win --dir"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
@@ -26,10 +31,73 @@
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
     "electron": "^37.2.0",
+    "electron-builder": "^26.15.3",
     "typescript": "~5.7.2",
     "vite": "^6.0.0"
   },
   "allowScripts": {
     "electron@37.10.3": true
+  },
+  "build": {
+    "appId": "com.machineshop44.arrs-hub",
+    "productName": "Arrs Hub",
+    "copyright": "Copyright © machineshop44",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "desktop/**/*",
+      "server/**/*",
+      "dist/**/*",
+      "package.json",
+      "!mobile/**/*",
+      "!src/**/*",
+      "!data/**/*",
+      "!release/**/*"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "server/**/*",
+      "dist/**/*",
+      "**/node_modules/**/*"
+    ],
+    "extraMetadata": {
+      "main": "desktop/main.cjs"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Arrs Hub",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    }
   }
 }

@@ -39,8 +39,12 @@ import {
 } from "./plex.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, "..");
-const DIST = path.join(ROOT, "dist");
+const ROOT = process.env.ARRS_HUB_ROOT
+  ? path.resolve(process.env.ARRS_HUB_ROOT)
+  : path.resolve(__dirname, "..");
+const DIST = process.env.ARRS_HUB_DIST
+  ? path.resolve(process.env.ARRS_HUB_DIST)
+  : path.join(ROOT, "dist");
 const desktopMode = process.env.ARRS_HUB_DESKTOP === "1";
 const PORT = Number(
   process.env.ARRS_HUB_SYNC_PORT || (desktopMode ? 3000 : 3847),

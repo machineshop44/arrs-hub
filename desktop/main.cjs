@@ -4,11 +4,6 @@ const fs = require("node:fs");
 const path = require("node:path");
 const http = require("node:http");
 
-const ROOT = path.resolve(__dirname, "..");
-const DIST = path.join(ROOT, "dist");
-const EXPRESS_DIR = path.join(ROOT, "node_modules", "express");
-const ICON_ICO = path.join(__dirname, "icon.ico");
-const ICON_PNG = path.join(__dirname, "icon.png");
 const HUB_PORT = "3000";
 const HUB_URL = `http://127.0.0.1:${HUB_PORT}`;
 const HEALTH_URL = `http://127.0.0.1:${HUB_PORT}/api/health`;
@@ -25,12 +20,51 @@ let systemCaSupported = null;
 
 app.setAppUserModelId("com.machineshop44.arrs-hub");
 
-function loadIcon() {
-  if (fs.existsSync(ICON_ICO)) {
-    return nativeImage.createFromPath(ICON_ICO);
+function isPackaged() {
+  return app.isPackaged;
+}
+
+/** Repo root (dev) or app.asar.unpacked / resources path (packaged). */
+function getHubRoot() {
+  if (isPackaged()) {
+    const unpacked = path.join(process.resourcesPath, "app.asar.unpacked");
+    if (fs.existsSync(path.join(unpacked, "server", "index.mjs"))) {
+      return unpacked;
+    }
+    // asar:false installs land files next to app.asar / in app path
+    return app.getAppPath();
   }
-  if (fs.existsSync(ICON_PNG)) {
-    return nativeImage.createFromPath(ICON_PNG);
+  return path.resolve(__dirname, "..");
+}
+
+function getDistDir(root) {
+  return path.join(root, "dist");
+}
+
+function getDataDir() {
+  if (isPackaged()) {
+    return path.join(app.getPath("userData"), "data");
+  }
+  return path.join(getHubRoot(), "data");
+}
+
+function getIconPaths() {
+  const root = getHubRoot();
+  return {
+    ico: path.join(__dirname, "icon.ico"),
+    png: path.join(__dirname, "icon.png"),
+    // Packaged builds may also ship icons under build/
+    buildIco: path.join(root, "build", "icon.ico"),
+    buildPng: path.join(root, "build", "icon.png"),
+  };
+}
+
+function loadIcon() {
+  const icons = getIconPaths();
+  for (const candidate of [icons.ico, icons.buildIco, icons.png, icons.buildPng]) {
+    if (candidate && fs.existsSync(candidate)) {
+      return nativeImage.createFromPath(candidate);
+    }
   }
   return nativeImage.createEmpty();
 }
@@ -50,9 +84,18 @@ function trimLog(text) {
   return cleaned.length > 1500 ? cleaned.slice(-1500) : cleaned;
 }
 
+/**
+ * Prefer Electron's bundled Node (packaged = zero system Node).
+ * Dev/unpackaged can fall back to PATH node.exe.
+ */
 function resolveNodeBinary() {
   if (process.env.ARRS_HUB_NODE && fs.existsSync(process.env.ARRS_HUB_NODE)) {
-    return process.env.ARRS_HUB_NODE;
+    return { bin: process.env.ARRS_HUB_NODE, electronAsNode: false };
+  }
+
+  // Always usable: this process is Electron. ELECTRON_RUN_AS_NODE runs plain Node.
+  if (process.execPath && fs.existsSync(process.execPath)) {
+    return { bin: process.execPath, electronAsNode: true };
   }
 
   const whichCmd = process.platform === "win32" ? "where" : "which";
@@ -65,7 +108,9 @@ function resolveNodeBinary() {
       .split(/\r?\n/)
       .map((line) => line.trim())
       .find(Boolean);
-    if (first && fs.existsSync(first)) return first;
+    if (first && fs.existsSync(first)) {
+      return { bin: first, electronAsNode: false };
+    }
   }
 
   if (process.platform === "win32") {
@@ -79,19 +124,25 @@ function resolveNodeBinary() {
       path.join(process.env.LOCALAPPDATA || "", "Programs", "nodejs", "node.exe"),
     ];
     for (const candidate of candidates) {
-      if (candidate && fs.existsSync(candidate)) return candidate;
+      if (candidate && fs.existsSync(candidate)) {
+        return { bin: candidate, electronAsNode: false };
+      }
     }
   }
 
   return null;
 }
 
-function nodeSupportsSystemCa(nodePath) {
+function nodeSupportsSystemCa(nodePath, electronAsNode) {
   if (systemCaSupported !== null) return systemCaSupported;
+  const env = electronAsNode
+    ? { ...process.env, ELECTRON_RUN_AS_NODE: "1" }
+    : { ...process.env };
   const probe = spawnSync(nodePath, ["--use-system-ca", "-e", "process.exit(0)"], {
     encoding: "utf8",
     windowsHide: true,
     timeout: 8000,
+    env,
   });
   systemCaSupported = probe.status === 0;
   return systemCaSupported;
@@ -124,6 +175,10 @@ function failureDetails(prefix) {
   const log = trimLog(serverLog);
   if (log) {
     parts.push(`Server output:\n${log}`);
+  } else if (isPackaged()) {
+    parts.push(
+      "No server output was captured. Try reinstalling Arrs Hub from the GitHub Release installer, or check that port 3000 is free.",
+    );
   } else {
     parts.push(
       "No server output was captured. Run Start Arrs Hub.bat from this folder (not a broken shortcut) so npm install / build can finish.",
@@ -182,38 +237,63 @@ function startServer() {
   serverLog = "";
   serverExit = null;
 
-  if (!fs.existsSync(DIST) || !fs.existsSync(path.join(DIST, "index.html"))) {
+  const root = getHubRoot();
+  const dist = getDistDir(root);
+  const dataDir = getDataDir();
+  const expressDir = path.join(root, "node_modules", "express");
+  const serverScript = path.join(root, "server", "index.mjs");
+
+  if (!fs.existsSync(dist) || !fs.existsSync(path.join(dist, "index.html"))) {
     throw new Error(
-      "UI build missing (dist/). Double-click Start Arrs Hub.bat once so it can run npm install and npm run build.",
+      isPackaged()
+        ? "UI build missing from the installed app. Reinstall Arrs Hub from the GitHub Release."
+        : "UI build missing (dist/). Double-click Start Arrs Hub.bat once so it can run npm install and npm run build.",
     );
   }
 
-  if (!fs.existsSync(EXPRESS_DIR)) {
+  if (!fs.existsSync(serverScript)) {
+    throw new Error(
+      isPackaged()
+        ? `Hub server missing at ${serverScript}. Reinstall Arrs Hub.`
+        : `Hub server missing at ${serverScript}.`,
+    );
+  }
+
+  if (!isPackaged() && !fs.existsSync(expressDir)) {
     throw new Error(
       "Dependencies missing (node_modules). Double-click Start Arrs Hub.bat once so it can run npm install.",
     );
   }
 
-  const nodePath = resolveNodeBinary();
-  if (!nodePath) {
+  const node = resolveNodeBinary();
+  if (!node) {
     throw new Error(
-      "Node.js was not found on PATH. Install Node.js LTS from https://nodejs.org, reopen the terminal, then run Start Arrs Hub.bat again.",
+      "Could not start the hub server (no Node runtime). Reinstall Arrs Hub, or install Node.js LTS from https://nodejs.org for the developer workflow.",
     );
   }
 
-  const allowSystemCa = nodeSupportsSystemCa(nodePath);
+  fs.mkdirSync(dataDir, { recursive: true });
+
+  const allowSystemCa = nodeSupportsSystemCa(node.bin, node.electronAsNode);
   const args = [];
   if (allowSystemCa) {
     // Prefer argv over NODE_OPTIONS — unsupported flags in NODE_OPTIONS crash Node immediately.
     args.push("--use-system-ca");
   }
-  args.push(path.join(ROOT, "server", "index.mjs"));
+  args.push(serverScript);
 
   const env = {
     ...process.env,
     ARRS_HUB_DESKTOP: "1",
     ARRS_HUB_SYNC_PORT: HUB_PORT,
+    ARRS_HUB_ROOT: root,
+    ARRS_HUB_DIST: dist,
+    ARRS_HUB_DATA_DIR: dataDir,
   };
+
+  if (node.electronAsNode) {
+    env.ELECTRON_RUN_AS_NODE = "1";
+  }
 
   const cleanedOptions = sanitizeNodeOptions(process.env.NODE_OPTIONS, allowSystemCa);
   if (cleanedOptions) {
@@ -222,15 +302,17 @@ function startServer() {
     delete env.NODE_OPTIONS;
   }
 
-  // Harmless on older Node; used by newer builds instead of / alongside the flag.
   if (allowSystemCa) {
     env.NODE_USE_SYSTEM_CA = "1";
   }
 
-  appendServerLog(`Starting: "${nodePath}" ${args.join(" ")}\n`);
+  appendServerLog(
+    `Starting: "${node.bin}" ${args.join(" ")}\n` +
+      `root=${root}\ndata=${dataDir}\npackaged=${isPackaged()}\n`,
+  );
 
-  serverProcess = spawn(nodePath, args, {
-    cwd: ROOT,
+  serverProcess = spawn(node.bin, args, {
+    cwd: root,
     env,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,

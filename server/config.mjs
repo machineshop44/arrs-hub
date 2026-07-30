@@ -4,8 +4,20 @@ import { fileURLToPath } from "node:url";
 import { defaultSyncSettings } from "./presets.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const ROOT_DIR = path.resolve(__dirname, "..");
-export const DATA_DIR = path.join(ROOT_DIR, "data");
+
+/** App root (repo root in dev; resources/hub or asar.unpacked in packaged builds). */
+export const ROOT_DIR = process.env.ARRS_HUB_ROOT
+  ? path.resolve(process.env.ARRS_HUB_ROOT)
+  : path.resolve(__dirname, "..");
+
+/**
+ * Writable settings/recyclarr dir.
+ * Packaged desktop sets ARRS_HUB_DATA_DIR to %APPDATA%/Arrs Hub/data.
+ */
+export const DATA_DIR = process.env.ARRS_HUB_DATA_DIR
+  ? path.resolve(process.env.ARRS_HUB_DATA_DIR)
+  : path.join(ROOT_DIR, "data");
+
 export const RECYCLARR_DIR = path.join(DATA_DIR, "recyclarr");
 export const SETTINGS_PATH = path.join(DATA_DIR, "sync-settings.json");
 export const CONFIG_PATH = path.join(RECYCLARR_DIR, "recyclarr.yml");
