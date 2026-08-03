@@ -306,6 +306,8 @@ function startServer() {
     ...process.env,
     ARRS_HUB_DESKTOP: "1",
     ARRS_HUB_SYNC_PORT: HUB_PORT,
+    // LAN / port-forward by default; override with ARRS_HUB_BIND=127.0.0.1
+    ARRS_HUB_BIND: process.env.ARRS_HUB_BIND || process.env.ARRS_HUB_HOST || "0.0.0.0",
     ARRS_HUB_ROOT: root,
     ARRS_HUB_DIST: dist,
     ARRS_HUB_DATA_DIR: dataDir,

@@ -15,7 +15,7 @@ Like Sonarr/Radarr: download the installer, click Next, run. **No Node.js or Git
 
 The app lives in the system tray (close the window = still running). Tray → **Quit** to fully stop.
 
-Dashboard: [http://localhost:3000](http://localhost:3000) (default). If port 3000 is already in use, set `ARRS_HUB_PORT` or `PORT` before launching (e.g. `set ARRS_HUB_PORT=3001` in a Command Prompt, then start Arrs Hub). Match that port in Arrs Hub Mobile → Settings → Network → Arrs Hub port.
+Dashboard: [http://localhost:3000](http://localhost:3000) (default). The API binds **`0.0.0.0` by default** (normal exe, `Start Arrs Hub`, and `start-hub.bat`) so phones/tablets on your LAN — and remote clients via a forwarded hub port — can reach Workouts and hub status. Opt into localhost-only with `ARRS_HUB_BIND=127.0.0.1`. If port 3000 is already in use, set `ARRS_HUB_PORT` or `PORT` before launching (e.g. `set ARRS_HUB_PORT=3001` in a Command Prompt, then start Arrs Hub). Match that port in Arrs Hub Mobile → Settings → Network → Arrs Hub port.
 
 Settings, Recyclarr binaries, and API keys are stored under:
 

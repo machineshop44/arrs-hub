@@ -66,6 +66,15 @@ const PORT = Number(
     process.env.ARRS_HUB_SYNC_PORT ||
     (desktopMode ? 3000 : 3847),
 );
+/**
+ * Bind address. Default 0.0.0.0 so phones/tablets on LAN (and port-forwarded
+ * remote clients) can reach Workouts + watchdog status APIs. Opt into
+ * localhost-only with ARRS_HUB_BIND=127.0.0.1 (ARRS_HUB_HOST also accepted).
+ */
+const HOST =
+  String(
+    process.env.ARRS_HUB_BIND || process.env.ARRS_HUB_HOST || "0.0.0.0",
+  ).trim() || "0.0.0.0";
 
 /**
  * Packaged Electron unpacks server/ outside the asar, so `../package.json`
@@ -569,11 +578,16 @@ if (desktopMode && fs.existsSync(DIST)) {
   });
 }
 
-app.listen(PORT, "127.0.0.1", () => {
+app.listen(PORT, HOST, () => {
+  const localUrl = `http://127.0.0.1:${PORT}`;
+  const bindNote =
+    HOST === "0.0.0.0" || HOST === "::"
+      ? `${localUrl} (LAN-reachable on all interfaces)`
+      : `http://${HOST}:${PORT}`;
   console.log(
     desktopMode
-      ? `Arrs Hub desktop server listening on http://127.0.0.1:${PORT}`
-      : `Arrs Hub sync server listening on http://127.0.0.1:${PORT}`,
+      ? `Arrs Hub desktop server listening on ${bindNote}`
+      : `Arrs Hub sync server listening on ${bindNote}`,
   );
   try {
     startWatchdog();
