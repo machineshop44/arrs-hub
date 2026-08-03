@@ -360,14 +360,42 @@ function startServer() {
   });
 }
 
+/**
+ * Kill the hub Express child (and its tree). Soft kill() is not enough on
+ * Windows when the child is Arrs Hub.exe via ELECTRON_RUN_AS_NODE — the
+ * orphan holds file locks and NSIS shows "cannot be closed" until Retry.
+ */
 function stopServer() {
-  if (!serverProcess) return;
-  try {
-    serverProcess.kill();
-  } catch {
-    // ignore
-  }
+  const child = serverProcess;
   serverProcess = null;
+  if (!child) return;
+
+  const pid = child.pid;
+  try {
+    if (process.platform === "win32" && pid) {
+      spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], {
+        windowsHide: true,
+        timeout: 15000,
+        encoding: "utf8",
+      });
+      return;
+    }
+    if (pid) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {
+        // ignore
+      }
+    } else {
+      child.kill("SIGTERM");
+    }
+  } catch {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // ignore
+    }
+  }
 }
 
 function createWindow() {
@@ -468,7 +496,23 @@ if (!gotLock) {
     stopServer();
   });
 
+  app.on("will-quit", () => {
+    isQuitting = true;
+    stopServer();
+    if (tray) {
+      try {
+        tray.destroy();
+      } catch {
+        // ignore
+      }
+      tray = null;
+    }
+  });
+
   app.on("window-all-closed", () => {
     // Stay alive in the tray; Quit from the tray menu sets isQuitting.
+    if (isQuitting) {
+      stopServer();
+    }
   });
 }

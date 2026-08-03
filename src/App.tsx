@@ -187,25 +187,35 @@ export default function App() {
           upCount={upCount}
           downCount={downCount}
           serverUp={watchdog.serverUp}
+          scanning={watchdog.scanning}
         />
 
-        {watchdog.serverUp && (
+        {(watchdog.serverUp || watchdog.scanning || watchdog.serverUp === null) && (
           <div className="watchdog-bar">
             <div>
               <strong>Port watch</strong>
-              <span>
-                {upCount} up · {downCount} down
-                {watchdog.pcCount > 0
-                  ? ` · PCs ${pcsOnline} online / ${pcsOffline} offline`
-                  : ""}
-                {activeMode === "remote"
-                  ? " · remote status"
-                  : watchdog.autoRestart
-                    ? " · auto-restart on"
-                    : " · auto-restart off"}
-              </span>
+              {watchdog.scanning || watchdog.serverUp === null ? (
+                <span className="port-scan-status" role="status" aria-live="polite">
+                  <span className="port-scan-spinner" aria-hidden="true" />
+                  Searching ports…
+                </span>
+              ) : (
+                <span>
+                  {upCount} up · {downCount} down
+                  {watchdog.pcCount > 0
+                    ? ` · PCs ${pcsOnline} online / ${pcsOffline} offline`
+                    : ""}
+                  {activeMode === "remote"
+                    ? " · remote status"
+                    : watchdog.autoRestart
+                      ? " · auto-restart on"
+                      : " · auto-restart off"}
+                </span>
+              )}
               <small>
-                {activeMode === "remote" ? (
+                {watchdog.scanning || watchdog.serverUp === null ? (
+                  <>Checking enabled service ports — status chips update when the first scan finishes.</>
+                ) : activeMode === "remote" ? (
                   <>
                     Watching <strong>Remote</strong> URLs from this PC (status
                     board while you&apos;re away). Auto-restart stays Home /
@@ -226,6 +236,7 @@ export default function App() {
                 <input
                   type="checkbox"
                   checked={watchdog.watchEnabled}
+                  disabled={watchdog.serverUp !== true}
                   onChange={(e) =>
                     void watchdog.updateSettings({ enabled: e.target.checked })
                   }
@@ -236,7 +247,9 @@ export default function App() {
                 <input
                   type="checkbox"
                   checked={watchdog.autoRestart}
-                  disabled={activeMode === "remote"}
+                  disabled={
+                    activeMode === "remote" || watchdog.serverUp !== true
+                  }
                   onChange={(e) =>
                     void watchdog.updateSettings({
                       autoRestart: e.target.checked,
@@ -248,10 +261,20 @@ export default function App() {
               <button
                 type="button"
                 className="btn btn-secondary"
+                disabled={watchdog.serverUp !== true}
                 onClick={() => void watchdog.checkNow()}
               >
                 Check now
               </button>
+            </div>
+          </div>
+        )}
+
+        {watchdog.serverUp === false && !watchdog.scanning && (
+          <div className="watchdog-bar watchdog-bar-offline">
+            <div>
+              <strong>Port watch</strong>
+              <span>Hub API offline — start the server to monitor ports.</span>
             </div>
           </div>
         )}
@@ -285,6 +308,7 @@ export default function App() {
         <span>
           {APP_VERSION_LABEL} · {enabledCount} services · {statusLabel}
           {settings.connectionPreference === "auto" ? " (auto)" : " (manual)"}
+          {watchdog.scanning ? " · Searching ports…" : ""}
           {trash.loading ? " · Checking TRaSH…" : ""}
           {trash.error ? " · TRaSH check failed" : ""}
           {watchdog.serverUp === false ? " · Watchdog server offline" : ""}

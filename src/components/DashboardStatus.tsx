@@ -35,6 +35,7 @@ interface DashboardStatusProps {
   upCount: number;
   downCount: number;
   serverUp: boolean | null;
+  scanning?: boolean;
 }
 
 function urlMap(
@@ -66,6 +67,7 @@ export function DashboardStatus({
   upCount,
   downCount,
   serverUp,
+  scanning = false,
 }: DashboardStatusProps) {
   const [summary, setSummary] = useState<HubStatusSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -97,25 +99,26 @@ export function DashboardStatus({
   const downloads = summary?.downloads?.active ?? null;
   const ombiPending = summary?.ombi?.pending ?? null;
   const queueTotal = summary?.arr?.queueTotal ?? null;
+  const pendingSummary = summary == null && serverUp !== false;
 
   const chips = [
     {
       id: "up",
       label: "Apps up",
-      value: String(upCount),
-      tone: upCount > 0 ? "good" : "muted",
+      value: scanning ? "…" : String(upCount),
+      tone: scanning ? "muted" : upCount > 0 ? "good" : "muted",
     },
     {
       id: "down",
       label: "Apps down",
-      value: String(downCount),
-      tone: downCount > 0 ? "bad" : "good",
+      value: scanning ? "…" : String(downCount),
+      tone: scanning ? "muted" : downCount > 0 ? "bad" : "good",
     },
     {
       id: "streams",
       label: "Streams",
       value:
-        streams == null
+        pendingSummary || streams == null
           ? "—"
           : summary?.streams?.configured
             ? String(streams)
@@ -131,7 +134,7 @@ export function DashboardStatus({
       id: "downloads",
       label: "Downloads",
       value:
-        downloads == null
+        pendingSummary || downloads == null
           ? "—"
           : summary?.downloads?.qbittorrent?.configured ||
               summary?.downloads?.sabnzbd?.configured
@@ -143,7 +146,7 @@ export function DashboardStatus({
       id: "queue",
       label: "*arr queue",
       value:
-        queueTotal == null
+        pendingSummary || queueTotal == null
           ? "—"
           : summary?.arr?.sonarr?.ok || summary?.arr?.radarr?.ok
             ? String(queueTotal)
@@ -154,7 +157,7 @@ export function DashboardStatus({
       id: "ombi",
       label: "Ombi open",
       value:
-        ombiPending == null
+        pendingSummary || ombiPending == null
           ? "—"
           : summary?.ombi?.configured
             ? String(ombiPending)
@@ -170,6 +173,12 @@ export function DashboardStatus({
 
   return (
     <section className="dash-status" aria-label="Hub status summary">
+      {(scanning || pendingSummary) && serverUp !== false && (
+        <p className="port-scan-banner" role="status" aria-live="polite">
+          <span className="port-scan-spinner" aria-hidden="true" />
+          {scanning ? "Searching ports…" : "Checking services…"}
+        </p>
+      )}
       <div className="dash-chips">
         {chips.map((chip) => (
           <div key={chip.id} className={`dash-chip tone-${chip.tone}`}>

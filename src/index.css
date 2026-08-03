@@ -444,6 +444,43 @@ input {
   line-height: 1.4;
 }
 
+.watchdog-bar-offline {
+  opacity: 0.9;
+}
+
+.port-scan-banner,
+.port-scan-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.9rem;
+  color: #93c5fd;
+}
+
+.port-scan-banner {
+  margin: 0 0 0.75rem;
+  padding: 0.55rem 0.85rem;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, #60a5fa 35%, var(--border));
+  background: color-mix(in srgb, #3b82f6 12%, var(--bg-card));
+}
+
+.port-scan-spinner {
+  width: 0.85rem;
+  height: 0.85rem;
+  border: 2px solid color-mix(in srgb, #93c5fd 35%, transparent);
+  border-top-color: #93c5fd;
+  border-radius: 50%;
+  animation: port-scan-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes port-scan-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .progress-overlay {
   position: fixed;
   inset: 0;
