@@ -168,15 +168,6 @@ export function DashboardStatus({
     },
   ];
 
-  const activityRows = [
-    summary?.arr?.sonarr?.ok && summary.arr.sonarr.total > 0
-      ? { name: "Sonarr", count: summary.arr.sonarr.total }
-      : null,
-    summary?.arr?.radarr?.ok && summary.arr.radarr.total > 0
-      ? { name: "Radarr", count: summary.arr.radarr.total }
-      : null,
-  ].filter(Boolean) as { name: string; count: number }[];
-
   return (
     <section className="dash-status" aria-label="Hub status summary">
       <div className="dash-chips">
@@ -187,21 +178,6 @@ export function DashboardStatus({
           </div>
         ))}
       </div>
-
-      {activityRows.length > 0 && (
-        <div className="dash-activity">
-          <strong>Activity</strong>
-          <div className="dash-activity-rows">
-            {activityRows.map((row) => (
-              <div key={row.name} className="dash-activity-row">
-                <span className="dash-activity-name">
-                  {row.name} · {row.count} in queue
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {error && serverUp !== false && (
         <p className="dash-status-hint">Status refresh: {error}</p>

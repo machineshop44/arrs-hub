@@ -173,7 +173,7 @@ export function SettingsPanel({
       if (!res.ok) throw new Error(json.error || "Save failed");
       setApiMessage({
         type: "ok",
-        text: "API keys saved on this PC (used by TRaSH Sync + Activity).",
+        text: "API keys saved on this PC (used by TRaSH Sync + *arr queue chip).",
       });
       await loadApiKeys();
     } catch (err) {
@@ -415,7 +415,7 @@ export function SettingsPanel({
           <section className="settings-group">
             <h3>TRaSH Sync API keys</h3>
             <p className="settings-hint">
-              Used by Recyclarr and the dashboard *arr Activity queue for Sonarr
+              Used by Recyclarr and the dashboard *arr queue chip for Sonarr
               and Radarr. Keys stay on this PC under the hub&apos;s local data
               folder. Leave a field blank to keep the saved key.
             </p>

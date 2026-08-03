@@ -977,37 +977,6 @@ input {
   color: var(--text-muted);
 }
 
-.dash-activity {
-  margin-top: 0.85rem;
-  padding: 0.85rem 1rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--bg-card);
-}
-
-.dash-activity strong {
-  display: block;
-  margin-bottom: 0.45rem;
-  font-size: 0.85rem;
-}
-
-.dash-activity-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-}
-
-.dash-activity-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-}
-
-.dash-activity-name {
-  font-size: 0.82rem;
-  color: #fcd34d;
-}
-
 .dash-status-hint {
   margin-top: 0.5rem;
   font-size: 0.75rem;

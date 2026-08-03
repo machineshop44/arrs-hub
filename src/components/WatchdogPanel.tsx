@@ -325,6 +325,11 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
 
               <section className="settings-group">
                 <h3>Per app</h3>
+                <p className="settings-hint">
+                  Defaults use standard install paths (ProgramData for *arr;
+                  user profile where relevant) and can be edited. Empty fields
+                  only — your saved paths are never overwritten.
+                </p>
                 <div className="sync-presets">
                   {apps.map((app) => {
                     const cfg = settings.services[app.id] ?? {
@@ -333,6 +338,17 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
                       windowsService: "",
                       exePath: "",
                     };
+                    const exePlaceholder =
+                      {
+                        plex: "C:\\Program Files\\Plex\\Plex Media Server\\Plex Media Server.exe",
+                        qbittorrent:
+                          "C:\\Program Files\\qBittorrent\\qbittorrent.exe",
+                        sabnzbd: "C:\\Program Files\\SABnzbd\\SABnzbd.exe",
+                        ombi: "C:\\Program Files\\Ombi\\Ombi.exe",
+                        flaresolverr:
+                          "C:\\Program Files\\FlareSolverr\\FlareSolverr.exe",
+                        ytarr: "C:\\Path\\To\\Ytarr\\Ytarr.exe",
+                      }[app.id] ?? "C:\\ProgramData\\App\\bin\\App.exe";
                     return (
                       <div key={app.id} className="watchdog-service-row">
                         <strong>{app.name}</strong>
@@ -378,7 +394,7 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
                           <input
                             type="text"
                             value={cfg.exePath}
-                            placeholder="C:\Program Files\Sonarr\Sonarr.exe"
+                            placeholder={exePlaceholder}
                             onChange={(e) =>
                               updateService(app.id, {
                                 exePath: e.target.value,
