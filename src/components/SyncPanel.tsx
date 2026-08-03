@@ -631,6 +631,40 @@ export function SyncPanel({ onClose, connectionMode, services }: SyncPanelProps)
                 </div>
               </section>
 
+              <section className="settings-group">
+                <h3>Choose what to apply</h3>
+                <p className="settings-hint">
+                  Recommended: click <strong>Preview changes</strong> first.
+                  After preview, you can still toggle these before{" "}
+                  <strong>Apply sync</strong>. Uncheck quality sizes if you
+                  only want profiles and custom formats.
+                </p>
+                <div className="sync-apply-options">
+                  <label className="toggle">
+                    <input
+                      type="checkbox"
+                      checked={includeQualityProfiles}
+                      onChange={(e) =>
+                        setIncludeQualityProfiles(e.target.checked)
+                      }
+                    />
+                    <span className="toggle-label">
+                      Quality profiles &amp; custom formats
+                    </span>
+                  </label>
+                  <label className="toggle">
+                    <input
+                      type="checkbox"
+                      checked={includeQualityDefinition}
+                      onChange={(e) =>
+                        setIncludeQualityDefinition(e.target.checked)
+                      }
+                    />
+                    <span className="toggle-label">Quality sizes</span>
+                  </label>
+                </div>
+              </section>
+
               {message && (
                 <div
                   className={`sync-alert ${message.type === "ok" ? "sync-alert-ok" : "sync-alert-err"}`}
@@ -663,7 +697,7 @@ export function SyncPanel({ onClose, connectionMode, services }: SyncPanelProps)
           </button>
           <button
             type="button"
-            className="btn btn-secondary"
+            className="btn btn-primary"
             disabled={busy || !serverUp}
             onClick={() => runSyncJob(true)}
           >
@@ -671,9 +705,18 @@ export function SyncPanel({ onClose, connectionMode, services }: SyncPanelProps)
           </button>
           <button
             type="button"
-            className="btn btn-primary"
-            disabled={busy || !serverUp}
-            onClick={() => runSyncJob(false)}
+            className="btn btn-secondary"
+            disabled={
+              busy ||
+              !serverUp ||
+              (!includeQualityProfiles && !includeQualityDefinition)
+            }
+            onClick={() =>
+              void runSyncJob(false, {
+                includeQualityProfiles,
+                includeQualityDefinition,
+              })
+            }
           >
             Apply sync
           </button>

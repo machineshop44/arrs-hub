@@ -24,16 +24,9 @@ export type HubStatusSummary = {
   };
   arr?: {
     queueTotal: number;
-    sonarr?: { ok: boolean; total: number; downloading: number; items?: ArrItem[] };
-    radarr?: { ok: boolean; total: number; downloading: number; items?: ArrItem[] };
+    sonarr?: { ok: boolean; total: number; downloading: number };
+    radarr?: { ok: boolean; total: number; downloading: number };
   };
-};
-
-type ArrItem = {
-  title: string;
-  status: string;
-  sizeleft?: number;
-  size?: number;
 };
 
 interface DashboardStatusProps {
@@ -177,24 +170,12 @@ export function DashboardStatus({
 
   const activityRows = [
     summary?.arr?.sonarr?.ok && summary.arr.sonarr.total > 0
-      ? {
-          name: "Sonarr",
-          count: summary.arr.sonarr.total,
-          items: summary.arr.sonarr.items ?? [],
-        }
+      ? { name: "Sonarr", count: summary.arr.sonarr.total }
       : null,
     summary?.arr?.radarr?.ok && summary.arr.radarr.total > 0
-      ? {
-          name: "Radarr",
-          count: summary.arr.radarr.total,
-          items: summary.arr.radarr.items ?? [],
-        }
+      ? { name: "Radarr", count: summary.arr.radarr.total }
       : null,
-  ].filter(Boolean) as {
-    name: string;
-    count: number;
-    items: ArrItem[];
-  }[];
+  ].filter(Boolean) as { name: string; count: number }[];
 
   return (
     <section className="dash-status" aria-label="Hub status summary">
@@ -215,12 +196,6 @@ export function DashboardStatus({
               <div key={row.name} className="dash-activity-row">
                 <span className="dash-activity-name">
                   {row.name} · {row.count} in queue
-                </span>
-                <span className="dash-activity-items">
-                  {row.items
-                    .slice(0, 3)
-                    .map((item) => item.title)
-                    .join(" · ") || "Downloading…"}
                 </span>
               </div>
             ))}

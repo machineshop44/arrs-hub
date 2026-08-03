@@ -1008,14 +1008,6 @@ input {
   color: #fcd34d;
 }
 
-.dash-activity-items {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .dash-status-hint {
   margin-top: 0.5rem;
   font-size: 0.75rem;

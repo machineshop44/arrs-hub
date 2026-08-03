@@ -24,8 +24,9 @@ export function TrashUpdateBanner({
         </div>
         <p className="trash-banner-meta">
           Latest: {latest?.date ?? snapshot.commit.date.slice(0, 10)} — open{" "}
-          <strong>Sync</strong> in the hub to push TRaSH profiles into
-          Sonarr/Radarr, or review the guides manually.
+          <strong>Sync</strong>, run <strong>Preview changes</strong>, then
+          uncheck anything you do not want (for example quality sizes) before{" "}
+          <strong>Apply sync</strong>. Or review the guides manually.
         </p>
         {latest && (
           <ul className="trash-banner-list">

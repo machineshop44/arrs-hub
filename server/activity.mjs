@@ -40,10 +40,11 @@ async function fetchJson(url, options = {}, timeoutMs = 8000) {
 async function getArrQueue(id, baseUrl, apiKey) {
   const base = normalizeBase(baseUrl);
   if (!base || !apiKey) {
-    return { ok: false, configured: false, total: 0, downloading: 0, items: [] };
+    return { ok: false, configured: false, total: 0, downloading: 0 };
   }
   const version = arrApiVersion(id);
-  const url = `${base}/api/${version}/queue?page=1&pageSize=50&includeUnknownSeriesItems=true&includeUnknownMovieItems=true`;
+  // pageSize=1 is enough — dashboard Activity only shows queue counts, not titles.
+  const url = `${base}/api/${version}/queue?page=1&pageSize=1&includeUnknownSeriesItems=true&includeUnknownMovieItems=true`;
   try {
     const data = await fetchJson(url, {
       headers: { "X-Api-Key": apiKey, Accept: "application/json" },
@@ -53,34 +54,12 @@ async function getArrQueue(id, baseUrl, apiKey) {
       : Array.isArray(data)
         ? data
         : [];
-    const downloading = records.filter((row) => {
-      const status = String(row.status || row.trackedDownloadStatus || "").toLowerCase();
-      const state = String(row.trackedDownloadState || "").toLowerCase();
-      return (
-        status.includes("download") ||
-        state.includes("download") ||
-        status === "queued" ||
-        status === "paused" ||
-        status === "warning"
-      );
-    }).length;
-    const items = records.slice(0, 8).map((row) => ({
-      title:
-        row.title ||
-        row.series?.title ||
-        row.movie?.title ||
-        row.sourceTitle ||
-        "Unknown",
-      status: String(row.status || row.trackedDownloadStatus || ""),
-      sizeleft: Number(row.sizeleft ?? 0) || 0,
-      size: Number(row.size ?? 0) || 0,
-    }));
+    const total = Number(data?.totalRecords ?? records.length) || records.length;
     return {
       ok: true,
       configured: true,
-      total: Number(data?.totalRecords ?? records.length) || records.length,
-      downloading: downloading || records.length,
-      items,
+      total,
+      downloading: total,
     };
   } catch (err) {
     return {
@@ -88,7 +67,6 @@ async function getArrQueue(id, baseUrl, apiKey) {
       configured: true,
       total: 0,
       downloading: 0,
-      items: [],
       error: err instanceof Error ? err.message : String(err),
     };
   }
@@ -270,7 +248,6 @@ export async function getHubStatusSummary(opts = {}) {
           configured: false,
           total: 0,
           downloading: 0,
-          items: [],
         }),
     getQbittorrentActive(
       qbUrl,
