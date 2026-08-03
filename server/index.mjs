@@ -51,7 +51,6 @@ import { getHubStatusSummary } from "./activity.mjs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const packageJson = require("../package.json");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.env.ARRS_HUB_ROOT
@@ -67,6 +66,45 @@ const PORT = Number(
     process.env.ARRS_HUB_SYNC_PORT ||
     (desktopMode ? 3000 : 3847),
 );
+
+/**
+ * Packaged Electron unpacks server/ outside the asar, so `../package.json`
+ * next to server may be missing. Prefer env from desktop main, then file
+ * candidates, then a safe fallback — never crash the hub on missing pkg.
+ */
+function loadPackageInfo() {
+  const fromEnvVersion = String(process.env.ARRS_HUB_VERSION || "").trim();
+  const fromEnvName = String(process.env.ARRS_HUB_NAME || "").trim();
+
+  const candidates = [
+    path.join(ROOT, "package.json"),
+    path.join(__dirname, "..", "package.json"),
+    // Packaged: package.json may still live inside app.asar
+    process.env.ARRS_HUB_APP_PATH
+      ? path.join(process.env.ARRS_HUB_APP_PATH, "package.json")
+      : null,
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      if (!fs.existsSync(candidate)) continue;
+      const pkg = require(candidate);
+      return {
+        name: fromEnvName || pkg.name || "arrs-hub",
+        version: fromEnvVersion || pkg.version || "unknown",
+      };
+    } catch {
+      // try next candidate
+    }
+  }
+
+  return {
+    name: fromEnvName || "arrs-hub",
+    version: fromEnvVersion || "unknown",
+  };
+}
+
+const packageJson = loadPackageInfo();
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));

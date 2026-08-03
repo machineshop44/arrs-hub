@@ -287,6 +287,21 @@ function startServer() {
   }
   args.push(serverScript);
 
+  // Version for the Node server child: package.json may not sit next to
+  // app.asar.unpacked/server (ELECTRON_RUN_AS_NODE cannot read inside asar).
+  let hubVersion = app.getVersion();
+  let hubName = "arrs-hub";
+  try {
+    const pkgPath = path.join(app.getAppPath(), "package.json");
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+      if (pkg.version) hubVersion = String(pkg.version);
+      if (pkg.name) hubName = String(pkg.name);
+    }
+  } catch {
+    // app.getVersion() is enough
+  }
+
   const env = {
     ...process.env,
     ARRS_HUB_DESKTOP: "1",
@@ -294,6 +309,9 @@ function startServer() {
     ARRS_HUB_ROOT: root,
     ARRS_HUB_DIST: dist,
     ARRS_HUB_DATA_DIR: dataDir,
+    ARRS_HUB_APP_PATH: app.getAppPath(),
+    ARRS_HUB_VERSION: hubVersion,
+    ARRS_HUB_NAME: hubName,
   };
 
   if (node.electronAsNode) {
