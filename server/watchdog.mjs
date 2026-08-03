@@ -1,4 +1,5 @@
 import net from "node:net";
+import path from "node:path";
 import { spawn } from "node:child_process";
 import {
   loadWatchdogSettings,
@@ -261,7 +262,7 @@ function startExeProcess(exePath, exeArgs, exeCwd) {
     }
 
     const args = splitExeArgs(exeArgs);
-    const cwd = String(exeCwd || "").trim() || undefined;
+    const cwd = String(exeCwd || "").trim() || path.dirname(file);
     let settled = false;
     const finish = (result) => {
       if (settled) return;

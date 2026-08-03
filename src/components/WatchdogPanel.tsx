@@ -5,8 +5,6 @@ export type ServiceWatchConfig = {
   autoRestart: boolean;
   windowsService: string;
   exePath: string;
-  exeArgs: string;
-  exeCwd: string;
 };
 
 export type PcWatchConfig = {
@@ -165,8 +163,6 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
         autoRestart: false,
         windowsService: "",
         exePath: "",
-        exeArgs: "",
-        exeCwd: "",
       };
       return {
         ...prev,
@@ -336,8 +332,6 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
                       autoRestart: false,
                       windowsService: "",
                       exePath: "",
-                      exeArgs: "",
-                      exeCwd: "",
                     };
                     return (
                       <div key={app.id} className="watchdog-service-row">
@@ -392,36 +386,10 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
                             }
                           />
                         </label>
-                        <label className="field">
-                          <span>Exe args (optional)</span>
-                          <input
-                            type="text"
-                            value={cfg.exeArgs}
-                            placeholder=""
-                            onChange={(e) =>
-                              updateService(app.id, {
-                                exeArgs: e.target.value,
-                              })
-                            }
-                          />
-                        </label>
-                        <label className="field">
-                          <span>Exe working folder (optional)</span>
-                          <input
-                            type="text"
-                            value={cfg.exeCwd}
-                            placeholder=""
-                            onChange={(e) =>
-                              updateService(app.id, {
-                                exeCwd: e.target.value,
-                              })
-                            }
-                          />
-                        </label>
                         <p className="settings-hint">
                           Restart tries the Windows service first. If that fails
                           or the service name is blank, Arrs Hub starts the exe
-                          (Home / Plex PC only).
+                          from its folder (Home / Plex PC only).
                         </p>
                       </div>
                     );
