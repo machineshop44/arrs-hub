@@ -100,7 +100,7 @@ function requireConfigured() {
   const apiKey = settings.apiKey?.trim() || "";
   if (!apiKey) {
     const err = new Error(
-      "Tautulli API key not set. Open Streams → Setup, or add the key from Tautulli → Settings → Web Interface → API.",
+      "Tautulli API key not set. Add it in hub Settings → Tautulli or Streams → Setup (Tautulli → Settings → Web Interface → API).",
     );
     err.code = "TAUTULLI_NOT_CONFIGURED";
     throw err;

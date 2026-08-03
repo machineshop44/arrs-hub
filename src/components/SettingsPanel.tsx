@@ -10,6 +10,8 @@ interface SettingsPanelProps {
   onUpdateTitle: (title: string) => void;
   onUpdateSubtitle: (subtitle: string) => void;
   onReset: () => void;
+  /** Optional: open Streams panel (closes Settings) */
+  onOpenStreams?: () => void;
 }
 
 export function SettingsPanel({
@@ -19,6 +21,7 @@ export function SettingsPanel({
   onUpdateTitle,
   onUpdateSubtitle,
   onReset,
+  onOpenStreams,
 }: SettingsPanelProps) {
   const [sonarrApiKey, setSonarrApiKey] = useState("");
   const [radarrApiKey, setRadarrApiKey] = useState("");
@@ -51,6 +54,15 @@ export function SettingsPanel({
   const [ombiKeySet, setOmbiKeySet] = useState(false);
   const [integrationsBusy, setIntegrationsBusy] = useState(false);
   const [integrationsMessage, setIntegrationsMessage] = useState<{
+    type: "ok" | "err";
+    text: string;
+  } | null>(null);
+
+  const [tautulliBaseUrl, setTautulliBaseUrl] = useState("");
+  const [tautulliApiKey, setTautulliApiKey] = useState("");
+  const [tautulliKeySet, setTautulliKeySet] = useState(false);
+  const [tautulliBusy, setTautulliBusy] = useState(false);
+  const [tautulliMessage, setTautulliMessage] = useState<{
     type: "ok" | "err";
     text: string;
   } | null>(null);
@@ -120,11 +132,30 @@ export function SettingsPanel({
     }
   }, []);
 
+  const loadTautulli = useCallback(async () => {
+    try {
+      const health = await fetch("/api/health");
+      setApiServerUp(health.ok);
+      if (!health.ok) return;
+      const res = await fetch("/api/tautulli/settings");
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Could not load Tautulli settings");
+      const saved = String(json.settings?.baseUrl || "").trim();
+      const hub = hubUrl("tautulli");
+      setTautulliBaseUrl(saved || hub || "http://localhost:8181");
+      setTautulliApiKey("");
+      setTautulliKeySet(Boolean(json.settings?.apiKeySet));
+    } catch {
+      setApiServerUp(false);
+    }
+  }, [settings.services]);
+
   useEffect(() => {
     void loadApiKeys();
     void loadDiscord();
     void loadIntegrations();
-  }, [loadApiKeys, loadDiscord, loadIntegrations]);
+    void loadTautulli();
+  }, [loadApiKeys, loadDiscord, loadIntegrations, loadTautulli]);
 
   const saveApiKeys = async () => {
     setApiBusy(true);
@@ -192,6 +223,38 @@ export function SettingsPanel({
       });
     } finally {
       setIntegrationsBusy(false);
+    }
+  };
+
+  const saveTautulli = async () => {
+    setTautulliBusy(true);
+    setTautulliMessage(null);
+    try {
+      const res = await fetch("/api/tautulli/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          baseUrl:
+            tautulliBaseUrl.trim() ||
+            hubUrl("tautulli") ||
+            "http://localhost:8181",
+          apiKey: tautulliApiKey,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Save failed");
+      setTautulliMessage({
+        type: "ok",
+        text: "Tautulli settings saved on this PC (same file Streams uses).",
+      });
+      await loadTautulli();
+    } catch (err) {
+      setTautulliMessage({
+        type: "err",
+        text: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setTautulliBusy(false);
     }
   };
 
@@ -407,12 +470,80 @@ export function SettingsPanel({
           </section>
 
           <section className="settings-group">
+            <h3>Tautulli</h3>
+            <p className="settings-hint">
+              Base URL and API key from{" "}
+              <strong>Tautulli → Settings → Web Interface → API</strong>.
+              Leave the key blank to keep the saved value. Also used by Streams
+              and the dashboard stream count.
+            </p>
+            {apiServerUp === false && (
+              <p className="settings-hint">
+                Hub API is offline — start the hub server to save Tautulli
+                settings.
+              </p>
+            )}
+            <label className="field">
+              <span>Tautulli base URL</span>
+              <input
+                type="text"
+                autoComplete="off"
+                placeholder="http://localhost:8181"
+                value={tautulliBaseUrl}
+                disabled={apiServerUp === false || tautulliBusy}
+                onChange={(e) => setTautulliBaseUrl(e.target.value)}
+              />
+            </label>
+            <label className="field">
+              <span>
+                Tautulli API key
+                {tautulliKeySet ? " (saved — leave blank to keep)" : ""}
+              </span>
+              <input
+                type="password"
+                autoComplete="off"
+                placeholder={
+                  tautulliKeySet ? "•••• saved ••••" : "Paste API key"
+                }
+                value={tautulliApiKey}
+                disabled={apiServerUp === false || tautulliBusy}
+                onChange={(e) => setTautulliApiKey(e.target.value)}
+              />
+            </label>
+            {tautulliMessage && (
+              <div
+                className={`sync-alert ${tautulliMessage.type === "ok" ? "sync-alert-ok" : "sync-alert-err"}`}
+              >
+                {tautulliMessage.text}
+              </div>
+            )}
+            <div className="watchdog-bar-actions">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={apiServerUp === false || tautulliBusy}
+                onClick={() => void saveTautulli()}
+              >
+                {tautulliBusy ? "Saving…" : "Save Tautulli settings"}
+              </button>
+              {onOpenStreams && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={onOpenStreams}
+                >
+                  Open Streams
+                </button>
+              )}
+            </div>
+          </section>
+
+          <section className="settings-group">
             <h3>Downloads &amp; Ombi</h3>
             <p className="settings-hint">
               Optional credentials for dashboard chips (active downloads and
               open Ombi requests). URLs come from each service&apos;s Home
-              address above. Tautulli stream count uses the Streams panel API
-              key.
+              address above.
             </p>
             <label className="field">
               <span>qBittorrent username</span>

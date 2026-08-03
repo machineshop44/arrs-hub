@@ -299,6 +299,10 @@ export default function App() {
           onUpdateTitle={updateTitle}
           onUpdateSubtitle={updateSubtitle}
           onReset={resetSettings}
+          onOpenStreams={() => {
+            setShowSettings(false);
+            setShowStreams(true);
+          }}
         />
       )}
 

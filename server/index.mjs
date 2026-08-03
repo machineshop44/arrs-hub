@@ -305,7 +305,7 @@ app.get("/api/tautulli/activity", async (_req, res) => {
     if (!settings.apiKeySet) {
       res.status(400).json({
         error:
-          "Tautulli API key not set. Open Streams setup and paste the key from Tautulli → Settings → Web Interface → API.",
+          "Tautulli API key not set. Add it in hub Settings → Tautulli or Streams setup (Tautulli → Settings → Web Interface → API).",
         code: "TAUTULLI_NOT_CONFIGURED",
         settings,
       });
