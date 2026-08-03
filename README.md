@@ -15,7 +15,7 @@ Like Sonarr/Radarr: download the installer, click Next, run. **No Node.js or Git
 
 The app lives in the system tray (close the window = still running). Tray → **Quit** to fully stop.
 
-Dashboard: [http://localhost:3000](http://localhost:3000)
+Dashboard: [http://localhost:3000](http://localhost:3000) (default). If port 3000 is already in use, set `ARRS_HUB_PORT` or `PORT` before launching (e.g. `set ARRS_HUB_PORT=3001` in a Command Prompt, then start Arrs Hub). Match that port in Arrs Hub Mobile → Settings → Network → Arrs Hub port.
 
 Settings, Recyclarr binaries, and API keys are stored under:
 

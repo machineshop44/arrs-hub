@@ -62,7 +62,10 @@ const DIST = process.env.ARRS_HUB_DIST
   : path.join(ROOT, "dist");
 const desktopMode = process.env.ARRS_HUB_DESKTOP === "1";
 const PORT = Number(
-  process.env.ARRS_HUB_SYNC_PORT || (desktopMode ? 3000 : 3847),
+  process.env.ARRS_HUB_PORT ||
+    process.env.PORT ||
+    process.env.ARRS_HUB_SYNC_PORT ||
+    (desktopMode ? 3000 : 3847),
 );
 
 const app = express();
@@ -542,7 +545,7 @@ app.listen(PORT, "127.0.0.1", () => {
 }).on("error", (err) => {
   if (err?.code === "EADDRINUSE") {
     console.error(
-      `Port ${PORT} is already in use. Close the other Arrs Hub window/process, then start again.`,
+      `Port ${PORT} is already in use. Close the other Arrs Hub window/process, or set ARRS_HUB_PORT (or PORT) to a free port, then start again.`,
     );
     process.exit(1);
   }

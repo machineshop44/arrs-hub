@@ -1,10 +1,14 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+const port = Number(
+  process.env.ARRS_HUB_PORT || process.env.PORT || 3000,
+);
+
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 3000,
+    port,
     strictPort: true,
     open: true,
     proxy: {

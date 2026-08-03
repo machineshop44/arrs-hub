@@ -4,7 +4,12 @@ const fs = require("node:fs");
 const path = require("node:path");
 const http = require("node:http");
 
-const HUB_PORT = "3000";
+const HUB_PORT = String(
+  process.env.ARRS_HUB_PORT ||
+    process.env.PORT ||
+    process.env.ARRS_HUB_SYNC_PORT ||
+    "3000",
+);
 const HUB_URL = `http://127.0.0.1:${HUB_PORT}`;
 const HEALTH_URL = `http://127.0.0.1:${HUB_PORT}/api/health`;
 const HEALTH_TIMEOUT_MS = 90000;
@@ -177,7 +182,7 @@ function failureDetails(prefix) {
     parts.push(`Server output:\n${log}`);
   } else if (isPackaged()) {
     parts.push(
-      "No server output was captured. Try reinstalling Arrs Hub from the GitHub Release installer, or check that port 3000 is free.",
+      "No server output was captured. Try reinstalling Arrs Hub from the GitHub Release installer, or check that the hub port (default 3000; override with ARRS_HUB_PORT / PORT) is free.",
     );
   } else {
     parts.push(
