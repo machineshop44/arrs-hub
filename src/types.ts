@@ -13,6 +13,7 @@ export interface ServiceDefinition {
   description: string;
   category: ServiceCategory;
   defaultUrl: string;
+  /** Bundled image URL (SVG/PNG) for the service brand icon */
   icon: string;
   color: string;
   /** Defaults to true when omitted */

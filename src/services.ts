@@ -1,3 +1,4 @@
+import { SERVICE_ICONS } from "./assets/icons";
 import type { ServiceDefinition } from "./types";
 
 /** Remote LAN/WAN base used in Chrome bookmarks (plex → remote). */
@@ -11,7 +12,7 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     category: "media-management",
     defaultUrl: "http://localhost:8989",
     defaultRemoteUrl: `${REMOTE_HOST}:8989`,
-    icon: "📺",
+    icon: SERVICE_ICONS.sonarr,
     color: "#35c5f4",
   },
   {
@@ -21,7 +22,7 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     category: "media-management",
     defaultUrl: "http://localhost:7878",
     defaultRemoteUrl: `${REMOTE_HOST}:7878`,
-    icon: "🎬",
+    icon: SERVICE_ICONS.radarr,
     color: "#ffc230",
   },
   {
@@ -31,7 +32,7 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     category: "media-management",
     defaultUrl: "http://localhost:8686",
     defaultRemoteUrl: `${REMOTE_HOST}:8686`,
-    icon: "🎵",
+    icon: SERVICE_ICONS.lidarr,
     color: "#35c5f4",
   },
   {
@@ -41,7 +42,7 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     category: "media-management",
     defaultUrl: "http://localhost:8787",
     defaultRemoteUrl: `${REMOTE_HOST}:8787`,
-    icon: "📚",
+    icon: SERVICE_ICONS.readarr,
     color: "#ffc230",
   },
   {
@@ -51,7 +52,7 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     category: "media-management",
     defaultUrl: "http://localhost:8080",
     defaultRemoteUrl: `${REMOTE_HOST}:8080`,
-    icon: "📖",
+    icon: SERVICE_ICONS.calibre,
     color: "#45b29d",
   },
   {
@@ -61,7 +62,7 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     category: "indexers",
     defaultUrl: "http://localhost:9696",
     defaultRemoteUrl: `${REMOTE_HOST}:9696`,
-    icon: "🔍",
+    icon: SERVICE_ICONS.prowlarr,
     color: "#e66000",
   },
   {
@@ -71,7 +72,7 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     category: "indexers",
     defaultUrl: "http://localhost:8191",
     defaultRemoteUrl: `${REMOTE_HOST}:8191`,
-    icon: "🛡️",
+    icon: SERVICE_ICONS.flaresolverr,
     color: "#f97316",
   },
   {
@@ -81,7 +82,7 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     category: "media-management",
     defaultUrl: "http://localhost:8199",
     defaultRemoteUrl: `${REMOTE_HOST}:8199`,
-    icon: "▶️",
+    icon: SERVICE_ICONS.ytarr,
     color: "#3fb950",
   },
   {
@@ -91,7 +92,7 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     category: "downloaders",
     defaultUrl: "http://localhost:8080",
     defaultRemoteUrl: `${REMOTE_HOST}:8079`,
-    icon: "⬇️",
+    icon: SERVICE_ICONS.qbittorrent,
     color: "#2f67d2",
   },
   {
@@ -101,7 +102,7 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     category: "downloaders",
     defaultUrl: "http://localhost:8085",
     defaultRemoteUrl: `${REMOTE_HOST}:6789/sabnzbd/`,
-    icon: "📦",
+    icon: SERVICE_ICONS.sabnzbd,
     color: "#ffc230",
   },
   {
@@ -111,7 +112,7 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     category: "requests",
     defaultUrl: "http://localhost:3579",
     defaultRemoteUrl: `${REMOTE_HOST}:5000/discover`,
-    icon: "🙋",
+    icon: SERVICE_ICONS.ombi,
     color: "#e5a00d",
   },
   {
@@ -120,7 +121,7 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     description: "Modern request management for Plex",
     category: "requests",
     defaultUrl: "http://localhost:5055",
-    icon: "✨",
+    icon: SERVICE_ICONS.overseerr,
     color: "#6366f1",
   },
   {
@@ -130,7 +131,7 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     category: "monitoring",
     defaultUrl: "http://localhost:8181",
     defaultRemoteUrl: `${REMOTE_HOST}:8181/home`,
-    icon: "📊",
+    icon: SERVICE_ICONS.tautulli,
     color: "#e5a00d",
   },
   {
@@ -140,7 +141,7 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     category: "automation",
     defaultUrl: "http://localhost:19200",
     defaultRemoteUrl: `${REMOTE_HOST}:19200`,
-    icon: "⚙️",
+    icon: SERVICE_ICONS.fileflows,
     color: "#10b981",
   },
   {
@@ -150,7 +151,7 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     category: "other",
     defaultUrl: "http://localhost:32400/web",
     defaultRemoteUrl: `${REMOTE_HOST}:32400/web`,
-    icon: "▶️",
+    icon: SERVICE_ICONS.plex,
     color: "#e5a00d",
   },
   {
@@ -160,7 +161,7 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     category: "other",
     defaultUrl: "https://trash-guides.info/",
     defaultRemoteUrl: "https://trash-guides.info/",
-    icon: "🗑️",
+    icon: SERVICE_ICONS["trash-guides"],
     color: "#22c55e",
   },
   {
@@ -170,7 +171,7 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     category: "automation",
     defaultUrl: "http://localhost:6767",
     defaultRemoteUrl: `${REMOTE_HOST}:6767`,
-    icon: "💬",
+    icon: SERVICE_ICONS.bazarr,
     color: "#e66000",
   },
   {
@@ -179,7 +180,7 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     description: "Adult content management",
     category: "media-management",
     defaultUrl: "http://localhost:6969",
-    icon: "🔞",
+    icon: SERVICE_ICONS.whisparr,
     color: "#ec4899",
     defaultEnabled: false,
   },

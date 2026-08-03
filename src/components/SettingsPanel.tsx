@@ -378,7 +378,15 @@ export function SettingsPanel({
                       }
                     />
                     <span className="toggle-label">
-                      {service.icon} {service.name}
+                      <img
+                        className="settings-service-icon"
+                        src={service.icon}
+                        alt={service.name}
+                        width={20}
+                        height={20}
+                        draggable={false}
+                      />{" "}
+                      {service.name}
                     </span>
                   </label>
                   <label className="field">

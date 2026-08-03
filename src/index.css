@@ -342,16 +342,22 @@ input {
 }
 
 .service-card-icon {
-  font-size: 2rem;
-  line-height: 1;
   flex-shrink: 0;
-  width: 3rem;
-  height: 3rem;
+  width: 2.5rem;
+  height: 2.5rem;
   display: flex;
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.service-card-icon img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  display: block;
 }
 
 .service-card-body {
@@ -1355,6 +1361,17 @@ input {
 .toggle-label {
   font-size: 0.875rem;
   font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.settings-service-icon {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  flex-shrink: 0;
+  border-radius: 4px;
 }
 
 .settings-footer {

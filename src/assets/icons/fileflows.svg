@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="FileFlows">
+  <rect width="64" height="64" rx="14" fill="#0f172a"/>
+  <path d="M14 18h16a4 4 0 0 1 4 4v4H18a4 4 0 0 1-4-4v-4z" fill="#10b981"/>
+  <path d="M34 28h16a4 4 0 0 1 4 4v4H38a4 4 0 0 1-4-4v-4z" fill="#34d399"/>
+  <path d="M14 38h16a4 4 0 0 1 4 4v4H18a4 4 0 0 1-4-4v-4z" fill="#6ee7b7"/>
+  <path d="M30 26v4M34 36v4" stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="30" cy="28" r="2.5" fill="#e2e8f0"/>
+  <circle cx="34" cy="36" r="2.5" fill="#e2e8f0"/>
+</svg>

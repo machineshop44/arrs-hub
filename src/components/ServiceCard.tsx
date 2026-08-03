@@ -57,7 +57,15 @@ export function ServiceCard({
       }
     >
       {badge ? <span className="service-card-badge">{badge}</span> : null}
-      <div className="service-card-icon">{service.icon}</div>
+      <div className="service-card-icon">
+        <img
+          src={service.icon}
+          alt={service.name}
+          width={36}
+          height={36}
+          draggable={false}
+        />
+      </div>
       <div className="service-card-body">
         <h3>
           <span className={`status-dot ${statusClass}`} aria-hidden="true" />

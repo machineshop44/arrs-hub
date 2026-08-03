@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="TRaSH Guides">
+  <rect width="64" height="64" rx="14" fill="#111827"/>
+  <path d="M22 20h20l-1.5 28a4 4 0 0 1-4 3.5H27.5a4 4 0 0 1-4-3.5L22 20z" fill="#22c55e"/>
+  <path d="M20 20h24v4H20z" fill="#86efac"/>
+  <path d="M28 16h8a2 2 0 0 1 2 2v2H26v-2a2 2 0 0 1 2-2z" fill="#bbf7d0"/>
+  <path d="M28 28v16M32 28v16M36 28v16" stroke="#14532d" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+</svg>
