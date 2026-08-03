@@ -898,6 +898,137 @@ input {
   font-size: 0.8rem;
 }
 
+.settings-version {
+  margin-top: 1.25rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.dash-status {
+  margin-bottom: 1.25rem;
+}
+
+.dash-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.dash-chip {
+  min-width: 5.5rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.dash-chip-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.dash-chip-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dash-chip.tone-good {
+  border-color: color-mix(in srgb, #4ade80 40%, var(--border));
+  background: color-mix(in srgb, #22c55e 12%, var(--bg-card));
+}
+.dash-chip.tone-good .dash-chip-value {
+  color: #86efac;
+}
+
+.dash-chip.tone-bad {
+  border-color: color-mix(in srgb, #f87171 40%, var(--border));
+  background: color-mix(in srgb, #ef4444 12%, var(--bg-card));
+}
+.dash-chip.tone-bad .dash-chip-value {
+  color: #fca5a5;
+}
+
+.dash-chip.tone-accent {
+  border-color: color-mix(in srgb, #60a5fa 40%, var(--border));
+  background: color-mix(in srgb, #3b82f6 12%, var(--bg-card));
+}
+.dash-chip.tone-accent .dash-chip-value {
+  color: #93c5fd;
+}
+
+.dash-chip.tone-warn {
+  border-color: color-mix(in srgb, #fbbf24 40%, var(--border));
+  background: color-mix(in srgb, #f59e0b 12%, var(--bg-card));
+}
+.dash-chip.tone-warn .dash-chip-value {
+  color: #fcd34d;
+}
+
+.dash-chip.tone-muted .dash-chip-value {
+  color: var(--text-muted);
+}
+
+.dash-activity {
+  margin-top: 0.85rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+}
+
+.dash-activity strong {
+  display: block;
+  margin-bottom: 0.45rem;
+  font-size: 0.85rem;
+}
+
+.dash-activity-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.dash-activity-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.dash-activity-name {
+  font-size: 0.82rem;
+  color: #fcd34d;
+}
+
+.dash-activity-items {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-status-hint {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.sync-apply-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  margin-top: 0.65rem;
+}
+
 .empty-state {
   text-align: center;
   padding: 4rem 1rem;

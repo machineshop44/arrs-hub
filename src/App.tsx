@@ -10,8 +10,10 @@ import { SyncPanel } from "./components/SyncPanel";
 import { WatchdogPanel } from "./components/WatchdogPanel";
 import { WorkoutsPanel } from "./components/WorkoutsPanel";
 import { StreamsPanel } from "./components/StreamsPanel";
+import { DashboardStatus } from "./components/DashboardStatus";
 import { CATEGORY_ORDER, getServiceUrl } from "./types";
 import type { ConnectionPreference } from "./types";
+import { APP_VERSION_LABEL } from "./version";
 
 export default function App() {
   const {
@@ -179,6 +181,14 @@ export default function App() {
           />
         )}
 
+        <DashboardStatus
+          services={settings.services}
+          connectionMode={activeMode}
+          upCount={upCount}
+          downCount={downCount}
+          serverUp={watchdog.serverUp}
+        />
+
         {watchdog.serverUp && (
           <div className="watchdog-bar">
             <div>
@@ -204,8 +214,9 @@ export default function App() {
                 ) : (
                   <>
                     Watching <strong>Home</strong> ports on this Plex PC. If a
-                    port stays down, Auto-restart starts the Windows service.
-                    Configure service names under <strong>Port Watch</strong>.
+                    port stays down, Auto-restart starts the Windows service
+                    (or optional exe fallback). Use <strong>Port Watch</strong>{" "}
+                    for service names / exe paths.
                   </>
                 )}
               </small>
@@ -241,13 +252,6 @@ export default function App() {
               >
                 Check now
               </button>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => setShowWatchdog(true)}
-              >
-                Configure
-              </button>
             </div>
           </div>
         )}
@@ -279,7 +283,7 @@ export default function App() {
 
       <footer className="footer">
         <span>
-          {enabledCount} services · {statusLabel}
+          {APP_VERSION_LABEL} · {enabledCount} services · {statusLabel}
           {settings.connectionPreference === "auto" ? " (auto)" : " (manual)"}
           {trash.loading ? " · Checking TRaSH…" : ""}
           {trash.error ? " · TRaSH check failed" : ""}

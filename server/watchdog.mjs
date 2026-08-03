@@ -242,6 +242,98 @@ function startWindowsService(serviceName) {
   });
 }
 
+function splitExeArgs(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return [];
+  const matches = text.match(/(?:[^\s"]+|"[^"]*")+/g);
+  if (!matches) return [];
+  return matches.map((part) =>
+    part.startsWith('"') && part.endsWith('"') ? part.slice(1, -1) : part,
+  );
+}
+
+function startExeProcess(exePath, exeArgs, exeCwd) {
+  return new Promise((resolve) => {
+    const file = String(exePath || "").trim();
+    if (!file) {
+      resolve({ ok: false, message: "No exe path configured" });
+      return;
+    }
+
+    const args = splitExeArgs(exeArgs);
+    const cwd = String(exeCwd || "").trim() || undefined;
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    try {
+      const child = spawn(file, args, {
+        cwd,
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+        shell: false,
+      });
+      child.on("error", (err) => {
+        finish({
+          ok: false,
+          message: err?.message || `Could not start exe "${file}"`,
+        });
+      });
+      child.unref();
+      setTimeout(() => {
+        finish({
+          ok: true,
+          message: `Started exe "${file}"${args.length ? ` ${args.join(" ")}` : ""}`,
+        });
+      }, 250);
+    } catch (err) {
+      finish({
+        ok: false,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+}
+
+/**
+ * Prefer Windows service; if that fails or no service name, try optional exe.
+ * @param {{ windowsService?: string, exePath?: string, exeArgs?: string, exeCwd?: string }} serviceCfg
+ */
+async function restartServiceOrExe(serviceCfg) {
+  const serviceName = String(serviceCfg.windowsService || "").trim();
+  const exePath = String(serviceCfg.exePath || "").trim();
+
+  if (serviceName) {
+    const serviceResult = await startWindowsService(serviceName);
+    if (serviceResult.ok) return serviceResult;
+    if (exePath) {
+      const exeResult = await startExeProcess(
+        exePath,
+        serviceCfg.exeArgs,
+        serviceCfg.exeCwd,
+      );
+      return {
+        ok: exeResult.ok,
+        message: `${serviceResult.message}; exe fallback: ${exeResult.message}`,
+      };
+    }
+    return serviceResult;
+  }
+
+  if (exePath) {
+    return startExeProcess(exePath, serviceCfg.exeArgs, serviceCfg.exeCwd);
+  }
+
+  return {
+    ok: false,
+    message: "No Windows service name or exe path configured",
+  };
+}
+
 async function notifyDiscord(settings, payload) {
   if (!settings.discordWebhookUrl) return;
   const result = await sendDiscordWebhook(settings.discordWebhookUrl, payload);
@@ -303,12 +395,15 @@ async function checkOne(target) {
   }
 
   // Alert once when failures hit the threshold (not every check while down)
+  const hasRestartTarget =
+    Boolean(String(serviceCfg.windowsService || "").trim()) ||
+    Boolean(String(serviceCfg.exePath || "").trim());
   const canRestart =
     target.allowRestart !== false &&
     target.mode !== "remote" &&
     settings.autoRestart &&
     serviceCfg.autoRestart &&
-    Boolean(serviceCfg.windowsService);
+    hasRestartTarget;
 
   if (
     !result.up &&
@@ -344,7 +439,7 @@ async function checkOne(target) {
     const cooledDown =
       Date.now() - last >= settings.restartCooldownSeconds * 1000;
     if (cooledDown) {
-      const restart = await startWindowsService(serviceCfg.windowsService);
+      const restart = await restartServiceOrExe(serviceCfg);
       lastRestartAt = new Date().toISOString();
       lastRestartResult = restart.message;
       consecutiveFails = 0;
@@ -355,7 +450,12 @@ async function checkOne(target) {
             ? `${target.name} restart succeeded`
             : `${target.name} restart failed`,
           description: [
-            `Service: \`${serviceCfg.windowsService}\``,
+            serviceCfg.windowsService
+              ? `Service: \`${serviceCfg.windowsService}\``
+              : "Service: (none)",
+            serviceCfg.exePath
+              ? `Exe: \`${serviceCfg.exePath}\``
+              : "Exe: (none)",
             restart.message,
             `Checked port: \`${parsed.host}:${parsed.port}\``,
           ].join("\n"),

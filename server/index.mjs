@@ -43,6 +43,15 @@ import {
   publicTautulliSettings,
   updateTautulliSettings,
 } from "./tautulli.mjs";
+import {
+  publicIntegrationsSettings,
+  updateIntegrationsSettings,
+} from "./integrations.mjs";
+import { getHubStatusSummary } from "./activity.mjs";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const packageJson = require("../package.json");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.env.ARRS_HUB_ROOT
@@ -60,7 +69,39 @@ const app = express();
 app.use(express.json({ limit: "1mb" }));
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true });
+  res.json({ ok: true, version: packageJson.version, name: packageJson.name });
+});
+
+app.get("/api/version", (_req, res) => {
+  res.json({
+    name: "Arrs Hub",
+    version: packageJson.version,
+    major: "v1",
+  });
+});
+
+app.get("/api/integrations/settings", (_req, res) => {
+  res.json({ settings: publicIntegrationsSettings() });
+});
+
+app.put("/api/integrations/settings", (req, res) => {
+  try {
+    const settings = updateIntegrationsSettings(req.body ?? {});
+    res.json({ ok: true, settings: publicIntegrationsSettings(settings) });
+  } catch (err) {
+    res.status(400).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/status/summary", async (req, res) => {
+  try {
+    const summary = await getHubStatusSummary({
+      urls: req.body?.urls ?? {},
+    });
+    res.json(summary);
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
 });
 
 app.get("/api/watchdog/status", (_req, res) => {
@@ -389,6 +430,9 @@ app.post("/api/sync/install", async (_req, res) => {
 app.post("/api/sync/run", async (req, res) => {
   const preview = Boolean(req.body?.preview);
   const wantsStream = req.body?.stream !== false;
+  const includeQualityDefinition =
+    req.body?.includeQualityDefinition !== false;
+  const includeQualityProfiles = req.body?.includeQualityProfiles !== false;
 
   try {
     const settings = loadSyncSettings();
@@ -399,7 +443,10 @@ app.post("/api/sync/run", async (req, res) => {
       return;
     }
 
-    const yaml = buildRecyclarrYaml(settings, presets);
+    const yaml = buildRecyclarrYaml(settings, presets, {
+      includeQualityDefinition: preview ? true : includeQualityDefinition,
+      includeQualityProfiles: preview ? true : includeQualityProfiles,
+    });
 
     if (!wantsStream) {
       const result = await runSync(yaml, { preview, settings });

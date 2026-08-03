@@ -4,6 +4,9 @@ export type ServiceWatchConfig = {
   monitor: boolean;
   autoRestart: boolean;
   windowsService: string;
+  exePath: string;
+  exeArgs: string;
+  exeCwd: string;
 };
 
 export type PcWatchConfig = {
@@ -161,6 +164,9 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
         monitor: true,
         autoRestart: false,
         windowsService: "",
+        exePath: "",
+        exeArgs: "",
+        exeCwd: "",
       };
       return {
         ...prev,
@@ -248,8 +254,10 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
                   current link mode: <strong>Home</strong> ports when Home/Auto
                   says you&apos;re home (restart allowed),{" "}
                   <strong>Remote</strong> URLs when you&apos;re away (status
-                  only — no remote restart). Apps must be installed as Windows
-                  services for auto-restart at home. Discord webhook for
+                  only — no remote restart). Prefer a Windows service name when
+                  the app is installed as a service; optionally set an{" "}
+                  <strong>exe path</strong> as fallback if the service restart
+                  fails or no service is configured. Discord webhook for
                   down/restart alerts is under hub <strong>Settings</strong>.
                   {settings.discordWebhookSet ? " (webhook saved)" : ""}
                 </p>
@@ -327,6 +335,9 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
                       monitor: true,
                       autoRestart: false,
                       windowsService: "",
+                      exePath: "",
+                      exeArgs: "",
+                      exeCwd: "",
                     };
                     return (
                       <div key={app.id} className="watchdog-service-row">
@@ -368,6 +379,50 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
                             }
                           />
                         </label>
+                        <label className="field">
+                          <span>Exe path (fallback)</span>
+                          <input
+                            type="text"
+                            value={cfg.exePath}
+                            placeholder="C:\Program Files\Sonarr\Sonarr.exe"
+                            onChange={(e) =>
+                              updateService(app.id, {
+                                exePath: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Exe args (optional)</span>
+                          <input
+                            type="text"
+                            value={cfg.exeArgs}
+                            placeholder=""
+                            onChange={(e) =>
+                              updateService(app.id, {
+                                exeArgs: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Exe working folder (optional)</span>
+                          <input
+                            type="text"
+                            value={cfg.exeCwd}
+                            placeholder=""
+                            onChange={(e) =>
+                              updateService(app.id, {
+                                exeCwd: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <p className="settings-hint">
+                          Restart tries the Windows service first. If that fails
+                          or the service name is blank, Arrs Hub starts the exe
+                          (Home / Plex PC only).
+                        </p>
                       </div>
                     );
                   })}

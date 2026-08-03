@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AppSettings, ServiceConfig } from "../types";
+import { APP_VERSION_LABEL } from "../version";
+import { getServiceUrl } from "../types";
 
 interface SettingsPanelProps {
   settings: AppSettings;
@@ -40,6 +42,25 @@ export function SettingsPanel({
     text: string;
   } | null>(null);
 
+  const [qbUser, setQbUser] = useState("");
+  const [qbPass, setQbPass] = useState("");
+  const [qbPassSet, setQbPassSet] = useState(false);
+  const [sabKey, setSabKey] = useState("");
+  const [sabKeySet, setSabKeySet] = useState(false);
+  const [ombiKey, setOmbiKey] = useState("");
+  const [ombiKeySet, setOmbiKeySet] = useState(false);
+  const [integrationsBusy, setIntegrationsBusy] = useState(false);
+  const [integrationsMessage, setIntegrationsMessage] = useState<{
+    type: "ok" | "err";
+    text: string;
+  } | null>(null);
+
+  const hubUrl = (id: string) => {
+    const service = settings.services.find((s) => s.id === id);
+    if (!service) return "";
+    return getServiceUrl(service, "home") || service.homeUrl || service.defaultUrl;
+  };
+
   const loadApiKeys = useCallback(async () => {
     try {
       const health = await fetch("/api/health");
@@ -79,10 +100,31 @@ export function SettingsPanel({
     }
   }, []);
 
+  const loadIntegrations = useCallback(async () => {
+    try {
+      const health = await fetch("/api/health");
+      setApiServerUp(health.ok);
+      if (!health.ok) return;
+      const res = await fetch("/api/integrations/settings");
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Could not load integrations");
+      setQbUser(json.settings?.qbittorrent?.username || "");
+      setQbPass("");
+      setQbPassSet(Boolean(json.settings?.qbittorrent?.passwordSet));
+      setSabKey("");
+      setSabKeySet(Boolean(json.settings?.sabnzbd?.apiKeySet));
+      setOmbiKey("");
+      setOmbiKeySet(Boolean(json.settings?.ombi?.apiKeySet));
+    } catch {
+      setApiServerUp(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadApiKeys();
     void loadDiscord();
-  }, [loadApiKeys, loadDiscord]);
+    void loadIntegrations();
+  }, [loadApiKeys, loadDiscord, loadIntegrations]);
 
   const saveApiKeys = async () => {
     setApiBusy(true);
@@ -92,15 +134,15 @@ export function SettingsPanel({
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sonarr: { apiKey: sonarrApiKey },
-          radarr: { apiKey: radarrApiKey },
+          sonarr: { apiKey: sonarrApiKey, baseUrl: hubUrl("sonarr") },
+          radarr: { apiKey: radarrApiKey, baseUrl: hubUrl("radarr") },
         }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Save failed");
       setApiMessage({
         type: "ok",
-        text: "API keys saved on this PC (used by TRaSH Sync).",
+        text: "API keys saved on this PC (used by TRaSH Sync + Activity).",
       });
       await loadApiKeys();
     } catch (err) {
@@ -110,6 +152,46 @@ export function SettingsPanel({
       });
     } finally {
       setApiBusy(false);
+    }
+  };
+
+  const saveIntegrations = async () => {
+    setIntegrationsBusy(true);
+    setIntegrationsMessage(null);
+    try {
+      const res = await fetch("/api/integrations/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          qbittorrent: {
+            baseUrl: hubUrl("qbittorrent"),
+            username: qbUser,
+            password: qbPass,
+          },
+          sabnzbd: {
+            baseUrl: hubUrl("sabnzbd"),
+            apiKey: sabKey,
+          },
+          ombi: {
+            baseUrl: hubUrl("ombi"),
+            apiKey: ombiKey,
+          },
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Save failed");
+      setIntegrationsMessage({
+        type: "ok",
+        text: "Download / Ombi credentials saved (dashboard status chips).",
+      });
+      await loadIntegrations();
+    } catch (err) {
+      setIntegrationsMessage({
+        type: "err",
+        text: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setIntegrationsBusy(false);
     }
   };
 
@@ -270,8 +352,8 @@ export function SettingsPanel({
           <section className="settings-group">
             <h3>TRaSH Sync API keys</h3>
             <p className="settings-hint">
-              Used by Recyclarr for Sonarr and Radarr only (not Lidarr or
-              Readarr). Keys stay on this PC under the hub&apos;s local data
+              Used by Recyclarr and the dashboard *arr Activity queue for Sonarr
+              and Radarr. Keys stay on this PC under the hub&apos;s local data
               folder. Leave a field blank to keep the saved key.
             </p>
             {apiServerUp === false && (
@@ -321,6 +403,83 @@ export function SettingsPanel({
               onClick={() => void saveApiKeys()}
             >
               {apiBusy ? "Saving…" : "Save API keys"}
+            </button>
+          </section>
+
+          <section className="settings-group">
+            <h3>Downloads &amp; Ombi</h3>
+            <p className="settings-hint">
+              Optional credentials for dashboard chips (active downloads and
+              open Ombi requests). URLs come from each service&apos;s Home
+              address above. Tautulli stream count uses the Streams panel API
+              key.
+            </p>
+            <label className="field">
+              <span>qBittorrent username</span>
+              <input
+                type="text"
+                autoComplete="off"
+                value={qbUser}
+                disabled={apiServerUp === false || integrationsBusy}
+                onChange={(e) => setQbUser(e.target.value)}
+              />
+            </label>
+            <label className="field">
+              <span>
+                qBittorrent password
+                {qbPassSet ? " (saved — leave blank to keep)" : ""}
+              </span>
+              <input
+                type="password"
+                autoComplete="off"
+                placeholder={qbPassSet ? "•••• saved ••••" : "Password"}
+                value={qbPass}
+                disabled={apiServerUp === false || integrationsBusy}
+                onChange={(e) => setQbPass(e.target.value)}
+              />
+            </label>
+            <label className="field">
+              <span>
+                SABnzbd API key
+                {sabKeySet ? " (saved — leave blank to keep)" : ""}
+              </span>
+              <input
+                type="password"
+                autoComplete="off"
+                placeholder={sabKeySet ? "•••• saved ••••" : "Paste API key"}
+                value={sabKey}
+                disabled={apiServerUp === false || integrationsBusy}
+                onChange={(e) => setSabKey(e.target.value)}
+              />
+            </label>
+            <label className="field">
+              <span>
+                Ombi API key
+                {ombiKeySet ? " (saved — leave blank to keep)" : ""}
+              </span>
+              <input
+                type="password"
+                autoComplete="off"
+                placeholder={ombiKeySet ? "•••• saved ••••" : "Paste API key"}
+                value={ombiKey}
+                disabled={apiServerUp === false || integrationsBusy}
+                onChange={(e) => setOmbiKey(e.target.value)}
+              />
+            </label>
+            {integrationsMessage && (
+              <div
+                className={`sync-alert ${integrationsMessage.type === "ok" ? "sync-alert-ok" : "sync-alert-err"}`}
+              >
+                {integrationsMessage.text}
+              </div>
+            )}
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={apiServerUp === false || integrationsBusy}
+              onClick={() => void saveIntegrations()}
+            >
+              {integrationsBusy ? "Saving…" : "Save download / Ombi creds"}
             </button>
           </section>
 
@@ -409,6 +568,10 @@ export function SettingsPanel({
               </button>
             </div>
           </section>
+
+          <p className="settings-version" aria-label="App version">
+            {APP_VERSION_LABEL}
+          </p>
         </div>
 
         <footer className="settings-footer">

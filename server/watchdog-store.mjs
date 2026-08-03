@@ -21,8 +21,24 @@ export const DEFAULT_WINDOWS_SERVICES = {
   plex: "PlexUpdateService",
   calibre: "",
   whisparr: "Whisparr",
+  ytarr: "",
+  flaresolverr: "",
   "trash-guides": "",
 };
+
+/** @returns {{ monitor: boolean, autoRestart: boolean, windowsService: string, exePath: string, exeArgs: string, exeCwd: string }} */
+function defaultServiceWatch(id, windowsService) {
+  return {
+    monitor:
+      Boolean(windowsService) ||
+      ["sonarr", "radarr", "prowlarr", "flaresolverr", "ytarr"].includes(id),
+    autoRestart: Boolean(windowsService),
+    windowsService,
+    exePath: "",
+    exeArgs: "",
+    exeCwd: "",
+  };
+}
 
 export function defaultWatchdogSettings() {
   return {
@@ -40,15 +56,11 @@ export function defaultWatchdogSettings() {
     wolCooldownSeconds: 300,
     /** @type {{ id: string, name: string, host: string, mac: string, monitor: boolean, wakeOnLan: boolean }[]} */
     pcs: [],
-    /** @type {Record<string, { monitor: boolean, autoRestart: boolean, windowsService: string }>} */
+    /** @type {Record<string, { monitor: boolean, autoRestart: boolean, windowsService: string, exePath: string, exeArgs: string, exeCwd: string }>} */
     services: Object.fromEntries(
       Object.entries(DEFAULT_WINDOWS_SERVICES).map(([id, windowsService]) => [
         id,
-        {
-          monitor: Boolean(windowsService) || ["sonarr", "radarr", "prowlarr"].includes(id),
-          autoRestart: Boolean(windowsService),
-          windowsService,
-        },
+        defaultServiceWatch(id, windowsService),
       ]),
     ),
   };
@@ -63,10 +75,21 @@ export function loadWatchdogSettings() {
   }
   const raw = JSON.parse(fs.readFileSync(WATCHDOG_SETTINGS_PATH, "utf8"));
   const defaults = defaultWatchdogSettings();
+  const mergedServices = { ...defaults.services };
+  for (const [id, cfg] of Object.entries(raw.services ?? {})) {
+    mergedServices[id] = {
+      ...defaultServiceWatch(id, ""),
+      ...(mergedServices[id] ?? {}),
+      ...cfg,
+      exePath: typeof cfg.exePath === "string" ? cfg.exePath : "",
+      exeArgs: typeof cfg.exeArgs === "string" ? cfg.exeArgs : "",
+      exeCwd: typeof cfg.exeCwd === "string" ? cfg.exeCwd : "",
+    };
+  }
   return {
     ...defaults,
     ...raw,
-    services: { ...defaults.services, ...(raw.services ?? {}) },
+    services: mergedServices,
     pcs: Array.isArray(raw.pcs) ? raw.pcs : defaults.pcs,
   };
 }

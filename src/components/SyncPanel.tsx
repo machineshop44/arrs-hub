@@ -135,6 +135,9 @@ export function SyncPanel({ onClose, connectionMode, services }: SyncPanelProps)
   const [sonarrKeySet, setSonarrKeySet] = useState(false);
   const [radarrKeySet, setRadarrKeySet] = useState(false);
   const [progress, setProgress] = useState<ProgressState | null>(null);
+  const [includeQualityProfiles, setIncludeQualityProfiles] = useState(true);
+  const [includeQualityDefinition, setIncludeQualityDefinition] =
+    useState(true);
 
   const modeLabel = connectionMode === "home" ? "Home" : "Remote";
 
@@ -280,7 +283,13 @@ export function SyncPanel({ onClose, connectionMode, services }: SyncPanelProps)
     }
   };
 
-  const runSyncJob = async (preview: boolean) => {
+  const runSyncJob = async (
+    preview: boolean,
+    applyOptions?: {
+      includeQualityProfiles?: boolean;
+      includeQualityDefinition?: boolean;
+    },
+  ) => {
     if (form.sonarr.enabled && !sonarrHubUrl) {
       setMessage({
         type: "err",
@@ -292,6 +301,18 @@ export function SyncPanel({ onClose, connectionMode, services }: SyncPanelProps)
       setMessage({
         type: "err",
         text: `Radarr has no ${modeLabel} URL in hub Settings. Add one, or switch Auto/Home/Remote.`,
+      });
+      return;
+    }
+
+    const profiles =
+      applyOptions?.includeQualityProfiles ?? includeQualityProfiles;
+    const sizes =
+      applyOptions?.includeQualityDefinition ?? includeQualityDefinition;
+    if (!preview && !profiles && !sizes) {
+      setMessage({
+        type: "err",
+        text: "Select at least one change type to apply (profiles/custom formats or quality sizes).",
       });
       return;
     }
@@ -341,7 +362,12 @@ export function SyncPanel({ onClose, connectionMode, services }: SyncPanelProps)
       const res = await fetch("/api/sync/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ preview, stream: true }),
+        body: JSON.stringify({
+          preview,
+          stream: true,
+          includeQualityProfiles: profiles,
+          includeQualityDefinition: sizes,
+        }),
       });
 
       if (!res.ok) {
@@ -380,9 +406,9 @@ export function SyncPanel({ onClose, connectionMode, services }: SyncPanelProps)
           return {
             ...prev,
             done: true,
-                status: preview
-                  ? "Preview finished — pending changes are listed below."
-                  : "Sync finished successfully.",
+            status: preview
+              ? "Preview finished — choose what to apply below."
+              : "Sync finished successfully.",
             log: combined,
           };
         });
@@ -411,7 +437,7 @@ export function SyncPanel({ onClose, connectionMode, services }: SyncPanelProps)
       setMessage({
         type: "ok",
         text: preview
-          ? "Preview only — nothing was changed. Review the log, then click Apply sync if it looks right."
+          ? "Preview only — nothing was changed. Uncheck options you want to skip, then Apply sync."
           : "Sync finished. Check Sonarr/Radarr Profiles & Custom Formats.",
       });
       await load();
@@ -664,7 +690,16 @@ export function SyncPanel({ onClose, connectionMode, services }: SyncPanelProps)
           showApply={
             progress.done && !progress.error && progress.mode === "preview"
           }
-          onApply={() => void runSyncJob(false)}
+          includeQualityProfiles={includeQualityProfiles}
+          includeQualityDefinition={includeQualityDefinition}
+          onToggleQualityProfiles={setIncludeQualityProfiles}
+          onToggleQualityDefinition={setIncludeQualityDefinition}
+          onApply={() =>
+            void runSyncJob(false, {
+              includeQualityProfiles,
+              includeQualityDefinition,
+            })
+          }
           onClose={() => setProgress(null)}
         />
       )}

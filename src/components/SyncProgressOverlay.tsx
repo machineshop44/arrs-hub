@@ -8,6 +8,10 @@ interface SyncProgressOverlayProps {
   done: boolean;
   error: string | null;
   showApply?: boolean;
+  includeQualityProfiles: boolean;
+  includeQualityDefinition: boolean;
+  onToggleQualityProfiles: (value: boolean) => void;
+  onToggleQualityDefinition: (value: boolean) => void;
   onApply?: () => void;
   onClose: () => void;
 }
@@ -19,6 +23,10 @@ export function SyncProgressOverlay({
   done,
   error,
   showApply = false,
+  includeQualityProfiles,
+  includeQualityDefinition,
+  onToggleQualityProfiles,
+  onToggleQualityDefinition,
   onApply,
   onClose,
 }: SyncProgressOverlayProps) {
@@ -110,9 +118,29 @@ export function SyncProgressOverlay({
 
         {success && showApply && (
           <div className="progress-success-banner">
-            Pending changes are listed below. Click <strong>Apply sync</strong>{" "}
-            to write them — this popup will stay open and show the live log
-            until Apply finishes.
+            Pending changes are listed below. Uncheck anything you do not want
+            written (for example quality sizes), then click{" "}
+            <strong>Apply sync</strong>.
+            <div className="sync-apply-options">
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={includeQualityProfiles}
+                  onChange={(e) => onToggleQualityProfiles(e.target.checked)}
+                />
+                <span className="toggle-label">
+                  Quality profiles &amp; custom formats
+                </span>
+              </label>
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={includeQualityDefinition}
+                  onChange={(e) => onToggleQualityDefinition(e.target.checked)}
+                />
+                <span className="toggle-label">Quality sizes</span>
+              </label>
+            </div>
           </div>
         )}
 
@@ -154,6 +182,7 @@ export function SyncProgressOverlay({
                 <button
                   type="button"
                   className="btn btn-primary"
+                  disabled={!includeQualityProfiles && !includeQualityDefinition}
                   onClick={handleApply}
                 >
                   Apply sync

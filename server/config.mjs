@@ -56,8 +56,14 @@ export function yamlQuote(value) {
 /**
  * Build Recyclarr v8 YAML (quality_definition + trash_id profiles).
  * Multiple presets for the same arr are merged into one instance.
+ * @param {object} settings
+ * @param {import('./presets.mjs').SyncPreset[]} presets
+ * @param {{ includeQualityDefinition?: boolean, includeQualityProfiles?: boolean }} [options]
  */
-export function buildRecyclarrYaml(settings, presets) {
+export function buildRecyclarrYaml(settings, presets, options = {}) {
+  const includeQualityDefinition = options.includeQualityDefinition !== false;
+  const includeQualityProfiles = options.includeQualityProfiles !== false;
+
   /** @type {Record<string, { base_url: string, api_key: string, quality_definition: string, profiles: { trashId: string, profileName: string }[] }>} */
   const sonarr = {};
   /** @type {Record<string, { base_url: string, api_key: string, quality_definition: string, profiles: { trashId: string, profileName: string }[] }>} */
@@ -105,13 +111,19 @@ export function buildRecyclarrYaml(settings, presets) {
       lines.push(`  ${key}:`);
       lines.push(`    base_url: ${yamlQuote(cfg.base_url)}`);
       lines.push(`    api_key: ${yamlQuote(cfg.api_key)}`);
-      lines.push(`    quality_definition:`);
-      lines.push(`      type: ${cfg.quality_definition}`);
-      lines.push(`    quality_profiles:`);
-      for (const profile of cfg.profiles) {
-        lines.push(`      - trash_id: ${profile.trashId}  # ${profile.profileName}`);
-        lines.push(`        reset_unmatched_scores:`);
-        lines.push(`          enabled: true`);
+      if (includeQualityDefinition) {
+        lines.push(`    quality_definition:`);
+        lines.push(`      type: ${cfg.quality_definition}`);
+      }
+      if (includeQualityProfiles) {
+        lines.push(`    quality_profiles:`);
+        for (const profile of cfg.profiles) {
+          lines.push(
+            `      - trash_id: ${profile.trashId}  # ${profile.profileName}`,
+          );
+          lines.push(`        reset_unmatched_scores:`);
+          lines.push(`          enabled: true`);
+        }
       }
       lines.push("");
     }
@@ -123,6 +135,12 @@ export function buildRecyclarrYaml(settings, presets) {
   if (Object.keys(sonarr).length === 0 && Object.keys(radarr).length === 0) {
     throw new Error(
       "Nothing to sync. Enable Sonarr/Radarr, add API keys, and select at least one profile.",
+    );
+  }
+
+  if (!includeQualityDefinition && !includeQualityProfiles) {
+    throw new Error(
+      "Select at least one change type to apply (profiles/custom formats or quality sizes).",
     );
   }
 
