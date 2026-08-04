@@ -54,10 +54,9 @@ import {
   getOmbiPendingRequests,
 } from "./activity.mjs";
 import {
-  downloadAndInstallPlexUpdate,
+  getPlexUpdateJob,
   getPlexUpdateStatus,
-  installPlexUpdate,
-  startPlexInstallerDownload,
+  startPlexUpdateJob,
 } from "./plex-update.mjs";
 import { createRequire } from "node:module";
 
@@ -332,56 +331,6 @@ app.post("/api/workouts/plex/auth/logout", async (_req, res) => {
   }
 });
 
-app.get("/api/plex/update-status", async (req, res) => {
-  try {
-    const forceLatest =
-      String(req.query?.refresh || req.query?.force || "") === "1" ||
-      String(req.query?.refresh || "").toLowerCase() === "true";
-    const status = await getPlexUpdateStatus({ forceLatest });
-    res.json(status);
-  } catch (err) {
-    res.status(500).json({ error: err.message || String(err) });
-  }
-});
-
-app.post("/api/plex/update/download", async (req, res) => {
-  try {
-    const body = req.body || {};
-    const download = await startPlexInstallerDownload({
-      version: body.version,
-      downloadUrl: body.downloadUrl,
-    });
-    res.json({ ok: true, download });
-  } catch (err) {
-    res.status(500).json({ error: err.message || String(err) });
-  }
-});
-
-app.post("/api/plex/update/install", async (req, res) => {
-  try {
-    const body = req.body || {};
-    const result = await installPlexUpdate({
-      silent: Boolean(body.silent),
-      downloadIfNeeded: body.downloadIfNeeded !== false,
-    });
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: err.message || String(err) });
-  }
-});
-
-app.post("/api/plex/update/download-and-install", async (req, res) => {
-  try {
-    const body = req.body || {};
-    const result = await downloadAndInstallPlexUpdate({
-      silent: Boolean(body.silent),
-    });
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: err.message || String(err) });
-  }
-});
-
 app.get("/api/workouts/libraries", async (_req, res) => {
   try {
     const libraries = await listLibraries();
@@ -593,6 +542,47 @@ app.get("/api/sync/status", async (_req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message || String(err) });
   }
+});
+
+/**
+ * Plex Media Server update check / install (hub on PMS PC).
+ * Mobile + desktop share these; install uses PMS /updater/* APIs.
+ */
+app.get("/api/plex/update-status", async (req, res) => {
+  try {
+    const refresh =
+      req.query.refresh === "1" ||
+      req.query.refresh === "true" ||
+      req.query.refresh === "yes";
+    const status = await getPlexUpdateStatus({ refresh });
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      installedVersion: null,
+      latestVersion: null,
+      updateAvailable: false,
+      error: err.message || String(err),
+    });
+  }
+});
+
+app.post("/api/plex/update", async (req, res) => {
+  try {
+    const job = startPlexUpdateJob({
+      download: req.body?.download,
+      apply: req.body?.apply,
+      tonight: req.body?.tonight,
+    });
+    res.status(202).json({ ok: true, job });
+  } catch (err) {
+    const status = err?.code === "JOB_IN_PROGRESS" ? 409 : 500;
+    res.status(status).json({ ok: false, error: err.message || String(err) });
+  }
+});
+
+app.get("/api/plex/update-job", (_req, res) => {
+  res.json({ ok: true, job: getPlexUpdateJob() });
 });
 
 app.post("/api/sync/install", async (_req, res) => {

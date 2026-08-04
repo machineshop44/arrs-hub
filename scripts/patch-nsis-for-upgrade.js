@@ -3,7 +3,8 @@
  * "Arrs Hub cannot be closed… Retry" when the silent old uninstaller fails.
  *
  * 1) installUtil.nsh UninstallLoop: after 5 failed uninstall attempts, force-kill
- *    Arrs Hub and continue (no MessageBox).
+ *    Arrs Hub and continue (no MessageBox). Also drop unused OneMoreAttempt label
+ *    (makensis treats unused labels as errors under electron-builder).
  * 2) installSection.nsh: run CHECK_APP_RUNNING on the elevated UAC inner instance
  *    too (assisted install previously skipped it there — where uninstallOldVersion runs).
  *
@@ -29,12 +30,15 @@ const STOCK_UNINSTALL_RETRY = [
   '      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(appCannotBeClosed)" /SD IDCANCEL IDRETRY OneMoreAttempt',
   "      Return",
   "    ${endIf}",
+  "",
+  "  OneMoreAttempt:",
+  '    ExecWait \'"$uninstallerFileNameTemp" /S /KEEP_APP_DATA $0 _?=$installationDir\' $R0',
 ].join("\n");
 
 const PATCHED_UNINSTALL_RETRY = [
   "    ${if} $R5 > 5",
   `      ${MARKER_UTIL}`,
-  '      DetailPrint "Old uninstaller still failing — force-killing Arrs Hub and continuing install"',
+  '      DetailPrint "Old uninstaller still failing - force-killing Arrs Hub and continuing install"',
   // Pop into $R9 so we do not clobber $0 (uninstall flags used by ExecWait)
   '      nsExec::ExecToLog `"$SYSDIR\\cmd.exe" /C taskkill /F /IM "Arrs Hub.exe" /T`',
   "      Pop $R9",
@@ -42,9 +46,12 @@ const PATCHED_UNINSTALL_RETRY = [
   "      Pop $R9",
   "      Sleep 1500",
   '      ExecWait \'"$uninstallerFileNameTemp" /S /KEEP_APP_DATA $0 _?=$installationDir\' $R0',
-  "      ; Never block on Retry UI — continue install even if old uninstall still fails",
+  "      ; Never block on Retry UI - continue install even if old uninstall still fails",
   "      Return",
   "    ${endIf}",
+  "",
+  // Keep ExecWait fall-through; drop OneMoreAttempt label (unused after MessageBox removal)
+  '    ExecWait \'"$uninstallerFileNameTemp" /S /KEEP_APP_DATA $0 _?=$installationDir\' $R0',
 ].join("\n");
 
 const STOCK_ASSISTED_CHECK = [
@@ -71,40 +78,72 @@ function mustExist(filePath) {
   }
 }
 
-function patchFile(filePath, stock, patched, marker, label) {
-  let text = fs.readFileSync(filePath, "utf8");
+function stripUnusedOneMoreAttempt(text) {
+  // Fix partially-patched templates that still have the unused label
+  if (!text.includes("OneMoreAttempt:")) return { text, changed: false };
+  const next = text.replace(/\r?\n  OneMoreAttempt:\r?\n/, "\n");
+  return { text: next, changed: next !== text };
+}
 
-  if (text.includes(marker)) {
-    console.log(`[patch-nsis] ${label}: already patched, skipping`);
+function patchInstallUtil() {
+  let text = fs.readFileSync(installUtilPath, "utf8");
+
+  if (text.includes(MARKER_UTIL)) {
+    const fixed = stripUnusedOneMoreAttempt(text);
+    if (fixed.changed) {
+      fs.writeFileSync(installUtilPath, fixed.text, "utf8");
+      console.log("[patch-nsis] installUtil.nsh: removed unused OneMoreAttempt label");
+      return true;
+    }
+    console.log("[patch-nsis] installUtil.nsh: already patched, skipping");
     return false;
   }
 
-  if (!text.includes(stock)) {
-    if (label === "installUtil.nsh" && text.includes("$(appCannotBeClosed)")) {
+  if (!text.includes(STOCK_UNINSTALL_RETRY)) {
+    if (text.includes("$(appCannotBeClosed)")) {
       console.error(
-        `[patch-nsis] ${label}: found appCannotBeClosed MessageBox but stock block did not match.`
+        "[patch-nsis] installUtil.nsh: found appCannotBeClosed MessageBox but stock block did not match."
       );
       console.error(
         "[patch-nsis] Update scripts/patch-nsis-for-upgrade.js for this electron-builder version."
       );
       process.exit(1);
     }
-    if (label === "installSection.nsh" && text.includes("UAC_IsInnerInstance")) {
+    console.log("[patch-nsis] installUtil.nsh: stock pattern not found (already different?) — skipping");
+    return false;
+  }
+
+  text = text.replace(STOCK_UNINSTALL_RETRY, PATCHED_UNINSTALL_RETRY);
+  fs.writeFileSync(installUtilPath, text, "utf8");
+  console.log("[patch-nsis] installUtil.nsh: patched");
+  return true;
+}
+
+function patchInstallSection() {
+  let text = fs.readFileSync(installSectionPath, "utf8");
+
+  if (text.includes(MARKER_SECTION)) {
+    console.log("[patch-nsis] installSection.nsh: already patched, skipping");
+    return false;
+  }
+
+  if (!text.includes(STOCK_ASSISTED_CHECK)) {
+    if (text.includes("UAC_IsInnerInstance")) {
       console.error(
-        `[patch-nsis] ${label}: found UAC_IsInnerInstance skip but stock block did not match.`
+        "[patch-nsis] installSection.nsh: found UAC_IsInnerInstance skip but stock block did not match."
       );
       console.error(
         "[patch-nsis] Update scripts/patch-nsis-for-upgrade.js for this electron-builder version."
       );
       process.exit(1);
     }
-    console.log(`[patch-nsis] ${label}: stock pattern not found (already different?) — skipping`);
+    console.log("[patch-nsis] installSection.nsh: stock pattern not found (already different?) — skipping");
     return false;
   }
 
-  text = text.replace(stock, patched);
-  fs.writeFileSync(filePath, text, "utf8");
-  console.log(`[patch-nsis] ${label}: patched`);
+  text = text.replace(STOCK_ASSISTED_CHECK, PATCHED_ASSISTED_CHECK);
+  fs.writeFileSync(installSectionPath, text, "utf8");
+  console.log("[patch-nsis] installSection.nsh: patched");
   return true;
 }
 
@@ -112,21 +151,7 @@ mustExist(installUtilPath);
 mustExist(installSectionPath);
 
 let changed = 0;
-if (
-  patchFile(installUtilPath, STOCK_UNINSTALL_RETRY, PATCHED_UNINSTALL_RETRY, MARKER_UTIL, "installUtil.nsh")
-) {
-  changed += 1;
-}
-if (
-  patchFile(
-    installSectionPath,
-    STOCK_ASSISTED_CHECK,
-    PATCHED_ASSISTED_CHECK,
-    MARKER_SECTION,
-    "installSection.nsh"
-  )
-) {
-  changed += 1;
-}
+if (patchInstallUtil()) changed += 1;
+if (patchInstallSection()) changed += 1;
 
 console.log(`[patch-nsis] Done (${changed} file(s) updated).`);

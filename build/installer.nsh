@@ -64,22 +64,28 @@
 ; Safe no-op if missing or still locked after kill.
 ; Per-machine installs land under Program Files; $INSTDIR may still be unset/wrong
 ; in customInit on the elevated UAC inner instance, so hit that path explicitly.
-!macro tryRenameOneExe EXEPATH
-  IfFileExists "${EXEPATH}" 0 +6
-    DetailPrint "Renaming locked ${EXEPATH} to drop file lock..."
-    Delete "${EXEPATH}.upgrade-old"
-    ClearErrors
-    Rename "${EXEPATH}" "${EXEPATH}.upgrade-old"
-    IfErrors 0 +2
-      DetailPrint "Rename failed for ${EXEPATH} (still locked?) — continuing"
-!macroend
-
+; (Do not pass paths-with-spaces as !insertmacro args — NSIS splits on whitespace.)
 !macro tryRenameLockedExe
-  !insertmacro tryRenameOneExe "$INSTDIR\Arrs Hub.exe"
-  !insertmacro tryRenameOneExe "$PROGRAMFILES64\Arrs Hub\Arrs Hub.exe"
-  !insertmacro tryRenameOneExe "$PROGRAMFILES\Arrs Hub\Arrs Hub.exe"
-  ; Hardcoded fallback matching common elevated install path
-  !insertmacro tryRenameOneExe "C:\Program Files\Arrs Hub\Arrs Hub.exe"
+  IfFileExists "$INSTDIR\Arrs Hub.exe" 0 arrs_hub_rn_instdir_done
+    DetailPrint "Renaming $INSTDIR\Arrs Hub.exe to drop file lock..."
+    Delete "$INSTDIR\Arrs Hub.exe.upgrade-old"
+    ClearErrors
+    Rename "$INSTDIR\Arrs Hub.exe" "$INSTDIR\Arrs Hub.exe.upgrade-old"
+  arrs_hub_rn_instdir_done:
+
+  IfFileExists "$PROGRAMFILES64\Arrs Hub\Arrs Hub.exe" 0 arrs_hub_rn_pf64_done
+    DetailPrint "Renaming Program Files (x64) Arrs Hub.exe to drop file lock..."
+    Delete "$PROGRAMFILES64\Arrs Hub\Arrs Hub.exe.upgrade-old"
+    ClearErrors
+    Rename "$PROGRAMFILES64\Arrs Hub\Arrs Hub.exe" "$PROGRAMFILES64\Arrs Hub\Arrs Hub.exe.upgrade-old"
+  arrs_hub_rn_pf64_done:
+
+  IfFileExists "$PROGRAMFILES\Arrs Hub\Arrs Hub.exe" 0 arrs_hub_rn_pf_done
+    DetailPrint "Renaming Program Files Arrs Hub.exe to drop file lock..."
+    Delete "$PROGRAMFILES\Arrs Hub\Arrs Hub.exe.upgrade-old"
+    ClearErrors
+    Rename "$PROGRAMFILES\Arrs Hub\Arrs Hub.exe" "$PROGRAMFILES\Arrs Hub\Arrs Hub.exe.upgrade-old"
+  arrs_hub_rn_pf_done:
 !macroend
 
 !macro customInit
@@ -87,7 +93,7 @@
   ; Extra kill aimed at Program Files (per-machine / UAC inner path)
   nsExec::ExecToLog `"$SYSDIR\cmd.exe" /C taskkill /F /IM "Arrs Hub.exe" /T`
   Pop $0
-  nsExec::ExecToLog `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $$_.ExecutablePath -like '*\\Arrs Hub\\Arrs Hub.exe' -or $$_.Name -eq 'Arrs Hub.exe' } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"`
+  nsExec::ExecToLog `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $$_.Name -eq 'Arrs Hub.exe' } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"`
   Pop $0
   Sleep 800
   !insertmacro tryRenameLockedExe

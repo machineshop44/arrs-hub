@@ -1,63 +1,38 @@
-import { spawn } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
-import { createWriteStream } from "node:fs";
-import { pipeline } from "node:stream/promises";
-import { Readable } from "node:stream";
-import { DATA_DIR, ensureDataDirs } from "./config.mjs";
+/**
+ * Plex Media Server update check + install (Windows PMS on the hub PC).
+ *
+ * Prefers PMS native updater APIs (same as Plex Settings -> Updates):
+ *   PUT  /updater/check?download=0|1
+ *   GET  /updater/status
+ *   PUT  /updater/apply?tonight=0|1
+ *
+ * Mobile / desktop UI both call hub routes; install only works when hub
+ * runs on the PMS machine and PMS reports canInstall.
+ */
 import { getPlexClientId, getWorkoutConfig } from "./plex.mjs";
 import { normalizePlexBaseUrl } from "./workout-store.mjs";
 
-const DOWNLOADS_JSON_URL = "https://plex.tv/api/downloads/5.json";
-const CACHE_TTL_MS = 15 * 60 * 1000;
 const PLEX_PRODUCT = "Arrs Hub";
-export const PLEX_UPDATE_DIR = path.join(DATA_DIR, "plex-updates");
 
-/** @type {{ fetchedAt: number, latest: string|null, downloadUrl: string|null, checksum: string|null, error: string|null } | null} */
-let latestCache = null;
+/** @typedef {'idle'|'checking'|'downloading'|'applying'|'done'|'error'} PlexUpdateJobPhase */
 
 /**
- * @typedef {{
- *   phase: 'idle'|'checking'|'downloading'|'ready'|'installing'|'error',
- *   percent: number|null,
- *   bytesReceived: number,
- *   bytesTotal: number|null,
- *   version: string|null,
- *   filePath: string|null,
- *   error: string|null,
- *   message: string|null,
- *   startedAt: string|null,
- *   finishedAt: string|null,
- * }} DownloadState
+ * @typedef {object} PlexUpdateJob
+ * @property {string} id
+ * @property {PlexUpdateJobPhase} phase
+ * @property {number} progress
+ * @property {string} message
+ * @property {string|null} error
+ * @property {string} startedAt
+ * @property {string|null} finishedAt
+ * @property {object|null} result
  */
 
-/** @type {DownloadState} */
-let downloadState = idleDownloadState();
+/** @type {PlexUpdateJob|null} */
+let currentJob = null;
+let jobSeq = 0;
 
-/** @type {Promise<void>|null} */
-let activeDownload = null;
-
-function idleDownloadState() {
-  return {
-    phase: "idle",
-    percent: null,
-    bytesReceived: 0,
-    bytesTotal: null,
-    version: null,
-    filePath: null,
-    error: null,
-    message: null,
-    startedAt: null,
-    finishedAt: null,
-  };
-}
-
-function ensureUpdateDir() {
-  ensureDataDirs();
-  fs.mkdirSync(PLEX_UPDATE_DIR, { recursive: true });
-}
-
-function plexHeaders(token, extra = {}) {
+function plexHeaders(token) {
   return {
     Accept: "application/json",
     "X-Plex-Product": PLEX_PRODUCT,
@@ -65,50 +40,30 @@ function plexHeaders(token, extra = {}) {
     "X-Plex-Device-Name": PLEX_PRODUCT,
     "X-Plex-Platform": "Windows",
     "X-Plex-Device": "PC",
-    ...(token ? { "X-Plex-Token": token } : {}),
-    ...extra,
+    "X-Plex-Token": token,
   };
 }
 
 /**
- * Normalize PMS version strings for comparison.
- * e.g. "1.43.3.10861-07dfddaeb" → "1.43.3.10861"
+ * @param {string} baseUrl
+ * @param {string} token
+ * @param {string} apiPath
+ * @param {{ method?: string, query?: Record<string, string|number|boolean|undefined|null> }} [options]
  */
-export function normalizePlexVersion(version) {
-  const raw = String(version || "").trim();
-  if (!raw) return "";
-  return raw.split("-")[0].trim();
-}
-
-/**
- * Compare dotted numeric versions. Returns -1 / 0 / 1.
- * @param {string} a
- * @param {string} b
- */
-export function comparePlexVersions(a, b) {
-  const left = normalizePlexVersion(a)
-    .split(".")
-    .map((part) => Number.parseInt(part, 10) || 0);
-  const right = normalizePlexVersion(b)
-    .split(".")
-    .map((part) => Number.parseInt(part, 10) || 0);
-  const len = Math.max(left.length, right.length);
-  for (let i = 0; i < len; i += 1) {
-    const l = left[i] ?? 0;
-    const r = right[i] ?? 0;
-    if (l < r) return -1;
-    if (l > r) return 1;
+async function updaterFetch(baseUrl, token, apiPath, options = {}) {
+  const url = new URL(apiPath, `${normalizePlexBaseUrl(baseUrl)}/`);
+  for (const [key, value] of Object.entries(options.query ?? {})) {
+    if (value === undefined || value === null || value === "") continue;
+    url.searchParams.set(key, String(value));
   }
-  return 0;
-}
+  if (token) url.searchParams.set("X-Plex-Token", token);
 
-async function fetchInstalledVersion(baseUrl, token) {
-  const url = new URL("/identity", `${normalizePlexBaseUrl(baseUrl)}/`);
-  url.searchParams.set("X-Plex-Token", token);
   const res = await fetch(url, {
+    method: options.method || "GET",
     headers: plexHeaders(token),
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(30000),
   });
+
   const text = await res.text();
   let json = null;
   try {
@@ -116,391 +71,285 @@ async function fetchInstalledVersion(baseUrl, token) {
   } catch {
     json = null;
   }
+
   if (!res.ok) {
-    throw new Error(
+    const detail =
       json?.error ||
-        json?.message ||
-        text.slice(0, 240) ||
-        `Plex /identity HTTP ${res.status}`,
-    );
+      json?.message ||
+      text.slice(0, 240) ||
+      `HTTP ${res.status}`;
+    throw new Error(`Plex ${apiPath} failed: ${detail}`);
   }
-  const container = json?.MediaContainer ?? json ?? {};
-  // Fall back to root MediaContainer version if identity omits it
-  if (!container.version) {
-    const rootUrl = new URL("/", `${normalizePlexBaseUrl(baseUrl)}/`);
-    rootUrl.searchParams.set("X-Plex-Token", token);
-    const rootRes = await fetch(rootUrl, {
-      headers: plexHeaders(token),
-      signal: AbortSignal.timeout(15000),
-    });
-    const rootText = await rootRes.text();
-    let rootJson = null;
-    try {
-      rootJson = rootText ? JSON.parse(rootText) : null;
-    } catch {
-      rootJson = null;
-    }
-    if (rootRes.ok) {
-      const root = rootJson?.MediaContainer ?? rootJson ?? {};
-      if (root.version) return String(root.version);
-    }
-  }
-  return container.version ? String(container.version) : null;
+
+  return json;
+}
+
+function mediaContainer(json) {
+  return json?.MediaContainer ?? json ?? {};
+}
+
+function asArray(value) {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function boolish(value) {
+  if (value === true || value === 1 || value === "1") return true;
+  if (value === false || value === 0 || value === "0") return false;
+  return Boolean(value);
 }
 
 /**
- * @param {{ force?: boolean }} [options]
+ * @param {ReturnType<typeof getWorkoutConfig>} [settings]
  */
-export async function fetchLatestPlexWindowsRelease(options = {}) {
-  const force = Boolean(options.force);
-  const now = Date.now();
-  if (
-    !force &&
-    latestCache &&
-    now - latestCache.fetchedAt < CACHE_TTL_MS &&
-    latestCache.latest
-  ) {
-    return latestCache;
+function requirePlexToken(settings = getWorkoutConfig()) {
+  const token = settings.plexToken?.trim();
+  if (!token) {
+    throw new Error("Sign in with Plex in Arrs Hub first (Workouts / Plex auth).");
+  }
+  return { settings, token };
+}
+
+/**
+ * @param {object} container
+ */
+function releaseFromStatus(container) {
+  const release = asArray(container.Release)[0] ?? null;
+  if (!release) return null;
+  return {
+    version: release.version ? String(release.version) : null,
+    state: release.state ? String(release.state) : null,
+    downloadURL: release.downloadURL ? String(release.downloadURL) : null,
+    key: release.key ? String(release.key) : null,
+  };
+}
+
+/**
+ * @param {{ refresh?: boolean }} [options]
+ */
+export async function getPlexUpdateStatus(options = {}) {
+  const { settings, token } = requirePlexToken();
+  const baseUrl = settings.plexBaseUrl;
+  const checkedAtIso = new Date().toISOString();
+
+  let installedVersion = null;
+  try {
+    const identity = await updaterFetch(baseUrl, token, "/identity");
+    const idContainer = mediaContainer(identity);
+    installedVersion = idContainer.version
+      ? String(idContainer.version)
+      : null;
+  } catch (err) {
+    return {
+      ok: false,
+      installedVersion: null,
+      latestVersion: null,
+      updateAvailable: false,
+      channel: null,
+      canInstall: false,
+      releaseState: null,
+      lastChecked: checkedAtIso,
+      platform: process.platform,
+      error: err?.message || String(err),
+      job: getPlexUpdateJob(),
+    };
+  }
+
+  if (options.refresh) {
+    try {
+      await updaterFetch(baseUrl, token, "/updater/check", {
+        method: "PUT",
+        query: { download: 0 },
+      });
+    } catch {
+      // status endpoint may still have a cached result
+    }
   }
 
   try {
-    const res = await fetch(DOWNLOADS_JSON_URL, {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "Arrs-Hub",
-      },
-      signal: AbortSignal.timeout(20000),
-    });
-    if (!res.ok) {
-      throw new Error(`plex.tv downloads HTTP ${res.status}`);
-    }
-    const json = await res.json();
-    const windows = json?.computer?.Windows;
-    const version = String(windows?.version || "").trim() || null;
-    const releases = Array.isArray(windows?.releases) ? windows.releases : [];
-    const x64 =
-      releases.find(
-        (item) =>
-          String(item?.build || "").toLowerCase() === "windows-x86_64" ||
-          String(item?.url || "").includes("x86_64"),
-      ) ||
-      releases.find((item) =>
-        String(item?.url || "").toLowerCase().endsWith(".exe"),
-      );
-    const downloadUrl = x64?.url ? String(x64.url) : null;
-    const checksum = x64?.checksum ? String(x64.checksum) : null;
-    if (!version || !downloadUrl) {
-      throw new Error("Could not find Windows x64 Plex Media Server download.");
-    }
-    latestCache = {
-      fetchedAt: now,
-      latest: version,
-      downloadUrl,
-      checksum,
-      error: null,
-    };
-    return latestCache;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (latestCache?.latest && latestCache.downloadUrl) {
-      return {
-        ...latestCache,
-        error: `Using cached latest (${message})`,
-      };
-    }
-    latestCache = {
-      fetchedAt: now,
-      latest: null,
-      downloadUrl: null,
-      checksum: null,
-      error: message,
-    };
-    return latestCache;
-  }
-}
+    const statusJson = await updaterFetch(baseUrl, token, "/updater/status");
+    const container = mediaContainer(statusJson);
+    const release = releaseFromStatus(container);
+    const latestVersion = release?.version ?? null;
+    const canInstall = boolish(container.canInstall);
+    const lastCheckedEpoch = Number(container.checkedAt);
+    const lastChecked = Number.isFinite(lastCheckedEpoch) && lastCheckedEpoch > 0
+      ? new Date(lastCheckedEpoch * 1000).toISOString()
+      : checkedAtIso;
 
-/**
- * @param {{ forceLatest?: boolean, refresh?: boolean }} [options]
- */
-export async function getPlexUpdateStatus(options = {}) {
-  const settings = getWorkoutConfig();
-  const tokenSet = Boolean(settings.plexToken?.trim());
-  const plexBaseUrl = settings.plexBaseUrl;
-
-  /** @type {string|null} */
-  let installed = null;
-  /** @type {string|null} */
-  let installedError = null;
-
-  if (!tokenSet) {
-    installedError =
-      "Sign in with Plex in Workouts (or save a Plex token) so Arrs Hub can read your server version.";
-  } else {
-    try {
-      installed = await fetchInstalledVersion(
-        plexBaseUrl,
-        settings.plexToken.trim(),
-      );
-      if (!installed) {
-        installedError = "Plex responded but did not include a version.";
-      }
-    } catch (err) {
-      installedError = err instanceof Error ? err.message : String(err);
-    }
-  }
-
-  const latestInfo = await fetchLatestPlexWindowsRelease({
-    force: Boolean(options.forceLatest || options.refresh),
-  });
-
-  const latest = latestInfo.latest;
-  const updateAvailable =
-    Boolean(installed && latest) &&
-    comparePlexVersions(installed, latest) < 0;
-
-  const readyFile =
-    downloadState.phase === "ready" &&
-    downloadState.filePath &&
-    fs.existsSync(downloadState.filePath)
-      ? downloadState.filePath
-      : null;
-
-  return {
-    ok: true,
-    signedIn: tokenSet,
-    plexBaseUrl,
-    installed,
-    installedVersion: installed,
-    installedError,
-    latest,
-    latestVersion: latest,
-    latestError: latestInfo.error,
-    downloadUrl: latestInfo.downloadUrl,
-    checksum: latestInfo.checksum,
-    updateAvailable,
-    download: { ...downloadState, filePath: readyFile || downloadState.filePath },
-    hint: !tokenSet
-      ? "Open Workouts → Sign in with Plex, and set Plex base URL (usually http://localhost:32400)."
-      : installedError
-        ? `Plex Media Server unreachable at ${plexBaseUrl}. Is PMS running?`
-        : null,
-  };
-}
-
-function installerFileName(version) {
-  const safe =
-    normalizePlexVersion(version).replace(/[^\w.-]+/g, "_") || "latest";
-  return `PlexMediaServer-${safe}-x86_64.exe`;
-}
-
-/**
- * @param {{ version?: string|null, downloadUrl?: string|null }} [options]
- */
-export async function startPlexInstallerDownload(options = {}) {
-  if (activeDownload || downloadState.phase === "downloading") {
-    return { ...downloadState, alreadyRunning: true };
-  }
-
-  const latestInfo = await fetchLatestPlexWindowsRelease({ force: false });
-  const version = options.version || latestInfo.latest;
-  const downloadUrl = options.downloadUrl || latestInfo.downloadUrl;
-  if (!version || !downloadUrl) {
-    throw new Error(
-      latestInfo.error ||
-        "Could not resolve latest Plex Media Server download.",
+    const updateAvailable = Boolean(
+      latestVersion &&
+        installedVersion &&
+        latestVersion !== installedVersion &&
+        release?.state !== "skipped",
     );
+
+    return {
+      ok: true,
+      installedVersion,
+      latestVersion,
+      updateAvailable,
+      channel: null,
+      canInstall,
+      releaseState: release?.state ?? null,
+      downloadURL: release?.downloadURL || container.downloadURL || null,
+      lastChecked,
+      platform: process.platform,
+      error: null,
+      job: getPlexUpdateJob(),
+    };
+  } catch (err) {
+    return {
+      ok: true,
+      installedVersion,
+      latestVersion: null,
+      updateAvailable: false,
+      channel: null,
+      canInstall: false,
+      releaseState: null,
+      lastChecked: checkedAtIso,
+      platform: process.platform,
+      error: err?.message || String(err),
+      job: getPlexUpdateJob(),
+    };
+  }
+}
+
+export function getPlexUpdateJob() {
+  return currentJob
+    ? { ...currentJob }
+    : {
+        id: null,
+        phase: "idle",
+        progress: 0,
+        message: "No update job running.",
+        error: null,
+        startedAt: null,
+        finishedAt: null,
+        result: null,
+      };
+}
+
+/**
+ * @param {{ download?: boolean, apply?: boolean, tonight?: boolean }} [body]
+ */
+export function startPlexUpdateJob(body = {}) {
+  if (currentJob && ["checking", "downloading", "applying"].includes(currentJob.phase)) {
+    const err = new Error("A Plex update job is already running.");
+    err.code = "JOB_IN_PROGRESS";
+    throw err;
   }
 
-  ensureUpdateDir();
-  const filePath = path.join(PLEX_UPDATE_DIR, installerFileName(version));
+  const download = body.download !== false;
+  const apply = body.apply !== false;
+  const tonight = Boolean(body.tonight);
 
-  downloadState = {
-    phase: "downloading",
-    percent: 0,
-    bytesReceived: 0,
-    bytesTotal: null,
-    version,
-    filePath,
+  jobSeq += 1;
+  /** @type {PlexUpdateJob} */
+  const job = {
+    id: `plex-update-${Date.now()}-${jobSeq}`,
+    phase: "checking",
+    progress: 5,
+    message: "Starting Plex update…",
     error: null,
-    message: "Downloading Plex Media Server installer…",
     startedAt: new Date().toISOString(),
     finishedAt: null,
+    result: null,
   };
+  currentJob = job;
 
-  activeDownload = (async () => {
-    const partialPath = `${filePath}.partial`;
-    try {
-      if (fs.existsSync(filePath)) {
-        downloadState = {
-          ...downloadState,
-          phase: "ready",
-          percent: 100,
-          message: "Installer already downloaded.",
-          finishedAt: new Date().toISOString(),
-        };
-        return;
-      }
-
-      const res = await fetch(downloadUrl, {
-        headers: { "User-Agent": "Arrs-Hub" },
-        redirect: "follow",
-      });
-      if (!res.ok || !res.body) {
-        throw new Error(`Download failed (HTTP ${res.status})`);
-      }
-
-      const totalHeader = res.headers.get("content-length");
-      const bytesTotal = totalHeader ? Number(totalHeader) : null;
-      downloadState.bytesTotal =
-        Number.isFinite(bytesTotal) && bytesTotal > 0 ? bytesTotal : null;
-
-      let received = 0;
-      const nodeStream = Readable.fromWeb(res.body);
-      nodeStream.on("data", (chunk) => {
-        received += chunk.length;
-        const percent =
-          downloadState.bytesTotal && downloadState.bytesTotal > 0
-            ? Math.min(
-                99,
-                Math.round((received / downloadState.bytesTotal) * 100),
-              )
-            : null;
-        downloadState = {
-          ...downloadState,
-          bytesReceived: received,
-          percent,
-          message:
-            percent != null
-              ? `Downloading… ${percent}%`
-              : `Downloading… ${(received / (1024 * 1024)).toFixed(1)} MB`,
-        };
-      });
-
-      await pipeline(nodeStream, createWriteStream(partialPath));
-      fs.renameSync(partialPath, filePath);
-
-      downloadState = {
-        ...downloadState,
-        phase: "ready",
-        percent: 100,
-        bytesReceived: received,
-        filePath,
-        message: "Download complete. Ready to install.",
-        finishedAt: new Date().toISOString(),
-      };
-    } catch (err) {
-      try {
-        if (fs.existsSync(partialPath)) fs.unlinkSync(partialPath);
-      } catch {
-        // ignore cleanup errors
-      }
-      const message = err instanceof Error ? err.message : String(err);
-      downloadState = {
-        ...downloadState,
-        phase: "error",
-        error: message,
-        message: `Download failed: ${message}`,
-        finishedAt: new Date().toISOString(),
-      };
-    } finally {
-      activeDownload = null;
-    }
-  })();
-
-  void activeDownload;
-  return { ...downloadState, alreadyRunning: false };
+  void runUpdateJob(job, { download, apply, tonight });
+  return getPlexUpdateJob();
 }
 
 /**
- * Launch the downloaded (or freshly downloaded) PMS Windows installer.
- * Default is interactive so the user sees Plex's wizard + UAC.
- * @param {{ silent?: boolean, downloadIfNeeded?: boolean }} [options]
+ * @param {PlexUpdateJob} job
+ * @param {{ download: boolean, apply: boolean, tonight: boolean }} opts
  */
-export async function installPlexUpdate(options = {}) {
-  const silent = Boolean(options.silent);
-  const downloadIfNeeded = options.downloadIfNeeded !== false;
+async function runUpdateJob(job, opts) {
+  try {
+    const { settings, token } = requirePlexToken();
+    const baseUrl = settings.plexBaseUrl;
 
-  let filePath =
-    downloadState.filePath && fs.existsSync(downloadState.filePath)
-      ? downloadState.filePath
-      : null;
+    job.phase = "checking";
+    job.progress = 15;
+    job.message = opts.download
+      ? "Checking for updates and downloading…"
+      : "Checking for updates…";
 
-  if (!filePath && downloadIfNeeded) {
-    await startPlexInstallerDownload();
-    if (activeDownload) await activeDownload;
-    if (downloadState.phase === "error") {
-      throw new Error(downloadState.error || "Download failed.");
+    await updaterFetch(baseUrl, token, "/updater/check", {
+      method: "PUT",
+      query: { download: opts.download ? 1 : 0 },
+    });
+
+    const statusJson = await updaterFetch(baseUrl, token, "/updater/status");
+    const container = mediaContainer(statusJson);
+    const release = releaseFromStatus(container);
+    const canInstall = boolish(container.canInstall);
+
+    if (!release?.version) {
+      job.phase = "done";
+      job.progress = 100;
+      job.message = "Plex is up to date (no release available).";
+      job.finishedAt = new Date().toISOString();
+      job.result = { updateAvailable: false, canInstall, release: null };
+      return;
     }
-    filePath = downloadState.filePath;
-  }
 
-  if (!filePath || !fs.existsSync(filePath)) {
-    throw new Error(
-      "No installer on disk. Use Download first, or Download & install.",
-    );
-  }
-
-  downloadState = {
-    ...downloadState,
-    phase: "installing",
-    message: silent
-      ? "Launching silent Plex installer (UAC may still appear)…"
-      : "Launching Plex installer — complete the wizard; Windows may prompt for UAC.",
-    error: null,
-    startedAt: downloadState.startedAt || new Date().toISOString(),
-  };
-
-  const args = silent ? ["/quiet"] : [];
-
-  await new Promise((resolve, reject) => {
-    try {
-      const child = spawn(filePath, args, {
-        detached: true,
-        stdio: "ignore",
-        windowsHide: false,
-        shell: false,
-      });
-      child.on("error", reject);
-      child.unref();
-      setTimeout(resolve, 250);
-    } catch (err) {
-      reject(err);
+    if (opts.download) {
+      job.phase = "downloading";
+      job.progress = 45;
+      job.message = `Update ${release.version} state: ${release.state || "unknown"}`;
     }
-  });
 
-  downloadState = {
-    ...downloadState,
-    phase: "ready",
-    message: silent
-      ? "Silent installer launched. Arrs Hub cannot confirm when Plex finishes upgrading."
-      : "Installer launched. Finish Plex’s wizard (UAC may appear). Arrs Hub cannot silently complete their install.",
-    finishedAt: new Date().toISOString(),
-  };
+    if (!opts.apply) {
+      job.phase = "done";
+      job.progress = 100;
+      job.message = "Update check finished (apply skipped).";
+      job.finishedAt = new Date().toISOString();
+      job.result = {
+        updateAvailable: true,
+        canInstall,
+        release,
+      };
+      return;
+    }
 
-  return {
-    ok: true,
-    filePath,
-    silent,
-    download: { ...downloadState },
-  };
-}
+    if (!canInstall) {
+      throw new Error(
+        "Plex reports canInstall=false. Manual/NAS installs cannot be applied from Arrs Hub — update on the PMS host, or use Windows PMS with updater support.",
+      );
+    }
 
-/**
- * Download (if needed) then launch installer.
- * @param {{ silent?: boolean }} [options]
- */
-export async function downloadAndInstallPlexUpdate(options = {}) {
-  await startPlexInstallerDownload();
-  if (activeDownload) await activeDownload;
-  if (downloadState.phase === "error") {
-    throw new Error(downloadState.error || "Download failed.");
+    job.phase = "applying";
+    job.progress = 70;
+    job.message = opts.tonight
+      ? "Scheduling update for tonight (Butler)…"
+      : "Applying Plex update now (server may restart)…";
+
+    await updaterFetch(baseUrl, token, "/updater/apply", {
+      method: "PUT",
+      query: { tonight: opts.tonight ? 1 : 0 },
+    });
+
+    job.phase = "done";
+    job.progress = 100;
+    job.message = opts.tonight
+      ? "Update scheduled for tonight."
+      : "Update apply requested. Plex may restart shortly.";
+    job.finishedAt = new Date().toISOString();
+    job.result = {
+      updateAvailable: true,
+      canInstall,
+      release,
+      applied: true,
+      tonight: opts.tonight,
+    };
+  } catch (err) {
+    job.phase = "error";
+    job.progress = 100;
+    job.error = err?.message || String(err);
+    job.message = "Plex update failed.";
+    job.finishedAt = new Date().toISOString();
   }
-  return installPlexUpdate({
-    silent: Boolean(options.silent),
-    downloadIfNeeded: false,
-  });
-}
-
-export function getPlexDownloadState() {
-  return { ...downloadState };
 }
