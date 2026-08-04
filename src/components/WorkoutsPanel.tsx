@@ -26,6 +26,10 @@ type Client = {
   machineIdentifier: string;
   product?: string;
   castType?: string;
+  deviceClass?: string;
+  platform?: string;
+  kind?: "local" | "tv" | "speaker" | "phone" | "app";
+  kindLabel?: string;
 };
 type DayItem = { day: number; title: string; ratingKey: string };
 type PlaylistItem = {
@@ -944,13 +948,20 @@ export function WorkoutsPanel({
                           key={client.machineIdentifier}
                           value={client.machineIdentifier}
                         >
-                          {client.castType === "chromecast"
-                            ? "Cast · "
-                            : client.castType === "plex"
-                              ? "Plex · "
-                              : ""}
+                          {client.kind === "tv"
+                            ? "TV · "
+                            : client.kind === "speaker"
+                              ? "Speaker · "
+                              : client.kind === "phone"
+                                ? "Phone · "
+                                : client.kind === "app"
+                                  ? "App · "
+                                  : client.castType === "chromecast"
+                                    ? "Cast · "
+                                    : client.castType === "plex"
+                                      ? "Plex · "
+                                      : ""}
                           {client.name}
-                          {client.product ? ` · ${client.product}` : ""}
                         </option>
                       ))}
                     </select>
