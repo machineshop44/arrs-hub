@@ -53,6 +53,12 @@ import {
   getHubStatusSummary,
   getOmbiPendingRequests,
 } from "./activity.mjs";
+import {
+  downloadAndInstallPlexUpdate,
+  getPlexUpdateStatus,
+  installPlexUpdate,
+  startPlexInstallerDownload,
+} from "./plex-update.mjs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -320,6 +326,56 @@ app.get("/api/workouts/plex/auth/poll", async (req, res) => {
 app.post("/api/workouts/plex/auth/logout", async (_req, res) => {
   try {
     const result = await logoutPlex();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.get("/api/plex/update-status", async (req, res) => {
+  try {
+    const forceLatest =
+      String(req.query?.refresh || req.query?.force || "") === "1" ||
+      String(req.query?.refresh || "").toLowerCase() === "true";
+    const status = await getPlexUpdateStatus({ forceLatest });
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/plex/update/download", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const download = await startPlexInstallerDownload({
+      version: body.version,
+      downloadUrl: body.downloadUrl,
+    });
+    res.json({ ok: true, download });
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/plex/update/install", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const result = await installPlexUpdate({
+      silent: Boolean(body.silent),
+      downloadIfNeeded: body.downloadIfNeeded !== false,
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/plex/update/download-and-install", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const result = await downloadAndInstallPlexUpdate({
+      silent: Boolean(body.silent),
+    });
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message || String(err) });

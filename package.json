@@ -1,7 +1,7 @@
 {
   "name": "arrs-hub",
   "private": true,
-  "version": "1.3.18",
+  "version": "1.3.19",
   "description": "Arrs Hub — dashboard and watchdog for your Plex / *arr stack",
   "author": "machineshop44",
   "type": "module",
@@ -14,9 +14,10 @@
     "preview": "vite preview",
     "desktop": "electron .",
     "desktop:build": "npm run build && electron .",
-    "dist:win": "npm run build && electron-builder --win",
+    "predist": "node scripts/patch-nsis-for-upgrade.js",
+    "dist:win": "npm run predist && npm run build && electron-builder --win",
     "build:win": "npm run dist:win",
-    "pack:win": "npm run build && electron-builder --win --dir"
+    "pack:win": "npm run predist && npm run build && electron-builder --win --dir"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",

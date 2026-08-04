@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { AppSettings, ServiceConfig } from "../types";
 import { APP_VERSION_LABEL } from "../version";
 import { getServiceUrl } from "../types";
+import { PlexUpdateCard } from "./PlexUpdateCard";
 
 interface SettingsPanelProps {
   settings: AppSettings;
@@ -419,6 +420,8 @@ export function SettingsPanel({
               ))}
             </div>
           </section>
+
+          <PlexUpdateCard serverUp={apiServerUp} />
 
           <section className="settings-group">
             <h3>TRaSH Sync API keys</h3>

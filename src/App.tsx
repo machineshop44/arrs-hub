@@ -11,6 +11,7 @@ import { WatchdogPanel } from "./components/WatchdogPanel";
 import { WorkoutsPanel } from "./components/WorkoutsPanel";
 import { StreamsPanel } from "./components/StreamsPanel";
 import { DashboardStatus } from "./components/DashboardStatus";
+import { PlexUpdateCard } from "./components/PlexUpdateCard";
 import { CATEGORY_ORDER, getServiceUrl } from "./types";
 import type { ConnectionPreference } from "./types";
 import { APP_VERSION_LABEL } from "./version";
@@ -190,6 +191,8 @@ export default function App() {
           scanning={watchdog.scanning}
           onOpenStreams={() => setShowStreams(true)}
         />
+
+        <PlexUpdateCard serverUp={watchdog.serverUp} compact />
 
         {(watchdog.serverUp || watchdog.scanning || watchdog.serverUp === null) && (
           <div className="watchdog-bar">

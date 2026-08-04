@@ -444,6 +444,148 @@ input {
   line-height: 1.4;
 }
 
+.plex-update-card {
+  margin-bottom: 1.5rem;
+}
+
+.plex-update-compact {
+  padding: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.plex-update-compact.tone-good {
+  border-color: color-mix(in srgb, #4ade80 35%, var(--border));
+}
+
+.plex-update-compact.tone-warn {
+  border-color: color-mix(in srgb, #fbbf24 40%, var(--border));
+}
+
+.plex-update-compact.tone-bad {
+  border-color: color-mix(in srgb, #f87171 40%, var(--border));
+}
+
+.plex-update-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.85rem 1.15rem;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.plex-update-summary:hover {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.plex-update-summary-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.plex-update-summary-value {
+  flex: 1;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.plex-update-compact.tone-good .plex-update-summary-value {
+  color: #86efac;
+}
+
+.plex-update-compact.tone-warn .plex-update-summary-value {
+  color: #fcd34d;
+}
+
+.plex-update-compact.tone-bad .plex-update-summary-value {
+  color: #fca5a5;
+}
+
+.plex-update-chevron {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.plex-update-body {
+  padding: 0 1.15rem 1.1rem;
+  border-top: 1px solid var(--border);
+}
+
+.plex-update-copy {
+  margin-top: 0.85rem;
+}
+
+.plex-update-hint {
+  color: #fcd34d;
+}
+
+.plex-update-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.65rem;
+  margin-bottom: 0.85rem;
+}
+
+.plex-update-meta div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.55rem 0.7rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.plex-update-meta span {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.plex-update-meta strong {
+  font-size: 0.85rem;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.plex-update-progress {
+  margin-bottom: 0.85rem;
+}
+
+.plex-update-progress-text {
+  margin: 0.4rem 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.plex-update-actions {
+  margin-bottom: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.plex-update-silent {
+  margin-top: 0.25rem;
+  align-items: flex-start;
+}
+
+.plex-update-silent .toggle-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.plex-update-silent code {
+  font-size: 0.75rem;
+}
+
 .watchdog-bar-offline {
   opacity: 0.9;
 }
