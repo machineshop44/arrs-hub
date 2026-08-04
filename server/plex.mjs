@@ -1,9 +1,10 @@
+import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import path from "node:path";
-import { Readable } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { DATA_DIR, ensureDataDirs } from "./config.mjs";
 import {
@@ -16,6 +17,12 @@ const PLEX_PRODUCT = "Arrs Hub";
 const CLIENT_ID_PATH = path.join(DATA_DIR, "plex-client-id");
 /** Stable id for media proxy / transcode (OAuth client id can 503 part downloads). */
 const PLEX_MEDIA_CLIENT_ID = "arrs-hub-media";
+
+/** EBML / Matroska file magic (`1A 45 DF A3`). */
+const MATROSKA_EBML_MAGIC = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);
+
+/** Cached `ffmpeg` path (null = missing, undefined = not probed). */
+let cachedFfmpegPath;
 
 
 /** @type {Map<string, { code: string, expiresAt: number }>} */
@@ -1094,12 +1101,216 @@ const PLEX_BROWSER_TRANSCODE_PROFILE =
   "add-transcode-target(type=videoProfile&context=streaming&protocol=http&container=mp4&videoCodec=h264&audioCodec=aac&subtitleCodec=srt)+add-transcode-target(type=videoProfile&context=streaming&protocol=hls&container=mpegts&videoCodec=h264&audioCodec=aac&subtitleCodec=srt)";
 
 /**
+ * Stricter MP4-only profile (no HLS target). Used when PMS still emits Matroska.
+ */
+const PLEX_MP4_ONLY_TRANSCODE_PROFILE =
+  "add-transcode-target(type=videoProfile&context=streaming&protocol=http&container=mp4&videoCodec=h264&audioCodec=aac&subtitleCodec=srt&replace=true)";
+
+/**
+ * @param {string|string[]|undefined} contentType
+ */
+function isMatroskaContentType(contentType) {
+  const s = String(
+    Array.isArray(contentType) ? contentType[0] : contentType || "",
+  ).toLowerCase();
+  return (
+    s.includes("matroska") ||
+    s.includes("x-matroska") ||
+    /\bmkv\b/.test(s) ||
+    s.includes("video/webm")
+  );
+}
+
+/**
+ * @param {Buffer|null|undefined} buf
+ */
+function isMatroskaMagic(buf) {
+  return Boolean(buf && buf.length >= 4 && buf.subarray(0, 4).equals(MATROSKA_EBML_MAGIC));
+}
+
+/**
+ * ISO BMFF / MP4 typically starts with a box size then `ftyp`.
+ * @param {Buffer|null|undefined} buf
+ */
+function isMp4Magic(buf) {
+  return Boolean(buf && buf.length >= 8 && buf.toString("ascii", 4, 8) === "ftyp");
+}
+
+/**
+ * @param {string|string[]|undefined} contentType
+ * @param {Buffer|null|undefined} firstChunk
+ */
+function mediaLooksLikeMatroska(contentType, firstChunk) {
+  return isMatroskaContentType(contentType) || isMatroskaMagic(firstChunk);
+}
+
+/**
+ * Resolve ffmpeg binary once (PATH). Returns null when unavailable.
+ * @returns {Promise<string|null>}
+ */
+async function resolveFfmpegPath() {
+  if (cachedFfmpegPath !== undefined) return cachedFfmpegPath;
+  cachedFfmpegPath = await new Promise((resolve) => {
+    const cmd = process.platform === "win32" ? "where" : "which";
+    const child = spawn(cmd, ["ffmpeg"], { windowsHide: true });
+    let out = "";
+    child.stdout?.on("data", (c) => {
+      out += String(c);
+    });
+    child.on("error", () => resolve(null));
+    child.on("close", (code) => {
+      if (code !== 0) {
+        resolve(null);
+        return;
+      }
+      const first = out
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .find(Boolean);
+      resolve(first || null);
+    });
+  });
+  return cachedFfmpegPath;
+}
+
+/**
+ * Last-resort: remux/transcode Plex URL to fragmented progressive MP4 via ffmpeg.
+ * @param {string} plexUrl
+ * @param {Record<string, string>} headers
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<{ stdout: import('node:stream').Readable, kill: () => void }|null>}
+ */
+async function openFfmpegMp4Remux(plexUrl, headers, signal) {
+  const ffmpegPath = await resolveFfmpegPath();
+  if (!ffmpegPath) return null;
+
+  const headerBlock = Object.entries(headers)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\r\n");
+
+  const args = [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-headers",
+    `${headerBlock}\r\n`,
+    "-i",
+    plexUrl,
+    "-c:v",
+    "copy",
+    "-c:a",
+    "aac",
+    "-movflags",
+    "frag_keyframe+empty_moov+default_base_moof",
+    "-f",
+    "mp4",
+    "pipe:1",
+  ];
+
+  const child = spawn(ffmpegPath, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+
+  let stderr = "";
+  child.stderr?.on("data", (c) => {
+    stderr += String(c);
+    if (stderr.length > 800) stderr = stderr.slice(-800);
+  });
+
+  const kill = () => {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // ignore
+    }
+  };
+
+  if (signal) {
+    if (signal.aborted) {
+      kill();
+      return null;
+    }
+    signal.addEventListener("abort", kill, { once: true });
+  }
+
+  // Wait briefly for first stdout byte or early exit (bad input / missing codecs).
+  const first = await new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        resolve({ ok: true, chunk: Buffer.alloc(0) });
+      }
+    }, 12000);
+
+    child.stdout?.once("data", (chunk) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.stdout.pause();
+      resolve({
+        ok: true,
+        chunk: Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk),
+      });
+    });
+
+    child.once("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ ok: false, error: err });
+    });
+
+    child.once("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        ok: false,
+        error: new Error(
+          `ffmpeg exited early (code ${code})${stderr ? `: ${stderr.trim()}` : ""}`,
+        ),
+      });
+    });
+  });
+
+  if (!first.ok) {
+    kill();
+    console.warn(
+      `[workouts/media] ffmpeg remux failed: ${
+        first.error instanceof Error ? first.error.message : String(first.error)
+      }`,
+    );
+    return null;
+  }
+
+  const stdout = child.stdout;
+  if (!stdout) {
+    kill();
+    return null;
+  }
+
+  if (first.chunk && first.chunk.length > 0) {
+    const merged = new PassThrough();
+    merged.write(first.chunk);
+    stdout.resume();
+    stdout.pipe(merged);
+    return { stdout: merged, kill };
+  }
+
+  stdout.resume();
+  return { stdout, kill };
+}
+
+/**
  * Build universal-transcode query params shared by decision + start.
  * Prefer audio-only convert (directStream=1): H.264 video copy + AAC audio —
  * workout rips are often H.264+AC3 MP4 where only audio needs convert.
+ * Always request progressive MP4 (never Matroska).
  * @param {object} settings
  * @param {string} ratingKey
- * @param {{ offsetMs?: number, session?: string, platform?: string, hasMDE?: string, directStream?: string }} [opts]
+ * @param {{ offsetMs?: number, session?: string, platform?: string, hasMDE?: string, directStream?: string, profileExtra?: string, mp4Only?: boolean }} [opts]
  */
 function buildPlexTranscodeParams(settings, ratingKey, opts = {}) {
   const token = settings.plexToken.trim();
@@ -1108,16 +1319,24 @@ function buildPlexTranscodeParams(settings, ratingKey, opts = {}) {
   const hasMDE = opts.hasMDE === "0" ? "0" : "1";
   // directStream=1 lets PMS copy compatible H.264 and only convert AC3→AAC.
   const directStream = opts.directStream === "0" ? "0" : "1";
+  const profileExtra =
+    opts.profileExtra ||
+    (opts.mp4Only
+      ? PLEX_MP4_ONLY_TRANSCODE_PROFILE
+      : PLEX_BROWSER_TRANSCODE_PROFILE);
   const params = {
     path: `/library/metadata/${ratingKey}`,
     mediaIndex: "0",
     partIndex: "0",
     protocol: "http",
+    // Force progressive MP4 — without this PMS often keeps source Matroska on directStream.
+    container: "mp4",
     fastSeek: "1",
     directPlay: "0",
     directStream,
     videoCodecs: "h264",
     audioCodecs: "aac",
+    subtitleCodecs: "srt",
     subtitleSize: "100",
     audioBoost: "100",
     location: "lan",
@@ -1129,9 +1348,12 @@ function buildPlexTranscodeParams(settings, ratingKey, opts = {}) {
     "X-Plex-Client-Identifier": PLEX_MEDIA_CLIENT_ID,
     "X-Plex-Product": PLEX_PRODUCT,
     "X-Plex-Device-Name": PLEX_PRODUCT,
-    "X-Plex-Client-Profile-Extra": PLEX_BROWSER_TRANSCODE_PROFILE,
+    "X-Plex-Client-Profile-Extra": profileExtra,
     "X-Plex-Token": token,
   };
+  if (opts.mp4Only || platform === "Chrome") {
+    params["X-Plex-Client-Profile-Name"] = "Chrome";
+  }
   const offsetMs = Math.max(0, Number(opts.offsetMs) || 0);
   if (offsetMs > 0) {
     params.offset = String(Math.floor(offsetMs));
@@ -1143,17 +1365,30 @@ function buildPlexTranscodeParams(settings, ratingKey, opts = {}) {
  * Headers for universal decision / start.mp4 (must match query platform).
  * @param {string} token
  * @param {string} [platform]
+ * @param {string} [profileExtra]
  */
-function plexTranscodeHeaders(token, platform = "Android") {
-  return {
+function plexTranscodeHeaders(
+  token,
+  platform = "Android",
+  profileExtra = PLEX_BROWSER_TRANSCODE_PROFILE,
+) {
+  /** @type {Record<string, string>} */
+  const headers = {
     Accept: "*/*",
     "X-Plex-Token": token,
     "X-Plex-Client-Identifier": PLEX_MEDIA_CLIENT_ID,
     "X-Plex-Product": PLEX_PRODUCT,
     "X-Plex-Platform": platform,
     "X-Plex-Device-Name": PLEX_PRODUCT,
-    "X-Plex-Client-Profile-Extra": PLEX_BROWSER_TRANSCODE_PROFILE,
+    "X-Plex-Client-Profile-Extra": profileExtra,
   };
+  if (
+    platform === "Chrome" ||
+    profileExtra === PLEX_MP4_ONLY_TRANSCODE_PROFILE
+  ) {
+    headers["X-Plex-Client-Profile-Name"] = "Chrome";
+  }
+  return headers;
 }
 
 /**
@@ -1258,10 +1493,12 @@ async function ensurePlexTranscodeDecision(settings, params) {
   }
   const token = settings.plexToken.trim();
   const platform = String(params["X-Plex-Platform"] || "Android");
+  const profileExtra =
+    params["X-Plex-Client-Profile-Extra"] || PLEX_BROWSER_TRANSCODE_PROFILE;
   const res = await fetch(url, {
     method: "GET",
     headers: {
-      ...plexTranscodeHeaders(token, platform),
+      ...plexTranscodeHeaders(token, platform, profileExtra),
       Accept: "application/json",
     },
     signal: AbortSignal.timeout(20000),
@@ -1295,7 +1532,7 @@ async function ensurePlexTranscodeDecision(settings, params) {
  * Build start.mp4 URL after decision for the given param set.
  * @param {object} settings
  * @param {string} ratingKey
- * @param {{ offsetMs?: number, platform?: string, hasMDE?: string, directStream?: string }} [opts]
+ * @param {{ offsetMs?: number, platform?: string, hasMDE?: string, directStream?: string, mp4Only?: boolean, profileExtra?: string }} [opts]
  */
 async function openTranscodeUpstream(settings, ratingKey, opts = {}) {
   const base = normalizePlexBaseUrl(settings.plexBaseUrl);
@@ -1309,6 +1546,9 @@ async function openTranscodeUpstream(settings, ratingKey, opts = {}) {
     plexUrl: stream.toString(),
     session: transcodeParams.session,
     platform: String(transcodeParams["X-Plex-Platform"] || "Android"),
+    profileExtra:
+      transcodeParams["X-Plex-Client-Profile-Extra"] ||
+      PLEX_BROWSER_TRANSCODE_PROFILE,
     transcodeParams,
   };
 }
@@ -1349,7 +1589,8 @@ async function resolvePlexUpstreamStream(settings, ratingKey, opts = {}) {
   const audioCodec = String(
     media?.audioCodec || part?.audioCodec || "",
   ).toLowerCase();
-  const friendlyContainer = ["mp4", "m4v", "mov", "webm"].includes(container);
+  // Only true progressive MP4-family — never treat Matroska/WebM as direct HTML5.
+  const friendlyContainer = ["mp4", "m4v", "mov"].includes(container);
   const friendlyVideo = ["", "h264", "avc", "avc1"].includes(videoCodec);
   // Android WebView / Chromium <video> cannot decode AC3/DTS — only AAC/MP3/etc.
   // Transcode (audio-prefer directStream) when audio is not browser-safe.
@@ -1368,6 +1609,7 @@ async function resolvePlexUpstreamStream(settings, ratingKey, opts = {}) {
   let mode = "direct";
   let session = "";
   let platform = "Android";
+  let profileExtra = PLEX_BROWSER_TRANSCODE_PROFILE;
   /** @type {Record<string, string>|null} */
   let transcodeParams = null;
 
@@ -1390,6 +1632,7 @@ async function resolvePlexUpstreamStream(settings, ratingKey, opts = {}) {
     transcodeParams = opened.transcodeParams;
     seekable = false;
     mode = "transcode";
+    profileExtra = opened.profileExtra || PLEX_BROWSER_TRANSCODE_PROFILE;
   }
 
   return {
@@ -1400,6 +1643,7 @@ async function resolvePlexUpstreamStream(settings, ratingKey, opts = {}) {
     mode,
     session,
     platform,
+    profileExtra,
     partKey: part?.key || "",
     container,
     videoCodec,
@@ -1502,11 +1746,24 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
    * @param {boolean} isTranscode
    * @param {string} platform
    * @param {boolean} allowRange
+   * @param {string} [profileExtra]
    */
-  async function openUpstreamBody(plexUrl, isTranscode, platform, allowRange) {
+  async function openUpstreamBody(
+    plexUrl,
+    isTranscode,
+    platform,
+    allowRange,
+    profileExtra,
+  ) {
     /** @type {Record<string, string>} */
     const headers = isTranscode
-      ? plexTranscodeHeaders(token, platform)
+      ? plexTranscodeHeaders(
+          token,
+          platform,
+          profileExtra ||
+            upstream.profileExtra ||
+            PLEX_BROWSER_TRANSCODE_PROFILE,
+        )
       : { "X-Plex-Token": token, Accept: "*/*" };
     // Progressive MP4 transcoder does not honor byte ranges reliably (empty 200 /
     // Content-Length: 0). Only forward Range for direct file parts.
@@ -1542,9 +1799,48 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
     }
   }
 
+  /**
+   * Apply a successful openTranscodeUpstream result onto `upstream`.
+   * @param {{ plexUrl: string, session: string, platform: string, profileExtra?: string, transcodeParams: Record<string, string> }} opened
+   * @param {string} label
+   */
+  function applyTranscodeOpen(opened, label) {
+    upstream.plexUrl = opened.plexUrl;
+    upstream.session = opened.session;
+    upstream.platform = opened.platform;
+    upstream.profileExtra = opened.profileExtra;
+    upstream.transcodeParams = opened.transcodeParams;
+    upstream.mode = "transcode";
+    upstream.seekable = false;
+    upstream.contentType = "video/mp4";
+    attemptLabel = label;
+  }
+
+  /**
+   * Reject Matroska with clear 502 (HTML5 players need progressive MP4).
+   */
+  function rejectMatroska(detail) {
+    if (!res.headersSent) {
+      res.status(502).json({
+        error:
+          "Plex returned Matroska/MKV instead of progressive MP4. " +
+          "Arrs Hub requires H.264+AAC MP4 for in-app players. " +
+          "Check PMS transcoder (Universal Transcoder) and that container=mp4 is honored. " +
+          (detail ? `(${detail})` : ""),
+        code: "PLEX_MATROSKA",
+        attempt: attemptLabel,
+        videoCodec: upstream.videoCodec,
+        audioCodec: upstream.audioCodec,
+        container: upstream.container,
+      });
+    }
+  }
+
   let plexIncoming = null;
   let firstChunk = /** @type {Buffer|null|undefined} */ (undefined);
   let attemptLabel = upstream.mode;
+  /** @type {{ stdout: import('node:stream').Readable, kill: () => void }|null} */
+  let ffmpegRemux = null;
 
   try {
     const isTranscode = upstream.mode === "transcode";
@@ -1555,14 +1851,20 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
       isTranscode,
       upstream.platform || "Android",
       forwardRange,
+      upstream.profileExtra,
     );
 
-    // Non-OK (except 206 for ranged direct): try raw part fallback once.
+    // Non-OK (except 206 for ranged direct): try raw part fallback once —
+    // only when the part itself is already MP4-family (never pipe MKV as success).
+    const partIsMp4Family = ["mp4", "m4v", "mov"].includes(
+      String(upstream.container || ""),
+    );
     if (
       plexIncoming.statusCode &&
       plexIncoming.statusCode >= 400 &&
       isTranscode &&
-      upstream.partKey
+      upstream.partKey &&
+      partIsMp4Family
     ) {
       console.warn(
         `[workouts/media] Plex HTTP ${plexIncoming.statusCode} for ${key} mode=transcode; trying part fallback`,
@@ -1580,10 +1882,7 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
         "Android",
         Boolean(req.headers.range),
       );
-      if (
-        plexIncoming.statusCode &&
-        plexIncoming.statusCode < 400
-      ) {
+      if (plexIncoming.statusCode && plexIncoming.statusCode < 400) {
         upstream.mode = "direct-fallback";
         upstream.seekable = true;
         upstream.contentType = "video/mp4";
@@ -1592,16 +1891,25 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
     }
 
     // Peek first bytes for transcode so CL:0 / empty end never become a 200.
-    if (upstream.mode === "transcode") {
+    // Also peek non-ranged responses so we can reject Matroska magic.
+    const shouldPeek =
+      upstream.mode === "transcode" ||
+      !forwardRange ||
+      isMatroskaContentType(plexIncoming.headers["content-type"]);
+
+    if (shouldPeek && plexIncoming) {
       const advertisedEmpty =
         plexIncoming.headers["content-length"] === "0";
       if (advertisedEmpty) {
         firstChunk = null;
-      } else {
+      } else if (firstChunk === undefined) {
         firstChunk = await readFirstChunk(plexIncoming);
       }
+    }
+
+    if (upstream.mode === "transcode") {
       const empty =
-        advertisedEmpty ||
+        plexIncoming.headers["content-length"] === "0" ||
         firstChunk === null ||
         isEmptyUpstream(plexIncoming, firstChunk);
 
@@ -1623,19 +1931,16 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
           platform: "Chrome",
           hasMDE: "0",
           directStream: "1",
+          mp4Only: true,
         });
-        upstream.plexUrl = retry.plexUrl;
-        upstream.session = retry.session;
-        upstream.platform = retry.platform;
-        upstream.transcodeParams = retry.transcodeParams;
-        upstream.mode = "transcode";
-        attemptLabel = "chrome-hasMDE0";
+        applyTranscodeOpen(retry, "chrome-mp4-only");
 
         plexIncoming = await openUpstreamBody(
           upstream.plexUrl,
           true,
           upstream.platform,
           false,
+          upstream.profileExtra,
         );
         const retryClEmpty =
           plexIncoming.headers["content-length"] === "0";
@@ -1659,10 +1964,7 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
             res.status(502).json({
               error:
                 "Plex universal/start.mp4 returned an empty media body " +
-                "(after Android + Chrome retries). Check PMS transcode / codecs; " +
-                (upstream.partKey
-                  ? "partKey exists (ffmpeg remux not enabled)."
-                  : "no partKey."),
+                "(after Android + Chrome MP4 retries). Check PMS transcoder / codecs.",
               code: "PLEX_EMPTY",
               attempt: attemptLabel,
               videoCodec: upstream.videoCodec,
@@ -1720,14 +2022,224 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
       return;
     }
 
-    const streamingTranscode = upstream.mode === "transcode";
-    res.status(streamingTranscode ? 200 : plexIncoming.statusCode || 200);
+    // Ensure we have magic bytes to validate container (skip for mid-file Range).
+    if (
+      firstChunk === undefined &&
+      !(plexIncoming.statusCode === 206 && req.headers.range)
+    ) {
+      firstChunk = await readFirstChunk(plexIncoming);
+    }
 
-    const contentType =
-      plexIncoming.headers["content-type"] ||
-      upstream.contentType ||
-      "video/mp4";
-    res.setHeader("Content-Type", contentType);
+    // If PMS emitted Matroska/MKV/WebM, retry with stricter MP4-only profile.
+    if (
+      mediaLooksLikeMatroska(
+        plexIncoming.headers["content-type"],
+        firstChunk,
+      )
+    ) {
+      const upstreamCt = String(
+        plexIncoming.headers["content-type"] || "(none)",
+      );
+      console.warn(
+        `[workouts/media] Matroska/non-MP4 from Plex for ${key} ` +
+          `ct=${upstreamCt} magic=${
+            firstChunk && firstChunk.length >= 4
+              ? firstChunk.subarray(0, 4).toString("hex")
+              : "n/a"
+          } attempt=${attemptLabel} — retrying MP4-only`,
+      );
+      abandonIncoming(plexIncoming);
+      plexIncoming = null;
+      firstChunk = undefined;
+
+      const mp4Retries = [
+        {
+          label: "chrome-mp4-directStream",
+          opts: {
+            offsetMs,
+            platform: "Chrome",
+            hasMDE: "0",
+            directStream: "1",
+            mp4Only: true,
+          },
+        },
+        {
+          label: "chrome-mp4-force-transcode",
+          opts: {
+            offsetMs,
+            platform: "Chrome",
+            hasMDE: "0",
+            directStream: "0",
+            mp4Only: true,
+          },
+        },
+      ];
+
+      let recovered = false;
+      for (const step of mp4Retries) {
+        try {
+          const opened = await openTranscodeUpstream(settings, key, step.opts);
+          applyTranscodeOpen(opened, step.label);
+          plexIncoming = await openUpstreamBody(
+            upstream.plexUrl,
+            true,
+            upstream.platform,
+            false,
+            upstream.profileExtra,
+          );
+          if (
+            !plexIncoming ||
+            (plexIncoming.statusCode && plexIncoming.statusCode >= 400)
+          ) {
+            abandonIncoming(plexIncoming);
+            plexIncoming = null;
+            continue;
+          }
+          if (plexIncoming.headers["content-length"] === "0") {
+            abandonIncoming(plexIncoming);
+            plexIncoming = null;
+            continue;
+          }
+          firstChunk = await readFirstChunk(plexIncoming);
+          if (
+            isEmptyUpstream(plexIncoming, firstChunk) ||
+            mediaLooksLikeMatroska(
+              plexIncoming.headers["content-type"],
+              firstChunk,
+            )
+          ) {
+            abandonIncoming(plexIncoming);
+            plexIncoming = null;
+            firstChunk = undefined;
+            continue;
+          }
+          recovered = true;
+          break;
+        } catch (retryErr) {
+          const msg =
+            retryErr instanceof Error ? retryErr.message : String(retryErr);
+          console.warn(
+            `[workouts/media] MP4 retry ${step.label} failed for ${key}: ${msg}`,
+          );
+          abandonIncoming(plexIncoming);
+          plexIncoming = null;
+          firstChunk = undefined;
+        }
+      }
+
+      // Last resort: ffmpeg remux to fragmented progressive MP4 (if on PATH).
+      if (!recovered) {
+        console.warn(
+          `[workouts/media] Plex still Matroska for ${key}; trying ffmpeg remux`,
+        );
+        const remuxHeaders = plexTranscodeHeaders(
+          token,
+          "Chrome",
+          PLEX_MP4_ONLY_TRANSCODE_PROFILE,
+        );
+        // Prefer remuxing the original part (or last start.mp4 URL).
+        let remuxUrl = upstream.plexUrl;
+        if (upstream.partKey) {
+          const partUrl = new URL(
+            upstream.partKey,
+            `${normalizePlexBaseUrl(settings.plexBaseUrl)}/`,
+          );
+          partUrl.searchParams.set("X-Plex-Token", token);
+          remuxUrl = partUrl.toString();
+        }
+        ffmpegRemux = await openFfmpegMp4Remux(
+          remuxUrl,
+          remuxUrl.includes("X-Plex-Token")
+            ? { "X-Plex-Token": token, Accept: "*/*" }
+            : remuxHeaders,
+          ac.signal,
+        );
+        if (!ffmpegRemux) {
+          rejectMatroska("retries exhausted; ffmpeg unavailable or failed");
+          return;
+        }
+        attemptLabel = "ffmpeg-remux";
+        upstream.mode = "ffmpeg-remux";
+        firstChunk = undefined;
+      }
+    }
+
+    const streamingTranscode =
+      upstream.mode === "transcode" || upstream.mode === "ffmpeg-remux";
+
+    if (ffmpegRemux) {
+      res.status(200);
+      res.setHeader("Content-Type", "video/mp4");
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("X-Arrs-Stream-Mode", upstream.mode);
+      res.setHeader("X-Arrs-Stream-Attempt", attemptLabel);
+      res.setHeader("Accept-Ranges", "none");
+      const remux = ffmpegRemux;
+      ffmpegRemux = null;
+      try {
+        await pipeline(remux.stdout, res);
+      } finally {
+        remux.kill();
+      }
+      return;
+    }
+
+    // Final container gate — never claim video/mp4 for Matroska.
+    if (
+      mediaLooksLikeMatroska(
+        plexIncoming.headers["content-type"],
+        firstChunk,
+      )
+    ) {
+      abandonIncoming(plexIncoming);
+      plexIncoming = null;
+      rejectMatroska("still Matroska after retries");
+      return;
+    }
+
+    const looksMp4 =
+      isMp4Magic(firstChunk) ||
+      (!firstChunk && plexIncoming.statusCode === 206) ||
+      String(plexIncoming.headers["content-type"] || "")
+        .toLowerCase()
+        .includes("mp4");
+
+    if (
+      firstChunk &&
+      firstChunk.length >= 8 &&
+      !isMp4Magic(firstChunk) &&
+      !isMatroskaMagic(firstChunk) &&
+      upstream.mode === "transcode"
+    ) {
+      // Slow-start / unknown preamble — still force video/mp4 for our contract
+      // when PMS said mp4 / start.mp4 and magic is not EBML.
+      console.warn(
+        `[workouts/media] non-ftyp preamble for ${key} ` +
+          `hex=${firstChunk.subarray(0, 8).toString("hex")} — serving as video/mp4`,
+      );
+    }
+
+    if (!looksMp4 && firstChunk && firstChunk.length >= 8 && !isMp4Magic(firstChunk)) {
+      // Unknown container that is not Matroska — refuse rather than lie to <video>.
+      if (!isMatroskaMagic(firstChunk)) {
+        abandonIncoming(plexIncoming);
+        plexIncoming = null;
+        if (!res.headersSent) {
+          res.status(502).json({
+            error:
+              "Upstream media is not progressive MP4 (no ftyp box). " +
+              "Check PMS transcoder output.",
+            code: "PLEX_NOT_MP4",
+            attempt: attemptLabel,
+          });
+        }
+        return;
+      }
+    }
+
+    res.status(streamingTranscode ? 200 : plexIncoming.statusCode || 200);
+    // Only advertise video/mp4 when body is actually MP4 (or ranged mid-file).
+    res.setHeader("Content-Type", "video/mp4");
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Arrs-Stream-Mode", upstream.mode);
     if (attemptLabel && attemptLabel !== upstream.mode) {
@@ -1779,6 +2291,14 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
       await pipeline(upstreamBody, res);
     }
   } catch (err) {
+    if (ffmpegRemux) {
+      try {
+        ffmpegRemux.kill();
+      } catch {
+        // ignore
+      }
+      ffmpegRemux = null;
+    }
     if (ac.signal.aborted || req.aborted || res.writableEnded) return;
     const message = err instanceof Error ? err.message : String(err);
     if (/aborted|ABORT_ERR/i.test(message)) return;
