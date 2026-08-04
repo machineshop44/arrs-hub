@@ -4,9 +4,11 @@
 ; customCheckAppRunning fully replaces _CHECK_APP_RUNNING (no MessageBox).
 ; Kill also runs in customInit (including elevated UAC inner instance) and
 ; customUnInit so file locks clear before copy.
-; scripts/patch-nsis-for-upgrade.js additionally: (1) force-kills instead of
-; MessageBox when silent old uninstall fails, (2) runs CHECK_APP_RUNNING on
-; the UAC inner instance where uninstallOldVersion actually runs.
+; scripts/patch-nsis-for-upgrade.js additionally:
+;   (1) UninstallLoop: kill first, ≤2 silent uninstall tries, then continue
+;       (never MessageBox / Retry — overwrite install if old uninstall fails)
+;   (2) extractAppPackage: kill + non-atomic extract fallback (never Retry UI)
+;   (3) CHECK_APP_RUNNING on UAC inner instance where uninstallOldVersion runs
 ;
 ; Note: avoid LogicLib (${If}) here — custom include is parsed before LogicLib.
 
