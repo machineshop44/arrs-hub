@@ -48,7 +48,11 @@ import {
   publicIntegrationsSettings,
   updateIntegrationsSettings,
 } from "./integrations.mjs";
-import { getHubStatusSummary } from "./activity.mjs";
+import {
+  approveOmbiRequest,
+  getHubStatusSummary,
+  getOmbiPendingRequests,
+} from "./activity.mjs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -152,6 +156,40 @@ app.post("/api/status/summary", async (req, res) => {
     res.json(summary);
   } catch (err) {
     res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.get("/api/activity/ombi/pending", async (_req, res) => {
+  try {
+    const result = await getOmbiPendingRequests({});
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/activity/ombi/pending", async (req, res) => {
+  try {
+    const result = await getOmbiPendingRequests({
+      urls: req.body?.urls ?? {},
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/activity/ombi/approve", async (req, res) => {
+  try {
+    const result = await approveOmbiRequest({
+      type: req.body?.type,
+      id: req.body?.id,
+      urls: req.body?.urls ?? {},
+    });
+    res.json(result);
+  } catch (err) {
+    const status = Number(err?.status) || 500;
+    res.status(status).json({ error: err.message || String(err) });
   }
 });
 

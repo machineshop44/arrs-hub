@@ -1154,6 +1154,45 @@ input {
   text-decoration: underline;
 }
 
+.dash-chip-popover-ombi {
+  width: min(24rem, calc(100vw - 2rem));
+}
+
+.dash-ombi-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.75rem;
+}
+
+.dash-ombi-approve {
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.28rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, #4ade80 45%, var(--border));
+  background: color-mix(in srgb, #22c55e 18%, var(--bg-card));
+  color: #bbf7d0;
+  cursor: pointer;
+}
+
+.dash-ombi-approve:hover:not(:disabled) {
+  background: color-mix(in srgb, #22c55e 28%, var(--bg-card));
+}
+
+.dash-ombi-approve:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.dash-chip-popover-error {
+  margin: 0.55rem 0 0;
+  font-size: 0.75rem;
+  color: #fca5a5;
+  line-height: 1.35;
+}
+
 .dash-chip-value {
   font-size: 1.25rem;
   font-weight: 700;

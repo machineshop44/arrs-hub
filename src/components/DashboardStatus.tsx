@@ -21,6 +21,13 @@ export type ArrQueueApp = {
   error?: string;
 };
 
+export type OmbiPendingItem = {
+  id: number;
+  type: "movie" | "tv" | "music";
+  title: string;
+  requester?: string;
+};
+
 export type HubStatusSummary = {
   ok: boolean;
   checkedAt?: string;
@@ -87,6 +94,16 @@ function activityQueueUrl(baseUrl: string | undefined): string | null {
   return `${baseUrl.replace(/\/+$/, "")}/activity/queue`;
 }
 
+function ombiHomeUrl(baseUrl: string | undefined): string | null {
+  if (!baseUrl) return null;
+  return `${baseUrl.replace(/\/+$/, "")}/`;
+}
+
+function ombiRequestsUrl(baseUrl: string | undefined): string | null {
+  if (!baseUrl) return null;
+  return `${baseUrl.replace(/\/+$/, "")}/requests`;
+}
+
 function issueBadge(issue: ArrQueueIssue): string {
   const state = String(issue.trackedDownloadState || "").toLowerCase();
   const tracked = String(issue.trackedDownloadStatus || "").toLowerCase();
@@ -95,6 +112,12 @@ function issueBadge(issue: ArrQueueIssue): string {
   if (tracked === "warning") return "Warning";
   if (tracked === "error") return "Error";
   return issue.status || "Stuck";
+}
+
+function ombiTypeLabel(type: OmbiPendingItem["type"]): string {
+  if (type === "tv") return "TV";
+  if (type === "music") return "Music";
+  return "Movie";
 }
 
 export function DashboardStatus({
@@ -109,7 +132,13 @@ export function DashboardStatus({
   const [summary, setSummary] = useState<HubStatusSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
+  const [ombiOpen, setOmbiOpen] = useState(false);
+  const [ombiItems, setOmbiItems] = useState<OmbiPendingItem[]>([]);
+  const [ombiLoading, setOmbiLoading] = useState(false);
+  const [ombiError, setOmbiError] = useState<string | null>(null);
+  const [ombiApprovingId, setOmbiApprovingId] = useState<string | null>(null);
   const queueWrapRef = useRef<HTMLDivElement>(null);
+  const ombiWrapRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     if (serverUp === false) return;
@@ -128,6 +157,48 @@ export function DashboardStatus({
     }
   }, [services, connectionMode, serverUp]);
 
+  const loadOmbiPending = useCallback(async () => {
+    if (serverUp === false) return;
+    setOmbiLoading(true);
+    setOmbiError(null);
+    try {
+      const res = await fetch("/api/activity/ombi/pending", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urls: urlMap(services, connectionMode) }),
+      });
+      const json = (await res.json()) as {
+        ok?: boolean;
+        configured?: boolean;
+        items?: OmbiPendingItem[];
+        pending?: number;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(json.error || "Failed to load Ombi pending");
+      setOmbiItems(Array.isArray(json.items) ? json.items : []);
+      const nextPending = json.pending;
+      if (typeof nextPending === "number") {
+        setSummary((prev) =>
+          prev
+            ? {
+                ...prev,
+                ombi: {
+                  ok: json.ok !== false,
+                  configured: json.configured !== false,
+                  pending: nextPending,
+                  error: json.error,
+                },
+              }
+            : prev,
+        );
+      }
+    } catch (err) {
+      setOmbiError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOmbiLoading(false);
+    }
+  }, [services, connectionMode, serverUp]);
+
   useEffect(() => {
     void load();
     const timer = window.setInterval(() => void load(), 20000);
@@ -135,15 +206,28 @@ export function DashboardStatus({
   }, [load]);
 
   useEffect(() => {
-    if (!queueOpen) return;
+    if (!ombiOpen) return;
+    void loadOmbiPending();
+  }, [ombiOpen, loadOmbiPending]);
+
+  useEffect(() => {
+    if (!queueOpen && !ombiOpen) return;
     const onDoc = (event: MouseEvent) => {
-      const el = queueWrapRef.current;
-      if (el && !el.contains(event.target as Node)) {
-        setQueueOpen(false);
+      const target = event.target as Node;
+      if (queueOpen) {
+        const el = queueWrapRef.current;
+        if (el && !el.contains(target)) setQueueOpen(false);
+      }
+      if (ombiOpen) {
+        const el = ombiWrapRef.current;
+        if (el && !el.contains(target)) setOmbiOpen(false);
       }
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setQueueOpen(false);
+      if (event.key === "Escape") {
+        setQueueOpen(false);
+        setOmbiOpen(false);
+      }
     };
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
@@ -151,7 +235,31 @@ export function DashboardStatus({
       document.removeEventListener("mousedown", onDoc);
       document.removeEventListener("keydown", onKey);
     };
-  }, [queueOpen]);
+  }, [queueOpen, ombiOpen]);
+
+  const approveOmbi = async (item: OmbiPendingItem) => {
+    const key = `${item.type}-${item.id}`;
+    setOmbiApprovingId(key);
+    setOmbiError(null);
+    try {
+      const res = await fetch("/api/activity/ombi/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: item.type,
+          id: item.id,
+          urls: urlMap(services, connectionMode),
+        }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(json.error || "Approve failed");
+      await Promise.all([loadOmbiPending(), load()]);
+    } catch (err) {
+      setOmbiError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOmbiApprovingId(null);
+    }
+  };
 
   const streams = summary?.streams?.streamCount ?? null;
   const downloads = summary?.downloads?.active ?? null;
@@ -159,6 +267,7 @@ export function DashboardStatus({
   const queueTotal = summary?.arr?.queueTotal ?? null;
   const pendingSummary = summary == null && serverUp !== false;
   const urls = urlMap(services, connectionMode);
+  const ombiOpenUrl = ombiRequestsUrl(urls.ombi) || ombiHomeUrl(urls.ombi);
 
   const arrApps: {
     id: "sonarr" | "radarr" | "lidarr";
@@ -291,7 +400,10 @@ export function DashboardStatus({
                   aria-expanded={queueOpen}
                   aria-haspopup="dialog"
                   title="Sonarr + Radarr (+ Lidarr) queue total — click for breakdown"
-                  onClick={() => setQueueOpen((open) => !open)}
+                  onClick={() => {
+                    setOmbiOpen(false);
+                    setQueueOpen((open) => !open);
+                  }}
                 >
                   <span className="dash-chip-value">{chip.value}</span>
                   <span className="dash-chip-label">{chip.label}</span>
@@ -382,15 +494,122 @@ export function DashboardStatus({
             );
           }
 
+          if (chip.id === "ombi") {
+            return (
+              <div key={chip.id} className="dash-chip-wrap" ref={ombiWrapRef}>
+                <button
+                  type="button"
+                  className={`dash-chip dash-chip-btn tone-${chip.tone}`}
+                  aria-expanded={ombiOpen}
+                  aria-haspopup="dialog"
+                  title="Requests awaiting approval in Ombi — click to review"
+                  onClick={() => {
+                    setQueueOpen(false);
+                    setOmbiOpen((open) => !open);
+                  }}
+                >
+                  <span className="dash-chip-value">{chip.value}</span>
+                  <span className="dash-chip-label">{chip.label}</span>
+                </button>
+                {ombiOpen && (
+                  <div
+                    className="dash-chip-popover dash-chip-popover-ombi"
+                    role="dialog"
+                    aria-label="Ombi pending approvals"
+                  >
+                    <p className="dash-chip-popover-title">
+                      Pending approvals
+                      {ombiPending != null ? ` · ${ombiPending}` : ""}
+                    </p>
+
+                    {!summary?.ombi?.configured ? (
+                      <p className="dash-chip-popover-empty">
+                        Add Ombi Home URL + API key in Settings to approve from
+                        the hub.
+                      </p>
+                    ) : ombiLoading && ombiItems.length === 0 ? (
+                      <p className="dash-chip-popover-empty">Loading…</p>
+                    ) : ombiItems.length === 0 ? (
+                      <p className="dash-chip-popover-empty">
+                        No requests awaiting approval.
+                      </p>
+                    ) : (
+                      <ul className="dash-queue-issues">
+                        {ombiItems.map((item) => {
+                          const key = `${item.type}-${item.id}`;
+                          const approving = ombiApprovingId === key;
+                          return (
+                            <li key={key}>
+                              <div className="dash-queue-issue-main">
+                                <span className="dash-queue-issue-badge">
+                                  {ombiTypeLabel(item.type)}
+                                  {item.requester
+                                    ? ` · ${item.requester}`
+                                    : ""}
+                                </span>
+                                <span className="dash-queue-issue-title">
+                                  {item.title}
+                                </span>
+                              </div>
+                              <div className="dash-ombi-actions">
+                                <button
+                                  type="button"
+                                  className="dash-ombi-approve"
+                                  disabled={approving || ombiApprovingId != null}
+                                  onClick={() => void approveOmbi(item)}
+                                >
+                                  {approving ? "Approving…" : "Approve"}
+                                </button>
+                                {ombiOpenUrl ? (
+                                  <a
+                                    className="dash-queue-issue-link"
+                                    href={ombiOpenUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    Open in Ombi
+                                  </a>
+                                ) : null}
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+
+                    {ombiError ? (
+                      <p className="dash-chip-popover-error">{ombiError}</p>
+                    ) : null}
+
+                    {ombiOpenUrl ? (
+                      <p className="dash-chip-popover-hint">
+                        Fallback:{" "}
+                        <a
+                          className="dash-queue-issue-link"
+                          href={ombiOpenUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={() => setOmbiOpen(false)}
+                        >
+                          open Ombi requests
+                        </a>
+                      </p>
+                    ) : (
+                      <p className="dash-chip-popover-hint">
+                        Set Ombi&apos;s Home URL on the dashboard service card
+                        to open the web UI.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          }
+
           return (
             <div
               key={chip.id}
               className={`dash-chip tone-${chip.tone}`}
-              title={
-                chip.id === "ombi"
-                  ? "Requests awaiting approval in Ombi"
-                  : undefined
-              }
             >
               <span className="dash-chip-value">{chip.value}</span>
               <span className="dash-chip-label">{chip.label}</span>
