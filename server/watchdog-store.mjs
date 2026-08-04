@@ -57,8 +57,10 @@ export function getDefaultExePaths() {
     bazarr: "C:\\Program Files\\Bazarr\\bazarr.exe",
     // Common portable / user install under Local AppData
     tautulli: path.join(localAppData, "Tautulli", "Tautulli.exe"),
+    // ytarr Inno Setup default: {localappdata}\Programs\ytarr\ytarr.exe
+    ytarr: path.join(localAppData, "Programs", "ytarr", "ytarr.exe"),
     // Intentionally empty — leave for user:
-    // plex, qbittorrent, sabnzbd, ombi, flaresolverr, ytarr, overseerr,
+    // plex, qbittorrent, sabnzbd, ombi, flaresolverr, overseerr,
     // fileflows, calibre, trash-guides
   };
 }

@@ -347,7 +347,7 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
                         ombi: "C:\\Program Files\\Ombi\\Ombi.exe",
                         flaresolverr:
                           "C:\\Program Files\\FlareSolverr\\FlareSolverr.exe",
-                        ytarr: "C:\\Path\\To\\Ytarr\\Ytarr.exe",
+                        ytarr: "C:\\Users\\…\\AppData\\Local\\Programs\\ytarr\\ytarr.exe",
                       }[app.id] ?? "C:\\ProgramData\\App\\bin\\App.exe";
                     return (
                       <div key={app.id} className="watchdog-service-row">
