@@ -14,6 +14,7 @@ export type PlexUpdateStatus = {
   latestVersion?: string | null;
   updateAvailable?: boolean;
   canInstall?: boolean;
+  channel?: string | null;
   releaseState?: string | null;
   lastChecked?: string | null;
   error?: string | null;
@@ -271,7 +272,13 @@ export function PlexUpdateCard({
         <div className="sync-alert sync-alert-err">{status.error}</div>
       ) : null}
 
-      {!canInstall && status?.installedVersion ? (
+      {!canInstall && status?.updateAvailable ? (
+        <p className="settings-hint plex-update-hint">
+          {status.channel === "plex.tv"
+            ? "Seen on plex.tv, but PMS updater has not listed this Release yet — update from Plex Settings on the host (Install via hub unavailable until PMS lists it)."
+            : "PMS reports canInstall=false — update on the host (manual/NAS installs cannot be applied from Arrs Hub)."}
+        </p>
+      ) : !canInstall && status?.installedVersion ? (
         <p className="settings-hint plex-update-hint">
           PMS reports canInstall=false — update on the host (manual/NAS installs
           cannot be applied from Arrs Hub).

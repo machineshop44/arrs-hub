@@ -1,18 +1,27 @@
 /**
  * Plex Media Server update check + install (Windows PMS on the hub PC).
  *
- * Prefers PMS native updater APIs (same as Plex Settings -> Updates):
- *   PUT  /updater/check?download=0|1
- *   GET  /updater/status
- *   PUT  /updater/apply?tonight=0|1
+ * Detection combines:
+ *   1) PMS native updater APIs (same as Plex Settings → Updates):
+ *        PUT  /updater/check?download=0|1
+ *        GET  /updater/status
+ *        PUT  /updater/apply?tonight=0|1
+ *   2) plex.tv downloads catalog (https://plex.tv/api/downloads/5.json)
+ *      — PMS /updater/status often lags or returns size=0 even when plex.tv
+ *        already lists a newer build (e.g. 1.43.3.10828 installed vs
+ *        1.43.3.10861 on plex.tv). Without the catalog fallback the hub
+ *        falsely reports "up to date".
  *
- * Mobile / desktop UI both call hub routes; install only works when hub
- * runs on the PMS machine and PMS reports canInstall.
+ * Install still uses PMS /updater/apply when PMS lists a Release and
+ * canInstall=true. Catalog-only updates set canInstall=false with a clear
+ * channel hint so the UI does not offer a no-op Install.
  */
 import { getPlexClientId, getWorkoutConfig } from "./plex.mjs";
 import { normalizePlexBaseUrl } from "./workout-store.mjs";
 
 const PLEX_PRODUCT = "Arrs Hub";
+const DOWNLOADS_JSON_URL = "https://plex.tv/api/downloads/5.json";
+const PLEX_TV_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /** @typedef {'idle'|'checking'|'downloading'|'applying'|'done'|'error'} PlexUpdateJobPhase */
 
@@ -32,6 +41,9 @@ const PLEX_PRODUCT = "Arrs Hub";
 let currentJob = null;
 let jobSeq = 0;
 
+/** @type {{ fetchedAt: number, version: string|null, downloadURL: string|null, error: string|null } | null} */
+let plexTvCache = null;
+
 function plexHeaders(token) {
   return {
     Accept: "application/json",
@@ -42,6 +54,38 @@ function plexHeaders(token) {
     "X-Plex-Device": "PC",
     "X-Plex-Token": token,
   };
+}
+
+/**
+ * Normalize PMS version strings for comparison.
+ * e.g. "1.43.3.10861-07dfddaeb" → "1.43.3.10861"
+ */
+export function normalizePlexVersion(version) {
+  const raw = String(version || "").trim();
+  if (!raw) return "";
+  return raw.split("-")[0].trim();
+}
+
+/**
+ * Compare dotted numeric versions. Returns -1 / 0 / 1.
+ * @param {string} a
+ * @param {string} b
+ */
+export function comparePlexVersions(a, b) {
+  const left = normalizePlexVersion(a)
+    .split(".")
+    .map((part) => Number.parseInt(part, 10) || 0);
+  const right = normalizePlexVersion(b)
+    .split(".")
+    .map((part) => Number.parseInt(part, 10) || 0);
+  const len = Math.max(left.length, right.length);
+  for (let i = 0; i < len; i += 1) {
+    const l = left[i] ?? 0;
+    const r = right[i] ?? 0;
+    if (l < r) return -1;
+    if (l > r) return 1;
+  }
+  return 0;
 }
 
 /**
@@ -114,14 +158,93 @@ function requirePlexToken(settings = getWorkoutConfig()) {
  * @param {object} container
  */
 function releaseFromStatus(container) {
-  const release = asArray(container.Release)[0] ?? null;
-  if (!release) return null;
+  const releases = asArray(container.Release).filter(Boolean);
+  if (!releases.length) return null;
+
+  // Prefer an actionable / newer-looking release when PMS returns several.
+  let best = releases[0];
+  for (const release of releases.slice(1)) {
+    const bestVer = best?.version ? String(best.version) : "";
+    const nextVer = release?.version ? String(release.version) : "";
+    if (nextVer && (!bestVer || comparePlexVersions(nextVer, bestVer) > 0)) {
+      best = release;
+    }
+  }
+
   return {
-    version: release.version ? String(release.version) : null,
-    state: release.state ? String(release.state) : null,
-    downloadURL: release.downloadURL ? String(release.downloadURL) : null,
-    key: release.key ? String(release.key) : null,
+    version: best.version ? String(best.version) : null,
+    state: best.state ? String(best.state) : null,
+    downloadURL: best.downloadURL ? String(best.downloadURL) : null,
+    key: best.key ? String(best.key) : null,
   };
+}
+
+/**
+ * @param {{ force?: boolean }} [options]
+ */
+async function fetchPlexTvLatestWindows(options = {}) {
+  const force = Boolean(options.force);
+  const now = Date.now();
+  if (
+    !force &&
+    plexTvCache &&
+    now - plexTvCache.fetchedAt < PLEX_TV_CACHE_TTL_MS &&
+    (plexTvCache.version || plexTvCache.error)
+  ) {
+    return plexTvCache;
+  }
+
+  try {
+    const res = await fetch(DOWNLOADS_JSON_URL, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "Arrs-Hub",
+      },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!res.ok) {
+      throw new Error(`plex.tv downloads HTTP ${res.status}`);
+    }
+    const json = await res.json();
+    const windows = json?.computer?.Windows;
+    const version = String(windows?.version || "").trim() || null;
+    const releases = Array.isArray(windows?.releases) ? windows.releases : [];
+    const x64 =
+      releases.find(
+        (item) =>
+          String(item?.build || "").toLowerCase() === "windows-x86_64" ||
+          String(item?.url || "").includes("x86_64"),
+      ) ||
+      releases.find((item) =>
+        String(item?.url || "").toLowerCase().endsWith(".exe"),
+      );
+    const downloadURL = x64?.url ? String(x64.url) : null;
+    if (!version) {
+      throw new Error("plex.tv downloads JSON missing Windows version.");
+    }
+    plexTvCache = {
+      fetchedAt: now,
+      version,
+      downloadURL,
+      error: null,
+    };
+    return plexTvCache;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (plexTvCache?.version) {
+      return {
+        ...plexTvCache,
+        error: `Using cached plex.tv latest (${message})`,
+      };
+    }
+    plexTvCache = {
+      fetchedAt: now,
+      version: null,
+      downloadURL: null,
+      error: message,
+    };
+    return plexTvCache;
+  }
 }
 
 /**
@@ -131,6 +254,7 @@ export async function getPlexUpdateStatus(options = {}) {
   const { settings, token } = requirePlexToken();
   const baseUrl = settings.plexBaseUrl;
   const checkedAtIso = new Date().toISOString();
+  const refresh = Boolean(options.refresh);
 
   let installedVersion = null;
   try {
@@ -155,64 +279,101 @@ export async function getPlexUpdateStatus(options = {}) {
     };
   }
 
-  if (options.refresh) {
+  /** @type {ReturnType<typeof releaseFromStatus>} */
+  let pmsRelease = null;
+  let canInstallFromPms = false;
+  let lastChecked = checkedAtIso;
+  /** @type {string|null} */
+  let pmsStatusError = null;
+
+  if (refresh) {
     try {
       await updaterFetch(baseUrl, token, "/updater/check", {
         method: "PUT",
         query: { download: 0 },
       });
-    } catch {
-      // status endpoint may still have a cached result
+    } catch (err) {
+      pmsStatusError = err?.message || String(err);
     }
   }
 
   try {
     const statusJson = await updaterFetch(baseUrl, token, "/updater/status");
     const container = mediaContainer(statusJson);
-    const release = releaseFromStatus(container);
-    const latestVersion = release?.version ?? null;
-    const canInstall = boolish(container.canInstall);
+    pmsRelease = releaseFromStatus(container);
+    canInstallFromPms = boolish(container.canInstall);
     const lastCheckedEpoch = Number(container.checkedAt);
-    const lastChecked = Number.isFinite(lastCheckedEpoch) && lastCheckedEpoch > 0
-      ? new Date(lastCheckedEpoch * 1000).toISOString()
-      : checkedAtIso;
-
-    const updateAvailable = Boolean(
-      latestVersion &&
-        installedVersion &&
-        latestVersion !== installedVersion &&
-        release?.state !== "skipped",
-    );
-
-    return {
-      ok: true,
-      installedVersion,
-      latestVersion,
-      updateAvailable,
-      channel: null,
-      canInstall,
-      releaseState: release?.state ?? null,
-      downloadURL: release?.downloadURL || container.downloadURL || null,
-      lastChecked,
-      platform: process.platform,
-      error: null,
-      job: getPlexUpdateJob(),
-    };
+    if (Number.isFinite(lastCheckedEpoch) && lastCheckedEpoch > 0) {
+      lastChecked = new Date(lastCheckedEpoch * 1000).toISOString();
+    }
   } catch (err) {
-    return {
-      ok: true,
-      installedVersion,
-      latestVersion: null,
-      updateAvailable: false,
-      channel: null,
-      canInstall: false,
-      releaseState: null,
-      lastChecked: checkedAtIso,
-      platform: process.platform,
-      error: err?.message || String(err),
-      job: getPlexUpdateJob(),
-    };
+    pmsStatusError = err?.message || String(err);
   }
+
+  const plexTv = await fetchPlexTvLatestWindows({ force: refresh });
+
+  let latestVersion = pmsRelease?.version ?? null;
+  let downloadURL =
+    pmsRelease?.downloadURL || null;
+  let releaseState = pmsRelease?.state ?? null;
+  /** @type {string|null} */
+  let channel = pmsRelease?.version ? "pms" : null;
+
+  if (plexTv.version) {
+    if (
+      !latestVersion ||
+      comparePlexVersions(plexTv.version, latestVersion) > 0
+    ) {
+      latestVersion = plexTv.version;
+      if (!downloadURL) downloadURL = plexTv.downloadURL;
+      if (!releaseState) releaseState = "available";
+      channel = "plex.tv";
+    } else if (!channel) {
+      channel = "plex.tv";
+    }
+  }
+
+  const updateAvailable = Boolean(
+    latestVersion &&
+      installedVersion &&
+      comparePlexVersions(installedVersion, latestVersion) < 0 &&
+      releaseState !== "skipped",
+  );
+
+  // Install via hub only when PMS updater itself lists a newer Release.
+  const pmsListsNewer = Boolean(
+    pmsRelease?.version &&
+      installedVersion &&
+      comparePlexVersions(installedVersion, pmsRelease.version) < 0 &&
+      pmsRelease.state !== "skipped",
+  );
+  const canInstall = Boolean(canInstallFromPms && pmsListsNewer);
+
+  /** @type {string|null} */
+  let error = null;
+  if (updateAvailable && !pmsListsNewer) {
+    error =
+      "Update listed on plex.tv, but PMS /updater/status has no Release yet — use Plex Settings → Updates, or wait for the server updater to list it.";
+  } else if (!updateAvailable && pmsStatusError && !latestVersion) {
+    error = pmsStatusError;
+  } else if (plexTv.error && !latestVersion) {
+    error = plexTv.error;
+  }
+
+  return {
+    ok: true,
+    installedVersion,
+    latestVersion,
+    updateAvailable,
+    channel,
+    canInstall,
+    releaseState,
+    downloadURL,
+    lastChecked,
+    platform: process.platform,
+    error,
+    job: getPlexUpdateJob(),
+  };
 }
 
 export function getPlexUpdateJob() {
@@ -288,6 +449,25 @@ async function runUpdateJob(job, opts) {
     const canInstall = boolish(container.canInstall);
 
     if (!release?.version) {
+      // Cross-check plex.tv so the job error is actionable when updater lags.
+      const plexTv = await fetchPlexTvLatestWindows({ force: true });
+      let installed = null;
+      try {
+        const identity = await updaterFetch(baseUrl, token, "/identity");
+        const idVer = mediaContainer(identity).version;
+        installed = idVer ? String(idVer) : null;
+      } catch {
+        // keep null
+      }
+      if (
+        plexTv.version &&
+        installed &&
+        comparePlexVersions(installed, plexTv.version) < 0
+      ) {
+        throw new Error(
+          `Plex Media Server updater has no Release, but plex.tv lists ${normalizePlexVersion(plexTv.version)} (installed ${normalizePlexVersion(installed)}). Update from Plex Settings → Updates on the PMS host.`,
+        );
+      }
       job.phase = "done";
       job.progress = 100;
       job.message = "Plex is up to date (no release available).";
