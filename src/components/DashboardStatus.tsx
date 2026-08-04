@@ -56,6 +56,7 @@ interface DashboardStatusProps {
   downCount: number;
   serverUp: boolean | null;
   scanning?: boolean;
+  onOpenStreams?: () => void;
 }
 
 function urlMap(
@@ -103,6 +104,7 @@ export function DashboardStatus({
   downCount,
   serverUp,
   scanning = false,
+  onOpenStreams,
 }: DashboardStatusProps) {
   const [summary, setSummary] = useState<HubStatusSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -257,6 +259,25 @@ export function DashboardStatus({
       )}
       <div className="dash-chips">
         {chips.map((chip) => {
+          if (chip.id === "streams" && onOpenStreams) {
+            return (
+              <button
+                key={chip.id}
+                type="button"
+                className={`dash-chip dash-chip-btn tone-${chip.tone}`}
+                title={
+                  summary?.streams?.configured
+                    ? "Open Streams — live Plex streams from Tautulli"
+                    : "Open Streams"
+                }
+                onClick={onOpenStreams}
+              >
+                <span className="dash-chip-value">{chip.value}</span>
+                <span className="dash-chip-label">{chip.label}</span>
+              </button>
+            );
+          }
+
           if (chip.id === "queue") {
             return (
               <div

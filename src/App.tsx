@@ -188,6 +188,7 @@ export default function App() {
           downCount={downCount}
           serverUp={watchdog.serverUp}
           scanning={watchdog.scanning}
+          onOpenStreams={() => setShowStreams(true)}
         />
 
         {(watchdog.serverUp || watchdog.scanning || watchdog.serverUp === null) && (

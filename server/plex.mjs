@@ -1216,10 +1216,17 @@ async function resolvePlexUpstreamStream(settings, ratingKey, opts = {}) {
   ).toLowerCase();
   const friendlyContainer = ["mp4", "m4v", "mov", "webm"].includes(container);
   const friendlyVideo = ["", "h264", "avc", "avc1"].includes(videoCodec);
-  // Do not require AAC: AC3-in-MP4 is common, and forcing Android+http
-  // universal transcode without a client profile returns Plex HTTP 400.
+  // Android WebView / Chromium <video> cannot decode AC3/DTS — only AAC/MP3/etc.
+  // 1.3.12 direct-played AC3-in-MP4 (hub 206 OK) but tablets still MEDIA_ERR_SRC_NOT_SUPPORTED.
+  // Transcode with PLEX_BROWSER_TRANSCODE_PROFILE when audio is not browser-safe.
+  const friendlyAudio = ["", "aac", "mp3", "mp4a", "opus", "vorbis"].includes(
+    audioCodec,
+  );
   const directPlayable =
-    friendlyContainer && friendlyVideo && Boolean(part?.key);
+    friendlyContainer &&
+    friendlyVideo &&
+    friendlyAudio &&
+    Boolean(part?.key);
 
   const offsetMs = Math.max(0, Number(opts.offsetMs) || 0);
   let plexUrl;
