@@ -155,7 +155,7 @@ export function DashboardStatus({
     },
     {
       id: "ombi",
-      label: "Ombi open",
+      label: "Ombi pending",
       value:
         pendingSummary || ombiPending == null
           ? "—"
@@ -181,7 +181,15 @@ export function DashboardStatus({
       )}
       <div className="dash-chips">
         {chips.map((chip) => (
-          <div key={chip.id} className={`dash-chip tone-${chip.tone}`}>
+          <div
+            key={chip.id}
+            className={`dash-chip tone-${chip.tone}`}
+            title={
+              chip.id === "ombi"
+                ? "Requests awaiting approval in Ombi"
+                : undefined
+            }
+          >
             <span className="dash-chip-value">{chip.value}</span>
             <span className="dash-chip-label">{chip.label}</span>
           </div>

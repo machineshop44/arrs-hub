@@ -135,6 +135,24 @@ async function getSabnzbdActive(baseUrl, apiKey) {
   }
 }
 
+/** Ombi request awaiting admin approval (not denied / not already available). */
+function isOmbiAwaitingApproval(row) {
+  if (!row || typeof row !== "object") return false;
+  if (row.available === true) return false;
+  if (row.denied === true) return false;
+  if (row.deniedDate) return false;
+  return row.approved === false;
+}
+
+function countOmbiPending(list) {
+  return Array.isArray(list) ? list.filter(isOmbiAwaitingApproval).length : 0;
+}
+
+/**
+ * Count Ombi requests pending approval (movie + TV + music).
+ * Prefers explicit list filtering over /Request/count — that endpoint can omit
+ * music and (on some Ombi versions) lump denied into pending.
+ */
 async function getOmbiPending(baseUrl, apiKey) {
   const base = normalizeBase(baseUrl);
   if (!base || !apiKey) {
@@ -145,46 +163,23 @@ async function getOmbiPending(baseUrl, apiKey) {
       ApiKey: apiKey,
       Accept: "application/json",
     };
-    const [movies, tv] = await Promise.all([
-      fetchJson(`${base}/api/v1/Request/movie/unavailable`, { headers }).catch(
-        () => null,
-      ),
-      fetchJson(`${base}/api/v1/Request/tv/unavailable`, { headers }).catch(
-        () => null,
-      ),
+    const [movies, tv, music] = await Promise.all([
+      fetchJson(`${base}/api/v1/Request/movie`, { headers }).catch(() => []),
+      fetchJson(`${base}/api/v1/Request/tv`, { headers }).catch(() => []),
+      fetchJson(`${base}/api/v1/Request/music`, { headers }).catch(() => null),
     ]);
 
-    let pending = 0;
-    if (Array.isArray(movies)) pending += movies.length;
-    if (Array.isArray(tv)) pending += tv.length;
-
-    if (!Array.isArray(movies) || !Array.isArray(tv)) {
-      // Fallback: count open requests from list endpoints
-      const [movieAll, tvAll] = await Promise.all([
-        fetchJson(`${base}/api/v1/Request/movie`, { headers }).catch(() => []),
-        fetchJson(`${base}/api/v1/Request/tv`, { headers }).catch(() => []),
-      ]);
-      const isOpen = (row) => {
-        const status = String(
-          row.available === true
-            ? "available"
-            : row.approved === false
-              ? "pending"
-              : row.requestStatus || row.status || "",
-        ).toLowerCase();
-        if (row.available === true) return false;
-        if (row.approved === false) return true;
-        return (
-          status.includes("pending") ||
-          status.includes("processing") ||
-          status === "0" ||
-          status === "new"
-        );
-      };
-      pending =
-        (Array.isArray(movieAll) ? movieAll.filter(isOpen).length : 0) +
-        (Array.isArray(tvAll) ? tvAll.filter(isOpen).length : 0);
+    let musicList = music;
+    if (!Array.isArray(musicList)) {
+      musicList = await fetchJson(`${base}/api/v1/Request/album`, {
+        headers,
+      }).catch(() => []);
     }
+
+    const pending =
+      countOmbiPending(movies) +
+      countOmbiPending(tv) +
+      countOmbiPending(musicList);
 
     return { ok: true, configured: true, pending };
   } catch (err) {
