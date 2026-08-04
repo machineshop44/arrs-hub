@@ -10,6 +10,9 @@ import {
 
 const PLEX_PRODUCT = "Arrs Hub";
 const CLIENT_ID_PATH = path.join(DATA_DIR, "plex-client-id");
+/** Stable id for media proxy / transcode (OAuth client id can 503 part downloads). */
+const PLEX_MEDIA_CLIENT_ID = "arrs-hub-media";
+
 
 /** @type {Map<string, { code: string, expiresAt: number }>} */
 const pendingPins = new Map();
@@ -1079,9 +1082,106 @@ export async function playWorkoutDay(
 }
 
 /**
+ * Plex Android has no built-in progressive `protocol=http` conversion profile.
+ * Without this extra target, `/video/:/transcode/universal/start.mp4` returns 400
+ * ("No conversion profile found for protocol http").
+ */
+const PLEX_BROWSER_TRANSCODE_PROFILE =
+  "add-transcode-target(type=videoProfile&context=streaming&protocol=http&container=mp4&videoCodec=h264&audioCodec=aac&subtitleCodec=srt)+add-transcode-target(type=videoProfile&context=streaming&protocol=hls&container=mpegts&videoCodec=h264&audioCodec=aac&subtitleCodec=srt)";
+
+/**
+ * Build universal-transcode query params shared by decision + start.
+ * @param {object} settings
+ * @param {string} ratingKey
+ * @param {{ offsetMs?: number, session?: string }} [opts]
+ */
+function buildPlexTranscodeParams(settings, ratingKey, opts = {}) {
+  const token = settings.plexToken.trim();
+  const session = String(opts.session || crypto.randomUUID());
+  const params = {
+    path: `/library/metadata/${ratingKey}`,
+    mediaIndex: "0",
+    partIndex: "0",
+    protocol: "http",
+    fastSeek: "1",
+    directPlay: "0",
+    directStream: "0",
+    videoCodecs: "h264",
+    audioCodecs: "aac",
+    subtitleSize: "100",
+    audioBoost: "100",
+    location: "lan",
+    addDebugOverlay: "0",
+    autoAdjustQuality: "0",
+    session,
+    hasMDE: "1",
+    "X-Plex-Platform": "Android",
+    "X-Plex-Client-Identifier": PLEX_MEDIA_CLIENT_ID,
+    "X-Plex-Product": PLEX_PRODUCT,
+    "X-Plex-Device-Name": PLEX_PRODUCT,
+    "X-Plex-Client-Profile-Extra": PLEX_BROWSER_TRANSCODE_PROFILE,
+    "X-Plex-Token": token,
+  };
+  const offsetMs = Math.max(0, Number(opts.offsetMs) || 0);
+  if (offsetMs > 0) {
+    params.offset = String(Math.floor(offsetMs));
+  }
+  return params;
+}
+
+/**
+ * Plex often 400s universal start unless decision runs first for the same session.
+ * @param {object} settings
+ * @param {Record<string, string>} params
+ */
+async function ensurePlexTranscodeDecision(settings, params) {
+  const base = normalizePlexBaseUrl(settings.plexBaseUrl);
+  const url = new URL("/video/:/transcode/universal/decision", `${base}/`);
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, value);
+  }
+  const token = settings.plexToken.trim();
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      "X-Plex-Token": token,
+      "X-Plex-Client-Identifier": PLEX_MEDIA_CLIENT_ID,
+      "X-Plex-Product": PLEX_PRODUCT,
+      "X-Plex-Platform": "Android",
+      "X-Plex-Client-Profile-Extra": PLEX_BROWSER_TRANSCODE_PROFILE,
+    },
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(
+      `Plex transcode decision HTTP ${res.status}${
+        body ? `: ${body.slice(0, 160)}` : ""
+      }`,
+    );
+  }
+  let json = null;
+  try {
+    json = await res.json();
+  } catch {
+    json = null;
+  }
+  const container = mediaContainer(json);
+  const code = Number(container.generalDecisionCode) || 0;
+  if (code === 2000) {
+    throw new Error(
+      container.generalDecisionText ||
+        container.transcodeDecisionText ||
+        "Plex cannot direct play or convert this item.",
+    );
+  }
+}
+
+/**
  * Resolve a Plex upstream URL the hub can fetch (localhost PMS is fine here).
- * Prefer direct H.264/AAC MP4; otherwise force universal H.264 transcode for
- * Android WebView / Chromecast compatibility.
+ * Prefer direct H.264 MP4 (including AC3 audio — common on workout rips);
+ * otherwise universal H.264/AAC transcode with an Android http profile.
  * @param {object} settings
  * @param {string} ratingKey
  * @param {{ offsetMs?: number }} [opts]
@@ -1116,49 +1216,37 @@ async function resolvePlexUpstreamStream(settings, ratingKey, opts = {}) {
   ).toLowerCase();
   const friendlyContainer = ["mp4", "m4v", "mov", "webm"].includes(container);
   const friendlyVideo = ["", "h264", "avc", "avc1"].includes(videoCodec);
-  const friendlyAudio =
-    !audioCodec ||
-    ["aac", "mp3", "opus", "vorbis", "mp4a"].includes(audioCodec);
-  const browserFriendly =
-    friendlyContainer && friendlyVideo && friendlyAudio && Boolean(part?.key);
+  // Do not require AAC: AC3-in-MP4 is common, and forcing Android+http
+  // universal transcode without a client profile returns Plex HTTP 400.
+  const directPlayable =
+    friendlyContainer && friendlyVideo && Boolean(part?.key);
 
   const offsetMs = Math.max(0, Number(opts.offsetMs) || 0);
   let plexUrl;
   let seekable = false;
   let mode = "direct";
+  let session = "";
+  /** @type {Record<string, string>|null} */
+  let transcodeParams = null;
 
-  if (browserFriendly && offsetMs === 0) {
+  if (directPlayable) {
     const direct = new URL(part.key, `${base}/`);
     direct.searchParams.set("X-Plex-Token", token);
     plexUrl = direct.toString();
     seekable = true;
     mode = "direct";
   } else {
+    transcodeParams = buildPlexTranscodeParams(settings, ratingKey, {
+      offsetMs,
+    });
+    session = transcodeParams.session;
+    await ensurePlexTranscodeDecision(settings, transcodeParams);
     const stream = new URL(
       "/video/:/transcode/universal/start.mp4",
       `${base}/`,
     );
-    stream.searchParams.set("path", `/library/metadata/${ratingKey}`);
-    stream.searchParams.set("mediaIndex", "0");
-    stream.searchParams.set("partIndex", "0");
-    stream.searchParams.set("protocol", "http");
-    stream.searchParams.set("fastSeek", "1");
-    stream.searchParams.set("directPlay", "0");
-    stream.searchParams.set("directStream", "0");
-    stream.searchParams.set("videoCodecs", "h264");
-    stream.searchParams.set("audioCodecs", "aac");
-    stream.searchParams.set("subtitleSize", "100");
-    stream.searchParams.set("audioBoost", "100");
-    stream.searchParams.set("location", "lan");
-    stream.searchParams.set("addDebugOverlay", "0");
-    stream.searchParams.set("autoAdjustQuality", "0");
-    stream.searchParams.set("X-Plex-Platform", "Android");
-    stream.searchParams.set("X-Plex-Client-Identifier", getPlexClientId());
-    stream.searchParams.set("X-Plex-Product", "Arrs Hub");
-    stream.searchParams.set("X-Plex-Device-Name", "Arrs Hub");
-    stream.searchParams.set("X-Plex-Token", token);
-    if (offsetMs > 0) {
-      stream.searchParams.set("offset", String(Math.floor(offsetMs)));
+    for (const [key, value] of Object.entries(transcodeParams)) {
+      stream.searchParams.set(key, value);
     }
     plexUrl = stream.toString();
     seekable = false;
@@ -1171,11 +1259,13 @@ async function resolvePlexUpstreamStream(settings, ratingKey, opts = {}) {
     plexUrl,
     seekable,
     mode,
+    session,
+    partKey: part?.key || "",
     container,
     videoCodec,
     audioCodec,
     durationMs: Number(meta.duration) || Number(part?.duration) || null,
-    contentType: mode === "direct" ? "video/mp4" : "video/mp4",
+    contentType: "video/mp4",
   };
 }
 
@@ -1250,12 +1340,17 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
     return;
   }
 
+  const token = settings.plexToken.trim();
   const headers = {
-    "X-Plex-Token": settings.plexToken.trim(),
-    "X-Plex-Client-Identifier": getPlexClientId(),
-    "X-Plex-Product": "Arrs Hub",
+    "X-Plex-Token": token,
     Accept: "*/*",
   };
+  if (upstream.mode === "transcode") {
+    headers["X-Plex-Client-Identifier"] = PLEX_MEDIA_CLIENT_ID;
+    headers["X-Plex-Product"] = PLEX_PRODUCT;
+    headers["X-Plex-Platform"] = "Android";
+    headers["X-Plex-Client-Profile-Extra"] = PLEX_BROWSER_TRANSCODE_PROFILE;
+  }
   if (req.headers.range) {
     headers.Range = String(req.headers.range);
   }
@@ -1276,8 +1371,47 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
     return;
   }
 
+  // Transcode can still 400 on some PMS builds; fall back to the raw part when present.
+  if (
+    !plexRes.ok &&
+    plexRes.status !== 206 &&
+    upstream.mode === "transcode" &&
+    upstream.partKey
+  ) {
+    await plexRes.text().catch(() => "");
+    const direct = new URL(
+      upstream.partKey,
+      `${normalizePlexBaseUrl(settings.plexBaseUrl)}/`,
+    );
+    direct.searchParams.set("X-Plex-Token", token);
+    try {
+      plexRes = await fetch(direct.toString(), {
+        method: "GET",
+        headers: {
+          "X-Plex-Token": token,
+          Accept: "*/*",
+          ...(req.headers.range
+            ? { Range: String(req.headers.range) }
+            : {}),
+        },
+        signal: AbortSignal.timeout(120000),
+      });
+      if (plexRes.ok || plexRes.status === 206) {
+        upstream.mode = "direct-fallback";
+        upstream.seekable = true;
+        upstream.contentType = "video/mp4";
+      }
+    } catch {
+      // keep original failure below
+    }
+  }
+
   if (!plexRes.ok && plexRes.status !== 206) {
     const body = await plexRes.text().catch(() => "");
+    const safeUrl = String(upstream.plexUrl || "").replaceAll(token, "REDACTED");
+    console.warn(
+      `[workouts/media] Plex HTTP ${plexRes.status} for ${key} mode=${upstream.mode} url=${safeUrl} body=${body.slice(0, 200)}`,
+    );
     res.status(plexRes.status === 404 ? 404 : 502).json({
       error:
         plexRes.status === 404
