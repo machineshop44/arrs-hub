@@ -1,6 +1,25 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ConnectionMode, ServiceConfig } from "../types";
 import { getServiceUrl } from "../types";
+
+export type ArrQueueIssue = {
+  id?: number | null;
+  title: string;
+  status?: string;
+  trackedDownloadStatus?: string;
+  trackedDownloadState?: string;
+  errorMessage?: string;
+  outputPath?: string;
+};
+
+export type ArrQueueApp = {
+  ok: boolean;
+  configured?: boolean;
+  total: number;
+  downloading?: number;
+  issues?: ArrQueueIssue[];
+  error?: string;
+};
 
 export type HubStatusSummary = {
   ok: boolean;
@@ -24,8 +43,9 @@ export type HubStatusSummary = {
   };
   arr?: {
     queueTotal: number;
-    sonarr?: { ok: boolean; total: number; downloading: number };
-    radarr?: { ok: boolean; total: number; downloading: number };
+    sonarr?: ArrQueueApp;
+    radarr?: ArrQueueApp;
+    lidarr?: ArrQueueApp;
   };
 };
 
@@ -61,6 +81,21 @@ function urlMap(
   return out;
 }
 
+function activityQueueUrl(baseUrl: string | undefined): string | null {
+  if (!baseUrl) return null;
+  return `${baseUrl.replace(/\/+$/, "")}/activity/queue`;
+}
+
+function issueBadge(issue: ArrQueueIssue): string {
+  const state = String(issue.trackedDownloadState || "").toLowerCase();
+  const tracked = String(issue.trackedDownloadStatus || "").toLowerCase();
+  if (state === "importpending") return "Manual import";
+  if (state === "failed" || state === "failedpending") return "Failed";
+  if (tracked === "warning") return "Warning";
+  if (tracked === "error") return "Error";
+  return issue.status || "Stuck";
+}
+
 export function DashboardStatus({
   services,
   connectionMode,
@@ -71,6 +106,8 @@ export function DashboardStatus({
 }: DashboardStatusProps) {
   const [summary, setSummary] = useState<HubStatusSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [queueOpen, setQueueOpen] = useState(false);
+  const queueWrapRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     if (serverUp === false) return;
@@ -95,11 +132,50 @@ export function DashboardStatus({
     return () => window.clearInterval(timer);
   }, [load]);
 
+  useEffect(() => {
+    if (!queueOpen) return;
+    const onDoc = (event: MouseEvent) => {
+      const el = queueWrapRef.current;
+      if (el && !el.contains(event.target as Node)) {
+        setQueueOpen(false);
+      }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setQueueOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [queueOpen]);
+
   const streams = summary?.streams?.streamCount ?? null;
   const downloads = summary?.downloads?.active ?? null;
   const ombiPending = summary?.ombi?.pending ?? null;
   const queueTotal = summary?.arr?.queueTotal ?? null;
   const pendingSummary = summary == null && serverUp !== false;
+  const urls = urlMap(services, connectionMode);
+
+  const arrApps: {
+    id: "sonarr" | "radarr" | "lidarr";
+    label: string;
+    data?: ArrQueueApp;
+  }[] = [
+    { id: "sonarr", label: "Sonarr", data: summary?.arr?.sonarr },
+    { id: "radarr", label: "Radarr", data: summary?.arr?.radarr },
+    { id: "lidarr", label: "Lidarr", data: summary?.arr?.lidarr },
+  ];
+
+  const problemItems = arrApps.flatMap((app) =>
+    (app.data?.issues ?? []).map((issue) => ({
+      appId: app.id,
+      appLabel: app.label,
+      issue,
+      openUrl: activityQueueUrl(urls[app.id]),
+    })),
+  );
 
   const chips = [
     {
@@ -180,20 +256,126 @@ export function DashboardStatus({
         </p>
       )}
       <div className="dash-chips">
-        {chips.map((chip) => (
-          <div
-            key={chip.id}
-            className={`dash-chip tone-${chip.tone}`}
-            title={
-              chip.id === "ombi"
-                ? "Requests awaiting approval in Ombi"
-                : undefined
-            }
-          >
-            <span className="dash-chip-value">{chip.value}</span>
-            <span className="dash-chip-label">{chip.label}</span>
-          </div>
-        ))}
+        {chips.map((chip) => {
+          if (chip.id === "queue") {
+            return (
+              <div
+                key={chip.id}
+                className="dash-chip-wrap"
+                ref={queueWrapRef}
+              >
+                <button
+                  type="button"
+                  className={`dash-chip dash-chip-btn tone-${chip.tone}`}
+                  aria-expanded={queueOpen}
+                  aria-haspopup="dialog"
+                  title="Sonarr + Radarr (+ Lidarr) queue total — click for breakdown"
+                  onClick={() => setQueueOpen((open) => !open)}
+                >
+                  <span className="dash-chip-value">{chip.value}</span>
+                  <span className="dash-chip-label">{chip.label}</span>
+                </button>
+                {queueOpen && (
+                  <div
+                    className="dash-chip-popover"
+                    role="dialog"
+                    aria-label="*arr queue breakdown"
+                  >
+                    <p className="dash-chip-popover-title">
+                      Queue by app
+                      {queueTotal != null ? ` · ${queueTotal} total` : ""}
+                    </p>
+                    <ul className="dash-queue-breakdown">
+                      {arrApps.map((app) => {
+                        const configured =
+                          app.data?.ok ||
+                          app.data?.configured ||
+                          Boolean(urls[app.id]);
+                        const value = !configured
+                          ? "—"
+                          : app.data?.ok
+                            ? String(app.data.total ?? 0)
+                            : app.data?.error
+                              ? "err"
+                              : "—";
+                        return (
+                          <li key={app.id}>
+                            <span>{app.label}</span>
+                            <strong>{value}</strong>
+                          </li>
+                        );
+                      })}
+                    </ul>
+
+                    <p className="dash-chip-popover-title">Needs attention</p>
+                    {problemItems.length === 0 ? (
+                      <p className="dash-chip-popover-empty">
+                        No stuck / manual-import items in the first queue page.
+                      </p>
+                    ) : (
+                      <ul className="dash-queue-issues">
+                        {problemItems.map(({ appId, appLabel, issue, openUrl }) => (
+                          <li key={`${appId}-${issue.id ?? issue.title}`}>
+                            <div className="dash-queue-issue-main">
+                              <span className="dash-queue-issue-badge">
+                                {appLabel} · {issueBadge(issue)}
+                              </span>
+                              <span className="dash-queue-issue-title">
+                                {issue.title}
+                              </span>
+                              {issue.errorMessage ? (
+                                <span className="dash-queue-issue-msg">
+                                  {issue.errorMessage}
+                                </span>
+                              ) : null}
+                              {issue.outputPath ? (
+                                <span className="dash-queue-issue-path">
+                                  {issue.outputPath}
+                                </span>
+                              ) : null}
+                            </div>
+                            {openUrl ? (
+                              <a
+                                className="dash-queue-issue-link"
+                                href={openUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={() => setQueueOpen(false)}
+                              >
+                                Open in {appLabel}
+                              </a>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {/* TODO: interactive Manual Import from hub (fetch /api/v3/manualimport
+                        candidates, pick episode/movie, confirm) — deferred beyond this release. */}
+                    <p className="dash-chip-popover-hint">
+                      Matching still happens in Sonarr/Radarr Activity. Hub links
+                      open the queue; in-hub Manual Import is planned later.
+                    </p>
+                  </div>
+                )}
+              </div>
+            );
+          }
+
+          return (
+            <div
+              key={chip.id}
+              className={`dash-chip tone-${chip.tone}`}
+              title={
+                chip.id === "ombi"
+                  ? "Requests awaiting approval in Ombi"
+                  : undefined
+              }
+            >
+              <span className="dash-chip-value">{chip.value}</span>
+              <span className="dash-chip-label">{chip.label}</span>
+            </div>
+          );
+        })}
       </div>
 
       {error && serverUp !== false && (

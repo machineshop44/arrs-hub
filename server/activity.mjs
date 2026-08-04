@@ -37,14 +37,65 @@ async function fetchJson(url, options = {}, timeoutMs = 8000) {
   return data;
 }
 
+/** Queue rows that need attention (manual import / warning / failed). */
+function isQueueIssue(record) {
+  if (!record || typeof record !== "object") return false;
+  const trackedStatus = String(record.trackedDownloadStatus || "").toLowerCase();
+  const trackedState = String(record.trackedDownloadState || "").toLowerCase();
+  const status = String(record.status || "").toLowerCase();
+  if (trackedStatus === "warning" || trackedStatus === "error") return true;
+  if (
+    trackedState === "importpending" ||
+    trackedState === "failedpending" ||
+    trackedState === "failed"
+  ) {
+    return true;
+  }
+  if (status === "warning" || status === "failed") return true;
+  if (record.errorMessage) return true;
+  return false;
+}
+
+function summarizeQueueIssue(record) {
+  const messages = [];
+  if (record.errorMessage) messages.push(String(record.errorMessage));
+  if (Array.isArray(record.statusMessages)) {
+    for (const sm of record.statusMessages) {
+      if (Array.isArray(sm?.messages)) {
+        for (const m of sm.messages) {
+          if (m) messages.push(String(m));
+        }
+      } else if (sm?.message) {
+        messages.push(String(sm.message));
+      }
+    }
+  }
+  return {
+    id: record.id ?? null,
+    title: record.title || record.sourceTitle || "Unknown item",
+    status: record.status || "",
+    trackedDownloadStatus: record.trackedDownloadStatus || "",
+    trackedDownloadState: record.trackedDownloadState || "",
+    errorMessage: messages.filter(Boolean).slice(0, 3).join(" · "),
+    outputPath: record.outputPath || "",
+  };
+}
+
 async function getArrQueue(id, baseUrl, apiKey) {
   const base = normalizeBase(baseUrl);
   if (!base || !apiKey) {
-    return { ok: false, configured: false, total: 0, downloading: 0 };
+    return {
+      ok: false,
+      configured: false,
+      total: 0,
+      downloading: 0,
+      issues: [],
+    };
   }
   const version = arrApiVersion(id);
-  // pageSize=1 is enough — dashboard Activity only shows queue counts, not titles.
-  const url = `${base}/api/${version}/queue?page=1&pageSize=1&includeUnknownSeriesItems=true&includeUnknownMovieItems=true`;
+  // Fetch a page of records so the chip popover can list stuck / manual-import items.
+  // totalRecords still drives the chip count.
+  const url = `${base}/api/${version}/queue?page=1&pageSize=50&includeUnknownSeriesItems=true&includeUnknownMovieItems=true`;
   try {
     const data = await fetchJson(url, {
       headers: { "X-Api-Key": apiKey, Accept: "application/json" },
@@ -55,11 +106,16 @@ async function getArrQueue(id, baseUrl, apiKey) {
         ? data
         : [];
     const total = Number(data?.totalRecords ?? records.length) || records.length;
+    const issues = records
+      .filter(isQueueIssue)
+      .map(summarizeQueueIssue)
+      .slice(0, 12);
     return {
       ok: true,
       configured: true,
       total,
       downloading: total,
+      issues,
     };
   } catch (err) {
     return {
@@ -67,6 +123,7 @@ async function getArrQueue(id, baseUrl, apiKey) {
       configured: true,
       total: 0,
       downloading: 0,
+      issues: [],
       error: err instanceof Error ? err.message : String(err),
     };
   }
@@ -243,6 +300,7 @@ export async function getHubStatusSummary(opts = {}) {
           configured: false,
           total: 0,
           downloading: 0,
+          issues: [],
         }),
     getQbittorrentActive(
       qbUrl,
