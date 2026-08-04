@@ -78,11 +78,15 @@ function WorkoutPlayer({
     item.durationMs ? item.durationMs / 1000 : 0,
   );
   const [scrubbing, setScrubbing] = useState(false);
+  const [readyPrompt, setReadyPrompt] = useState(false);
+  const nextItem = playlist[index + 1];
+  const isWarmup = index === 0 && playlist.length > 1;
 
   useEffect(() => {
     setSrc(item.url);
     setCurrent(0);
     setDuration(item.durationMs ? item.durationMs / 1000 : 0);
+    setReadyPrompt(false);
   }, [item.url, item.durationMs, index]);
 
   const seekTo = (seconds: number) => {
@@ -98,6 +102,11 @@ function WorkoutPlayer({
     setCurrent(target);
   };
 
+  const continueToDay = () => {
+    setReadyPrompt(false);
+    onIndexChange(index + 1);
+  };
+
   if (!item) return null;
 
   return (
@@ -110,8 +119,8 @@ function WorkoutPlayer({
             </strong>
             <p className="settings-hint">
               {index + 1} of {playlist.length}
-              {index === 0
-                ? " — warm-up always plays first, then today’s video"
+              {isWarmup
+                ? " — warm-up first; you’ll confirm before the day video"
                 : ""}
             </p>
           </div>
@@ -141,6 +150,10 @@ function WorkoutPlayer({
             if (!scrubbing) setCurrent(e.currentTarget.currentTime || 0);
           }}
           onEnded={() => {
+            if (isWarmup) {
+              setReadyPrompt(true);
+              return;
+            }
             if (index < playlist.length - 1) onIndexChange(index + 1);
             else onFinished();
           }}
@@ -187,6 +200,42 @@ function WorkoutPlayer({
             {formatClock(current)} / {formatClock(duration || (item.durationMs || 0) / 1000)}
           </span>
         </div>
+
+        {readyPrompt && nextItem && (
+          <div
+            className="workout-ready-overlay"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="workout-ready-title"
+            aria-describedby="workout-ready-desc"
+          >
+            <div className="workout-ready-card">
+              <h3 id="workout-ready-title">Are you ready to move on?</h3>
+              <p id="workout-ready-desc" className="settings-hint">
+                Continue to today’s workout video
+                {nextItem.title ? ` (“${nextItem.title}”)` : ""}? It starts with
+                a warm-up stretch.
+              </p>
+              <div className="workout-ready-actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setReadyPrompt(false)}
+                >
+                  Not yet
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={continueToDay}
+                  autoFocus
+                >
+                  Continue
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -217,6 +266,11 @@ export function WorkoutsPanel({
   const [showSetup, setShowSetup] = useState(false);
   const [playlist, setPlaylist] = useState<PlaylistItem[] | null>(null);
   const [playlistIndex, setPlaylistIndex] = useState(0);
+  const [castReadyDay, setCastReadyDay] = useState<{
+    day: number;
+    dayTitle: string;
+    client: string;
+  } | null>(null);
   const [authPolling, setAuthPolling] = useState(false);
   const [showManualToken, setShowManualToken] = useState(false);
   const authPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -477,7 +531,7 @@ export function WorkoutsPanel({
     }
   };
 
-  const playDay = async (day: number) => {
+  const playDay = async (day: number, opts?: { skipWarmup?: boolean }) => {
     if (!settings?.clientMachineId) {
       setError("Pick a device under Play on first.");
       return;
@@ -492,15 +546,27 @@ export function WorkoutsPanel({
         body: JSON.stringify({
           day,
           clientMachineId: settings.clientMachineId,
+          skipWarmup: Boolean(opts?.skipWarmup),
         }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Play failed");
       if (json.mode === "local" && Array.isArray(json.playlist)) {
+        setCastReadyDay(null);
         setPlaylist(json.playlist);
         setPlaylistIndex(0);
         setMessage(`Playing here: ${json.warmup} → ${json.day}`);
+      } else if (json.awaitingDayConfirm) {
+        setCastReadyDay({
+          day,
+          dayTitle: String(json.day || `Day ${day}`),
+          client: String(json.client || "Cast"),
+        });
+        setMessage(
+          `Warm-up finished on ${json.client}. Confirm when you’re ready for the day video.`,
+        );
       } else {
+        setCastReadyDay(null);
         setMessage(`Playing on ${json.client}: ${json.warmup} → ${json.day}`);
       }
     } catch (err) {
@@ -528,8 +594,8 @@ export function WorkoutsPanel({
           <div>
             <h2 id="workouts-title">Workouts</h2>
             <p className="settings-hint">
-              Pick a day — warm-up always plays first, then that day’s video
-              (on this device or a Plex client you choose).
+              Pick a day — warm-up plays first, then you’ll confirm before the
+              day video starts (on this device or Cast).
             </p>
           </div>
           <button type="button" className="btn btn-ghost" onClick={onClose}>
@@ -990,6 +1056,49 @@ export function WorkoutsPanel({
               setMessage("Workout finished.");
             }}
           />
+        )}
+
+        {castReadyDay && !playlist && (
+          <div
+            className="workout-ready-overlay workout-ready-overlay-panel"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="cast-ready-title"
+            aria-describedby="cast-ready-desc"
+          >
+            <div className="workout-ready-card">
+              <h3 id="cast-ready-title">Are you ready to move on?</h3>
+              <p id="cast-ready-desc" className="settings-hint">
+                Warm-up finished on {castReadyDay.client}. Continue to today’s
+                workout
+                {castReadyDay.dayTitle
+                  ? ` (“${castReadyDay.dayTitle}”)`
+                  : ""}
+                ?
+              </p>
+              <div className="workout-ready-actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setCastReadyDay(null)}
+                >
+                  Not yet
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={playingDay != null}
+                  onClick={() => {
+                    const pending = castReadyDay;
+                    setCastReadyDay(null);
+                    void playDay(pending.day, { skipWarmup: true });
+                  }}
+                >
+                  Continue
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

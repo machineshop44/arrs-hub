@@ -35,14 +35,25 @@ export function discoverCastDevices(timeoutMs = 3500) {
       const host = device.host || device.name;
       if (!host) return;
       const id = `cast-${host}`;
+      const name = device.friendlyName || device.name || host;
+      const nameLower = String(name).toLowerCase();
+      const deviceClass = /\b(speaker|soundbar|nest mini|nest audio|home mini|google home)\b/.test(
+        nameLower,
+      )
+        ? "speaker"
+        : /\b(tv|chromecast|shield|roku)\b/.test(nameLower)
+          ? "tv"
+          : "cast";
       found.set(id, {
-        name: device.friendlyName || device.name || host,
+        name,
         host,
         address: host,
         port: Number(device.port) || 8009,
         machineIdentifier: id,
         product: "Chromecast / Cast",
-        deviceClass: "cast",
+        deviceClass,
+        platform: "Cast",
+        provides: "player",
         castType: "chromecast",
         protocolCapabilities: ["playback", "cast"],
       });
@@ -57,11 +68,15 @@ export function discoverCastDevices(timeoutMs = 3500) {
 }
 
 /**
- * Play a list of media URLs on a Chromecast (warmup then day).
+ * Play media on a Chromecast.
  * @param {string} host
  * @param {{ title: string, url: string }[]} playlist
+ * @param {{ waitForFinish?: boolean }} [options]
+ *   When waitForFinish is true (default for a single item that should block),
+ *   resolve after that item finishes. When false, resolve shortly after start.
  */
-export function castPlaylistToDevice(host, playlist) {
+export function castPlaylistToDevice(host, playlist, options = {}) {
+  const waitForFinish = options.waitForFinish !== false && playlist.length === 1;
   return new Promise((resolve, reject) => {
     let client;
     try {
@@ -90,7 +105,7 @@ export function castPlaylistToDevice(host, playlist) {
       if (deviceHost !== host && device.name !== host) return;
 
       clearTimeout(timer);
-      playSequential(device, playlist, 0)
+      playOne(device, playlist[0], { waitForFinish })
         .then((result) => {
           cleanup();
           resolve(result);
@@ -108,11 +123,15 @@ export function castPlaylistToDevice(host, playlist) {
   });
 }
 
-function playSequential(device, playlist, index) {
+/**
+ * @param {any} device
+ * @param {{ title: string, url: string }} item
+ * @param {{ waitForFinish?: boolean }} options
+ */
+function playOne(device, item, options = {}) {
   return new Promise((resolve, reject) => {
-    const item = playlist[index];
     if (!item) {
-      resolve({ ok: true, played: playlist.length });
+      resolve({ ok: true, played: 0 });
       return;
     }
 
@@ -129,28 +148,30 @@ function playSequential(device, playlist, index) {
           return;
         }
 
-        const onFinished = () => {
+        if (!options.waitForFinish) {
+          setTimeout(() => resolve({ ok: true, playing: item.title }), 500);
+          return;
+        }
+
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
           device.removeListener?.("finished", onFinished);
           device.removeListener?.("status", onStatus);
-          playSequential(device, playlist, index + 1).then(resolve).catch(reject);
+          resolve({ ok: true, finished: item.title });
         };
 
+        const onFinished = () => finish();
+
         const onStatus = (status) => {
-          // Some devices only emit status updates; finished is preferred.
           if (status?.playerState === "IDLE" && status?.idleReason === "FINISHED") {
-            onFinished();
+            finish();
           }
         };
 
         device.on?.("finished", onFinished);
         device.on?.("status", onStatus);
-
-        // Safety: if events never fire, don't hang forever on first item start ack
-        if (index === playlist.length - 1) {
-          // Last item started — resolve after a short settle so UI can show success.
-          // Caller can leave the cast playing.
-          setTimeout(() => resolve({ ok: true, playing: item.title }), 500);
-        }
       },
     );
   });

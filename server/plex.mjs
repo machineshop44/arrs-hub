@@ -351,6 +351,115 @@ export async function listLibraries(settings = getWorkoutConfig()) {
 export const LOCAL_CLIENT_ID = "arrs-hub-local";
 
 /**
+ * Classify a playback target for UI badges / remote filtering.
+ * @param {{ name?: string, product?: string, deviceClass?: string, platform?: string, provides?: string, castType?: string }} client
+ * @returns {"local"|"tv"|"speaker"|"phone"|"app"}
+ */
+export function classifyClientKind(client) {
+  if (!client || client.castType === "local") return "local";
+  const blob = [
+    client.name,
+    client.product,
+    client.deviceClass,
+    client.platform,
+    client.provides,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (
+    /\b(speaker|soundbar|nest mini|nest audio|home mini|homepod|plexamp|audio only|google home)\b/.test(
+      blob,
+    )
+  ) {
+    return "speaker";
+  }
+  if (
+    /\b(tv|roku|shield|fire tv|apple tv|android tv|smart tv|chromecast|bravia|webos|tizen)\b/.test(
+      blob,
+    ) ||
+    client.deviceClass === "tv" ||
+    client.deviceClass === "stb"
+  ) {
+    return "tv";
+  }
+  if (
+    /\b(phone|mobile|iphone|ipad|tablet|android|ios)\b/.test(blob) ||
+    client.deviceClass === "phone" ||
+    client.deviceClass === "mobile" ||
+    client.deviceClass === "tablet"
+  ) {
+    return "phone";
+  }
+  if (client.castType === "chromecast") {
+    // Cast without a clear TV/speaker hint — treat as TV (safer label than speaker).
+    return /speaker|audio/.test(blob) ? "speaker" : "tv";
+  }
+  return "app";
+}
+
+function withClientKind(client) {
+  const kind = classifyClientKind(client);
+  return {
+    ...client,
+    kind,
+    kindLabel:
+      kind === "local"
+        ? "This device"
+        : kind === "tv"
+          ? "TV"
+          : kind === "speaker"
+            ? "Speaker"
+            : kind === "phone"
+              ? "Phone"
+              : "App",
+  };
+}
+
+function isIpv4Address(value) {
+  return Boolean(parseIpv4Parts(String(value || "").trim()));
+}
+
+function parseIpv4Parts(host) {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!m) return null;
+  const parts = m.slice(1).map(Number);
+  if (parts.some((n) => n > 255)) return null;
+  return parts;
+}
+
+/**
+ * Prefer IPv4 cast targets over .local mDNS duplicates of the same name.
+ * @param {Map<string, any>} byId
+ * @param {any} player
+ */
+function upsertPlayer(byId, player) {
+  if (!player?.machineIdentifier) return;
+  const existing = [...byId.values()].find(
+    (c) =>
+      c.castType === player.castType &&
+      c.castType === "chromecast" &&
+      String(c.name || "").toLowerCase() ===
+        String(player.name || "").toLowerCase() &&
+      c.machineIdentifier !== player.machineIdentifier,
+  );
+  if (existing) {
+    const existingIp = isIpv4Address(existing.address || existing.host);
+    const nextIp = isIpv4Address(player.address || player.host);
+    if (nextIp && !existingIp) {
+      byId.delete(existing.machineIdentifier);
+      byId.set(player.machineIdentifier, player);
+      return;
+    }
+    if (existingIp && !nextIp) {
+      return;
+    }
+  }
+  byId.set(player.machineIdentifier, player);
+}
+
+/**
  * Merge local playback + Plex controllable players + Chromecast devices.
  */
 export async function listClients(settings = getWorkoutConfig()) {
@@ -363,6 +472,8 @@ export async function listClients(settings = getWorkoutConfig()) {
     machineIdentifier: LOCAL_CLIENT_ID,
     product: "Arrs Hub",
     deviceClass: "local",
+    platform: "Arrs Hub",
+    provides: "player",
     castType: "local",
     protocolCapabilities: ["playback"],
   };
@@ -384,10 +495,16 @@ export async function listClients(settings = getWorkoutConfig()) {
   const byId = new Map();
   byId.set(local.machineIdentifier, local);
   for (const player of [...plexPlayers, ...castDevices]) {
-    if (!player?.machineIdentifier) continue;
-    byId.set(player.machineIdentifier, player);
+    upsertPlayer(byId, player);
   }
-  return [...byId.values()];
+  const kindRank = { local: 0, tv: 1, phone: 2, app: 3, speaker: 4 };
+  return [...byId.values()]
+    .map(withClientKind)
+    .sort(
+      (a, b) =>
+        (kindRank[a.kind] ?? 9) - (kindRank[b.kind] ?? 9) ||
+        String(a.name || "").localeCompare(String(b.name || "")),
+    );
 }
 
 async function listPlexPlayers(settings) {
@@ -416,6 +533,8 @@ async function listPlexPlayers(settings) {
         machineIdentifier: client.machineIdentifier,
         product: client.product || "Plex",
         deviceClass: client.deviceClass || "plex",
+        platform: client.platform || client.product || "Plex",
+        provides: caps.join(",") || "player",
         castType: "plex",
         protocolCapabilities: caps.length ? caps : ["playback"],
       });
@@ -460,7 +579,9 @@ async function listPlexPlayers(settings) {
           port: Number(localConn?.port) || 32400,
           machineIdentifier: id,
           product: device.product || "Plex",
-          deviceClass: device.device || "plex",
+          deviceClass: device.deviceClass || device.device || "plex",
+          platform: device.platform || device.product || "Plex",
+          provides: String(device.provides || "player"),
           castType: "plex",
           protocolCapabilities: ["playback"],
           presence: true,
@@ -727,7 +848,7 @@ export async function discoverWorkoutDays(settings = getWorkoutConfig()) {
  * Create a play queue with warmup (optional) + day video, then tell the client to play.
  * @param {number} day
  * @param {object} [settings]
- * @param {{ clientMachineId?: string }} [options]
+ * @param {{ clientMachineId?: string, publicBaseUrl?: string, skipWarmup?: boolean }} [options]
  */
 export async function playWorkoutDay(
   day,
@@ -766,16 +887,20 @@ export async function playWorkoutDay(
     );
   }
 
+  const publicBaseUrl = String(options.publicBaseUrl || "").trim();
+
   if (clientMachineId === LOCAL_CLIENT_ID) {
     const warmupMedia = await getBrowserPlayable(
       settings,
       discovery.warmup.ratingKey,
       discovery.warmup.title,
+      { publicBaseUrl },
     );
     const dayMedia = await getBrowserPlayable(
       settings,
       dayItem.ratingKey,
       dayItem.title,
+      { publicBaseUrl },
     );
     return {
       ok: true,
@@ -803,23 +928,43 @@ export async function playWorkoutDay(
       settings,
       discovery.warmup.ratingKey,
       discovery.warmup.title,
+      { publicBaseUrl },
     );
     const dayMedia = await getBrowserPlayable(
       settings,
       dayItem.ratingKey,
       dayItem.title,
+      { publicBaseUrl },
     );
     const { castPlaylistToDevice } = await import("./cast.mjs");
-    await castPlaylistToDevice(client.address || client.host, [
-      warmupMedia,
-      dayMedia,
-    ]);
+    const skipWarmup = Boolean(options.skipWarmup);
+    if (skipWarmup) {
+      await castPlaylistToDevice(client.address || client.host, [dayMedia], {
+        waitForFinish: false,
+      });
+      return {
+        ok: true,
+        mode: "cast",
+        client: client.name,
+        kind: client.kind,
+        warmup: discovery.warmup.title,
+        day: dayItem.title,
+        phase: "day",
+      };
+    }
+    // Cast warm-up only; hub UI confirms before starting the day video.
+    await castPlaylistToDevice(client.address || client.host, [warmupMedia], {
+      waitForFinish: true,
+    });
     return {
       ok: true,
       mode: "cast",
       client: client.name,
+      kind: client.kind,
       warmup: discovery.warmup.title,
       day: dayItem.title,
+      phase: "warmup-done",
+      awaitingDayConfirm: true,
     };
   }
 
@@ -934,10 +1079,14 @@ export async function playWorkoutDay(
 }
 
 /**
- * Browser-playable URL. Prefer direct MP4/WebM (scrubbing works).
- * Fall back to Plex universal MP4 transcode for other containers.
+ * Resolve a Plex upstream URL the hub can fetch (localhost PMS is fine here).
+ * Prefer direct H.264/AAC MP4; otherwise force universal H.264 transcode for
+ * Android WebView / Chromecast compatibility.
+ * @param {object} settings
+ * @param {string} ratingKey
+ * @param {{ offsetMs?: number }} [opts]
  */
-async function getBrowserPlayable(settings, ratingKey, title) {
+async function resolvePlexUpstreamStream(settings, ratingKey, opts = {}) {
   const base = normalizePlexBaseUrl(settings.plexBaseUrl);
   const token = settings.plexToken.trim();
   const metaJson = await plexFetch(
@@ -947,21 +1096,43 @@ async function getBrowserPlayable(settings, ratingKey, title) {
   );
   const meta = asArray(mediaContainer(metaJson).Metadata)[0];
   if (!meta) {
-    throw new Error(`Could not load media for "${title}".`);
+    throw new Error(`Could not load media for ratingKey ${ratingKey}.`);
   }
 
   const media = asArray(meta.Media)[0];
   const part = asArray(media?.Part)[0];
-  const container = String(part?.container || media?.container || "").toLowerCase();
-  const browserFriendly = ["mp4", "m4v", "mov", "webm"].includes(container);
+  if (!part?.key && !meta.ratingKey) {
+    throw new Error(`No playable part for ratingKey ${ratingKey}.`);
+  }
 
-  let url;
+  const container = String(
+    part?.container || media?.container || "",
+  ).toLowerCase();
+  const videoCodec = String(
+    media?.videoCodec || part?.videoCodec || "",
+  ).toLowerCase();
+  const audioCodec = String(
+    media?.audioCodec || part?.audioCodec || "",
+  ).toLowerCase();
+  const friendlyContainer = ["mp4", "m4v", "mov", "webm"].includes(container);
+  const friendlyVideo = ["", "h264", "avc", "avc1"].includes(videoCodec);
+  const friendlyAudio =
+    !audioCodec ||
+    ["aac", "mp3", "opus", "vorbis", "mp4a"].includes(audioCodec);
+  const browserFriendly =
+    friendlyContainer && friendlyVideo && friendlyAudio && Boolean(part?.key);
+
+  const offsetMs = Math.max(0, Number(opts.offsetMs) || 0);
+  let plexUrl;
   let seekable = false;
-  if (browserFriendly && part?.key) {
+  let mode = "direct";
+
+  if (browserFriendly && offsetMs === 0) {
     const direct = new URL(part.key, `${base}/`);
     direct.searchParams.set("X-Plex-Token", token);
-    url = direct.toString();
+    plexUrl = direct.toString();
     seekable = true;
+    mode = "direct";
   } else {
     const stream = new URL(
       "/video/:/transcode/universal/start.mp4",
@@ -973,29 +1144,176 @@ async function getBrowserPlayable(settings, ratingKey, title) {
     stream.searchParams.set("protocol", "http");
     stream.searchParams.set("fastSeek", "1");
     stream.searchParams.set("directPlay", "0");
-    stream.searchParams.set("directStream", "1");
+    stream.searchParams.set("directStream", "0");
+    stream.searchParams.set("videoCodecs", "h264");
+    stream.searchParams.set("audioCodecs", "aac");
     stream.searchParams.set("subtitleSize", "100");
     stream.searchParams.set("audioBoost", "100");
     stream.searchParams.set("location", "lan");
     stream.searchParams.set("addDebugOverlay", "0");
     stream.searchParams.set("autoAdjustQuality", "0");
-    stream.searchParams.set("X-Plex-Platform", "Chrome");
+    stream.searchParams.set("X-Plex-Platform", "Android");
     stream.searchParams.set("X-Plex-Client-Identifier", getPlexClientId());
     stream.searchParams.set("X-Plex-Product", "Arrs Hub");
     stream.searchParams.set("X-Plex-Device-Name", "Arrs Hub");
     stream.searchParams.set("X-Plex-Token", token);
-    url = stream.toString();
-    // Transcode streams often need offset= reload to scrub; player handles that.
+    if (offsetMs > 0) {
+      stream.searchParams.set("offset", String(Math.floor(offsetMs)));
+    }
+    plexUrl = stream.toString();
     seekable = false;
+    mode = "transcode";
   }
 
   return {
-    title: title || meta.title,
+    title: meta.title || String(ratingKey),
+    ratingKey: String(ratingKey),
+    plexUrl,
+    seekable,
+    mode,
+    container,
+    videoCodec,
+    audioCodec,
+    durationMs: Number(meta.duration) || Number(part?.duration) || null,
+    contentType: mode === "direct" ? "video/mp4" : "video/mp4",
+  };
+}
+
+/**
+ * Browser/mobile-playable item. When publicBaseUrl is set (API clients),
+ * return a hub-proxied URL so phones never hit plexBaseUrl=localhost.
+ * @param {object} settings
+ * @param {string} ratingKey
+ * @param {string} title
+ * @param {{ publicBaseUrl?: string }} [options]
+ */
+async function getBrowserPlayable(
+  settings,
+  ratingKey,
+  title,
+  options = {},
+) {
+  const upstream = await resolvePlexUpstreamStream(settings, ratingKey);
+  const publicBaseUrl = String(options.publicBaseUrl || "").trim();
+  // Always proxy via Arrs Hub — plexBaseUrl is often http://localhost:32400,
+  // which breaks every in-app play on phones/tablets (and cast devices).
+  const mediaPath = `/api/workouts/media/${encodeURIComponent(String(ratingKey))}`;
+  const url = publicBaseUrl
+    ? new URL(
+        mediaPath,
+        publicBaseUrl.endsWith("/") ? publicBaseUrl : `${publicBaseUrl}/`,
+      ).toString()
+    : mediaPath;
+
+  return {
+    title: title || upstream.title,
     ratingKey: String(ratingKey),
     url,
-    seekable,
-    durationMs: Number(meta.duration) || Number(part?.duration) || null,
+    seekable: upstream.seekable,
+    durationMs: upstream.durationMs,
+    streamMode: upstream.mode,
   };
+}
+
+/**
+ * Proxy Plex media to the mobile/browser player (Range + offset supported).
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {string} ratingKey
+ */
+export async function streamWorkoutMedia(req, res, ratingKey) {
+  const settings = getWorkoutConfig();
+  requireToken(settings);
+  const key = String(ratingKey || "").trim();
+  if (!key) {
+    res.status(400).json({ error: "Missing ratingKey." });
+    return;
+  }
+
+  const offsetMs = Math.max(
+    0,
+    Number(req.query?.offset) || Number(req.query?.X_Plex_Offset) || 0,
+  );
+
+  let upstream;
+  try {
+    upstream = await resolvePlexUpstreamStream(settings, key, { offsetMs });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const missing = /could not load media|no playable part/i.test(message);
+    res.status(missing ? 404 : 502).json({
+      error: missing
+        ? `Media not found in Plex (${key}).`
+        : `Could not resolve Plex stream: ${message}`,
+      code: missing ? "MEDIA_MISSING" : "PLEX_UPSTREAM",
+    });
+    return;
+  }
+
+  const headers = {
+    "X-Plex-Token": settings.plexToken.trim(),
+    "X-Plex-Client-Identifier": getPlexClientId(),
+    "X-Plex-Product": "Arrs Hub",
+    Accept: "*/*",
+  };
+  if (req.headers.range) {
+    headers.Range = String(req.headers.range);
+  }
+
+  let plexRes;
+  try {
+    plexRes = await fetch(upstream.plexUrl, {
+      method: "GET",
+      headers,
+      signal: AbortSignal.timeout(120000),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(502).json({
+      error: `Plex stream unreachable (is PMS running on ${normalizePlexBaseUrl(settings.plexBaseUrl)}?): ${message}`,
+      code: "PLEX_UNREACHABLE",
+    });
+    return;
+  }
+
+  if (!plexRes.ok && plexRes.status !== 206) {
+    const body = await plexRes.text().catch(() => "");
+    res.status(plexRes.status === 404 ? 404 : 502).json({
+      error:
+        plexRes.status === 404
+          ? `Plex media missing for ${key}.`
+          : `Plex returned HTTP ${plexRes.status}${body ? `: ${body.slice(0, 160)}` : ""}`,
+      code: plexRes.status === 404 ? "MEDIA_MISSING" : "PLEX_HTTP",
+    });
+    return;
+  }
+
+  res.status(plexRes.status);
+  const passHeaders = [
+    "content-type",
+    "content-length",
+    "content-range",
+    "accept-ranges",
+    "content-disposition",
+  ];
+  for (const name of passHeaders) {
+    const value = plexRes.headers.get(name);
+    if (value) res.setHeader(name, value);
+  }
+  if (!res.getHeader("content-type")) {
+    res.setHeader("Content-Type", upstream.contentType || "video/mp4");
+  }
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Arrs-Stream-Mode", upstream.mode);
+
+  if (!plexRes.body) {
+    const buf = Buffer.from(await plexRes.arrayBuffer());
+    res.end(buf);
+    return;
+  }
+
+  const { Readable } = await import("node:stream");
+  Readable.fromWeb(plexRes.body).pipe(res);
 }
 
 function libraryUri(serverId, ratingKey) {

@@ -34,6 +34,7 @@ import {
   pollPlexLogin,
   publicWorkoutSettings,
   startPlexLogin,
+  streamWorkoutMedia,
   testPlexConnection,
   updateWorkoutConfig,
 } from "./plex.mjs";
@@ -315,6 +316,33 @@ app.get("/api/workouts/discover", async (_req, res) => {
   }
 });
 
+/**
+ * Absolute base the client used to reach the hub (for proxied media URLs).
+ * Prefers X-Forwarded-* when present (port-forward / reverse proxy).
+ */
+function requestPublicBaseUrl(req) {
+  const xfProto = String(req.headers["x-forwarded-proto"] || "")
+    .split(",")[0]
+    .trim();
+  const xfHost = String(req.headers["x-forwarded-host"] || "")
+    .split(",")[0]
+    .trim();
+  const host = xfHost || String(req.headers.host || "").trim();
+  if (!host) return "";
+  const proto = xfProto || (req.secure ? "https" : "http");
+  return `${proto}://${host}`;
+}
+
+app.get("/api/workouts/media/:ratingKey", async (req, res) => {
+  try {
+    await streamWorkoutMedia(req, res, req.params.ratingKey);
+  } catch (err) {
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message || String(err) });
+    }
+  }
+});
+
 app.post("/api/workouts/play", async (req, res) => {
   try {
     const day = Number(req.body?.day);
@@ -322,7 +350,13 @@ app.post("/api/workouts/play", async (req, res) => {
       typeof req.body?.clientMachineId === "string"
         ? req.body.clientMachineId
         : undefined;
-    const result = await playWorkoutDay(day, undefined, { clientMachineId });
+    const skipWarmup = Boolean(req.body?.skipWarmup);
+    const publicBaseUrl = requestPublicBaseUrl(req);
+    const result = await playWorkoutDay(day, undefined, {
+      clientMachineId,
+      skipWarmup,
+      publicBaseUrl,
+    });
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message || String(err) });

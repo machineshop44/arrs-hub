@@ -728,6 +728,7 @@ input {
 }
 
 .workout-player {
+  position: relative;
   width: min(960px, 100%);
   background: var(--bg-elevated, #151922);
   border: 1px solid var(--border, #2a3140);
@@ -769,6 +770,47 @@ input {
   color: var(--text-muted, #9aa4b2);
   min-width: 5.5rem;
   text-align: right;
+}
+
+.workout-ready-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: rgba(0, 0, 0, 0.62);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+}
+
+.workout-ready-overlay-panel {
+  position: fixed;
+  z-index: 130;
+}
+
+.workout-ready-card {
+  width: min(420px, 100%);
+  background: var(--bg-elevated, #151922);
+  border: 1px solid var(--border, #2a3140);
+  border-radius: 12px;
+  padding: 1.15rem 1.25rem 1.25rem;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+.workout-ready-card h3 {
+  margin: 0 0 0.45rem;
+  font-size: 1.15rem;
+}
+
+.workout-ready-card .settings-hint {
+  margin: 0 0 1rem;
+}
+
+.workout-ready-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.6rem;
 }
 
 .watchdog-bar-actions {
