@@ -1313,7 +1313,10 @@ async function getBrowserPlayable(
 }
 
 /**
- * Proxy Plex media to the mobile/browser player (Range + offset supported).
+ * Proxy Plex media to the mobile/browser player.
+ * Direct parts support HTTP Range. Universal transcode (start.mp4) often returns
+ * empty bodies when Range is forwarded — tablets always send Range — so for
+ * transcode we seek via Plex `offset` only and stream a progressive 200.
  * @param {import('express').Request} req
  * @param {import('express').Response} res
  * @param {string} ratingKey
@@ -1348,28 +1351,48 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
   }
 
   const token = settings.plexToken.trim();
+  const isTranscode = upstream.mode === "transcode";
+  // Progressive MP4 transcoder does not honor byte ranges reliably (empty 200 /
+  // Content-Length: 0). Only forward Range for direct file parts.
+  const forwardRange = !isTranscode && Boolean(req.headers.range);
+
   const headers = {
     "X-Plex-Token": token,
     Accept: "*/*",
   };
-  if (upstream.mode === "transcode") {
+  if (isTranscode) {
     headers["X-Plex-Client-Identifier"] = PLEX_MEDIA_CLIENT_ID;
     headers["X-Plex-Product"] = PLEX_PRODUCT;
     headers["X-Plex-Platform"] = "Android";
     headers["X-Plex-Client-Profile-Extra"] = PLEX_BROWSER_TRANSCODE_PROFILE;
   }
-  if (req.headers.range) {
+  if (forwardRange) {
     headers.Range = String(req.headers.range);
   }
+
+  const ac = new AbortController();
+  const onClientGone = () => {
+    try {
+      ac.abort();
+    } catch {
+      // ignore
+    }
+  };
+  req.on("close", onClientGone);
+  res.on("close", onClientGone);
 
   let plexRes;
   try {
     plexRes = await fetch(upstream.plexUrl, {
       method: "GET",
       headers,
-      signal: AbortSignal.timeout(120000),
+      // Do not use AbortSignal.timeout here — it aborts long video bodies.
+      signal: ac.signal,
     });
   } catch (err) {
+    req.off("close", onClientGone);
+    res.off("close", onClientGone);
+    if (ac.signal.aborted) return;
     const message = err instanceof Error ? err.message : String(err);
     res.status(502).json({
       error: `Plex stream unreachable (is PMS running on ${normalizePlexBaseUrl(settings.plexBaseUrl)}?): ${message}`,
@@ -1382,7 +1405,7 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
   if (
     !plexRes.ok &&
     plexRes.status !== 206 &&
-    upstream.mode === "transcode" &&
+    isTranscode &&
     upstream.partKey
   ) {
     await plexRes.text().catch(() => "");
@@ -1397,11 +1420,9 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
         headers: {
           "X-Plex-Token": token,
           Accept: "*/*",
-          ...(req.headers.range
-            ? { Range: String(req.headers.range) }
-            : {}),
+          ...(forwardRange ? { Range: String(req.headers.range) } : {}),
         },
-        signal: AbortSignal.timeout(120000),
+        signal: ac.signal,
       });
       if (plexRes.ok || plexRes.status === 206) {
         upstream.mode = "direct-fallback";
@@ -1414,6 +1435,8 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
   }
 
   if (!plexRes.ok && plexRes.status !== 206) {
+    req.off("close", onClientGone);
+    res.off("close", onClientGone);
     const body = await plexRes.text().catch(() => "");
     const safeUrl = String(upstream.plexUrl || "").replaceAll(token, "REDACTED");
     console.warn(
@@ -1429,32 +1452,81 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
     return;
   }
 
-  res.status(plexRes.status);
-  const passHeaders = [
-    "content-type",
-    "content-length",
-    "content-range",
-    "accept-ranges",
-    "content-disposition",
-  ];
-  for (const name of passHeaders) {
-    const value = plexRes.headers.get(name);
-    if (value) res.setHeader(name, value);
-  }
-  if (!res.getHeader("content-type")) {
-    res.setHeader("Content-Type", upstream.contentType || "video/mp4");
-  }
+  const streamingTranscode = upstream.mode === "transcode";
+  // Transcode: always progressive 200 (ignore client Range / empty CL from Plex).
+  res.status(streamingTranscode ? 200 : plexRes.status);
+
+  const contentType =
+    plexRes.headers.get("content-type") ||
+    upstream.contentType ||
+    "video/mp4";
+  res.setHeader("Content-Type", contentType);
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("X-Arrs-Stream-Mode", upstream.mode);
 
-  if (!plexRes.body) {
-    const buf = Buffer.from(await plexRes.arrayBuffer());
-    res.end(buf);
-    return;
+  if (streamingTranscode) {
+    res.setHeader("Accept-Ranges", "none");
+    // Never forward Content-Length: 0 — that makes <video> treat the source as empty.
+  } else {
+    const passHeaders = [
+      "content-length",
+      "content-range",
+      "accept-ranges",
+      "content-disposition",
+    ];
+    for (const name of passHeaders) {
+      const value = plexRes.headers.get(name);
+      if (value && !(name === "content-length" && value === "0")) {
+        res.setHeader(name, value);
+      }
+    }
   }
 
-  const { Readable } = await import("node:stream");
-  Readable.fromWeb(plexRes.body).pipe(res);
+  try {
+    if (!plexRes.body) {
+      const buf = Buffer.from(await plexRes.arrayBuffer());
+      if (buf.length === 0) {
+        console.warn(
+          `[workouts/media] empty body for ${key} mode=${upstream.mode} (no web stream)`,
+        );
+        if (!res.headersSent) {
+          res.status(502).json({
+            error: "Plex returned an empty media body.",
+            code: "PLEX_EMPTY",
+          });
+        }
+        return;
+      }
+      res.end(buf);
+      return;
+    }
+
+    const { Readable } = await import("node:stream");
+    const { pipeline } = await import("node:stream/promises");
+    const nodeStream = Readable.fromWeb(plexRes.body);
+    await pipeline(nodeStream, res);
+  } catch (err) {
+    if (ac.signal.aborted || req.aborted || res.writableEnded) return;
+    console.warn(
+      `[workouts/media] pipe failed for ${key}:`,
+      err instanceof Error ? err.message : err,
+    );
+    if (!res.headersSent) {
+      res.status(502).json({
+        error: "Failed while streaming media from Plex.",
+        code: "PLEX_PIPE",
+      });
+    } else {
+      try {
+        res.destroy();
+      } catch {
+        // ignore
+      }
+    }
+  } finally {
+    req.off("close", onClientGone);
+    res.off("close", onClientGone);
+  }
 }
 
 function libraryUri(serverId, ratingKey) {
