@@ -444,6 +444,29 @@ function showWindow() {
   mainWindow.focus();
 }
 
+/**
+ * Tray Quit: kill Express child tree, then exit hard so NSIS upgrades do not
+ * hit leftover Arrs Hub.exe file locks ("cannot be closed… Retry").
+ */
+function forceQuitFromTray() {
+  isQuitting = true;
+  stopServer();
+  if (tray) {
+    try {
+      tray.destroy();
+    } catch {
+      // ignore
+    }
+    tray = null;
+  }
+  // Prefer exit over quit so we do not linger waiting on window close handlers.
+  try {
+    app.exit(0);
+  } catch {
+    process.exit(0);
+  }
+}
+
 function createTray() {
   const icon = loadIcon();
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon.resize({ width: 16, height: 16 }));
@@ -458,10 +481,7 @@ function createTray() {
       { type: "separator" },
       {
         label: "Quit",
-        click: () => {
-          isQuitting = true;
-          app.quit();
-        },
+        click: () => forceQuitFromTray(),
       },
     ]),
   );
