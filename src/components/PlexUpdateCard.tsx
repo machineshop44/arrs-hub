@@ -48,11 +48,10 @@ export function PlexUpdateCard({ serverUp }: PlexUpdateCardProps) {
     <section className="settings-group plex-update-card">
       <h3>{headline}</h3>
       <p className="settings-hint plex-update-copy">
-        Uses your Workouts Plex sign-in. The hub talks to PMS{" "}
-        <code>/updater/*</code> on this PC — install only works when{" "}
-        <code>canInstall</code> is true (Windows PMS). When{" "}
-        <code>/updater/status</code> is empty, latest comes from plex.tv
-        downloads JSON (Install stays disabled until PMS lists the Release).
+        Uses your Workouts Plex sign-in. Prefer PMS{" "}
+        <code>/updater/apply</code> when the server lists a Release. If only
+        plex.tv is ahead, Arrs Hub on this Windows PMS PC can download and run
+        the silent installer (UAC may prompt).
       </p>
 
       <div className="plex-update-meta">
@@ -98,13 +97,9 @@ export function PlexUpdateCard({ serverUp }: PlexUpdateCardProps) {
 
       {error ? <div className="sync-alert sync-alert-err">{error}</div> : null}
 
-      {!canInstall && status?.updateAvailable ? (
-        <p className="settings-hint plex-update-hint">
-          {status.channel === "plex.tv"
-            ? "Seen on plex.tv, but PMS updater has not listed this Release yet — update from Plex Settings on the host (Install via hub unavailable until PMS lists it)."
-            : "PMS reports canInstall=false — update on the host (manual/NAS installs cannot be applied from Arrs Hub)."}
-        </p>
-      ) : !canInstall && status?.installedVersion ? (
+      {!canInstall && status?.updateAvailable && blocked ? (
+        <p className="settings-hint plex-update-hint">{blocked}</p>
+      ) : !canInstall && status?.installedVersion && blocked ? (
         <p className="settings-hint plex-update-hint">{blocked}</p>
       ) : null}
 

@@ -760,8 +760,10 @@ export function DashboardStatus({
                           <p className="dash-plex-badge" role="status">
                             Update available
                             {plexStatus.canInstall
-                              ? ""
-                              : " · cannot install from hub"}
+                              ? plexStatus.installMethod === "windows-installer"
+                                ? " · Windows installer"
+                                : ""
+                              : " · install blocked"}
                           </p>
                         ) : null}
 

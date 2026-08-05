@@ -546,7 +546,8 @@ app.get("/api/sync/status", async (_req, res) => {
 
 /**
  * Plex Media Server update check / install (hub on PMS PC).
- * Mobile + desktop share these; install uses PMS /updater/* APIs.
+ * Mobile + desktop share these; install uses PMS /updater/apply when possible,
+ * else Windows silent installer from plex.tv when hub is local on win32.
  */
 app.get("/api/plex/update-status", async (req, res) => {
   try {

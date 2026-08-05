@@ -22,12 +22,15 @@ export type PlexUpdateStatus = {
   latestVersion?: string | null;
   updateAvailable?: boolean;
   canInstall?: boolean;
+  /** "pms" | "windows-installer" when Install is available */
+  installMethod?: "pms" | "windows-installer" | null;
   /** "pms" when /updater/status lists a Release; "plex.tv" when catalog is newer/sole source */
   channel?: string | null;
   releaseState?: string | null;
   downloadURL?: string | null;
   lastChecked?: string | null;
   platform?: string;
+  hubLocal?: boolean;
   error?: string | null;
   job?: PlexUpdateJob;
 };
@@ -70,13 +73,16 @@ export function plexInstallBlockedReason(
   if (serverUp === false)
     return "Hub offline — cannot check or install updates.";
   if (status?.updateAvailable && !status.canInstall) {
+    if (status.error?.trim()) return status.error.trim();
     if (status.channel === "plex.tv") {
-      return "Seen on plex.tv, but PMS updater has not listed this Release yet — update from Plex Settings on the host.";
+      return "Seen on plex.tv, but Install is unavailable from this hub (need win32 hub on the PMS PC, or wait for PMS /updater).";
     }
     return "Plex reports canInstall=false (manual/NAS installs cannot be applied from the hub).";
   }
-  if (status && !status.canInstall)
+  if (status && !status.canInstall) {
+    if (status.error?.trim()) return status.error.trim();
     return "Plex reports canInstall=false (manual/NAS installs cannot be applied from the hub).";
+  }
   return null;
 }
 
