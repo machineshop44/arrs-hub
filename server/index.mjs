@@ -129,7 +129,16 @@ const app = express();
 app.use(express.json({ limit: "1mb" }));
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, version: packageJson.version, name: packageJson.name });
+  const lanReachable = HOST !== "127.0.0.1" && HOST !== "::1" && HOST !== "localhost";
+  res.json({
+    ok: true,
+    version: packageJson.version,
+    name: packageJson.name,
+    bind: HOST,
+    port: PORT,
+    lanReachable,
+    desktop: desktopMode,
+  });
 });
 
 app.get("/api/version", (_req, res) => {
@@ -137,6 +146,8 @@ app.get("/api/version", (_req, res) => {
     name: "Arrs Hub",
     version: packageJson.version,
     major: "v1",
+    bind: HOST,
+    port: PORT,
   });
 });
 

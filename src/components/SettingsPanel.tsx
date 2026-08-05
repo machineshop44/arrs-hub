@@ -360,6 +360,44 @@ export function SettingsPanel({
           </section>
 
           <section className="settings-group">
+            <h3>Hub network (phone / LAN)</h3>
+            <p className="settings-hint">
+              The Hub API must listen on the LAN so Arrs Hub Mobile and remote
+              chips can connect. Default bind is{" "}
+              <code>0.0.0.0</code> (all interfaces) on port{" "}
+              <code>3000</code> in the desktop app.
+            </p>
+            <ul className="settings-hint-list">
+              <li>
+                Keep <code>ARRS_HUB_BIND=0.0.0.0</code> (or unset — that is the
+                default). Use <code>127.0.0.1</code> only if you want
+                localhost-only.
+              </li>
+              <li>
+                Optional port: <code>ARRS_HUB_PORT</code> (or{" "}
+                <code>PORT</code>).
+              </li>
+              <li>
+                For phones off-LAN, port-forward TCP <strong>3000</strong> to
+                this PC (same idea as Sonarr/Radarr). The dashboard{" "}
+                <strong>Hub</strong> chip shows listen address and version.
+              </li>
+            </ul>
+            {apiServerUp === false && (
+              <p className="settings-error">
+                Hub API is offline right now — start Arrs Hub before mobile can
+                connect.
+              </p>
+            )}
+            {apiServerUp === true && (
+              <p className="settings-ok">
+                Hub API is online. Check the <strong>Hub</strong> chip on the
+                dashboard for bind / port.
+              </p>
+            )}
+          </section>
+
+          <section className="settings-group">
             <h3>Services</h3>
             <p className="settings-hint">
               Enter a Home address (local IP &amp; port) and optional Remote

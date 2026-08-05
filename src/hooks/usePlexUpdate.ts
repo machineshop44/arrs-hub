@@ -232,20 +232,35 @@ export function usePlexUpdate(nextServerUp: boolean | null) {
 
   useEffect(() => {
     subscriberCount += 1;
+    const prevUp = serverUp;
     serverUp = nextServerUp;
 
-    void loadStatus(false);
-    if (nextServerUp !== false) {
+    if (nextServerUp === false) {
+      clearTimers();
+      inflightStatus = null;
+      setStore({
+        status: null,
+        loading: false,
+        checking: false,
+        busy: false,
+        error: null,
+        actionMsg: null,
+      });
+      syncJobPoll();
+    } else {
+      // Coming back online: allow a fresh PMS check and drop stale status.
+      if (prevUp === false) {
+        didStartupRefresh = false;
+        setStore({ status: null, loading: true, error: null, actionMsg: null });
+      }
+      void loadStatus(false);
       startStatusPoll();
       if (!didStartupRefresh) {
         didStartupRefresh = true;
         void loadStatus(true);
       }
-    } else {
-      clearTimers();
-      setStore({ status: null, loading: false, checking: false });
+      syncJobPoll();
     }
-    syncJobPoll();
 
     return () => {
       subscriberCount = Math.max(0, subscriberCount - 1);

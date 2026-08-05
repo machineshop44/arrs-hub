@@ -140,6 +140,7 @@ export function DashboardStatus({
 }: DashboardStatusProps) {
   const [summary, setSummary] = useState<HubStatusSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [hubOpen, setHubOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [ombiOpen, setOmbiOpen] = useState(false);
@@ -147,11 +148,27 @@ export function DashboardStatus({
   const [ombiItems, setOmbiItems] = useState<OmbiPendingItem[]>([]);
   const [ombiLoading, setOmbiLoading] = useState(false);
   const [ombiError, setOmbiError] = useState<string | null>(null);
+  const [ombiSuccess, setOmbiSuccess] = useState<string | null>(null);
   const [ombiApprovingId, setOmbiApprovingId] = useState<string | null>(null);
+  const [hubInfo, setHubInfo] = useState<{
+    version?: string;
+    bind?: string;
+    port?: number;
+    lanReachable?: boolean;
+  } | null>(null);
+  const hubWrapRef = useRef<HTMLDivElement>(null);
   const queueWrapRef = useRef<HTMLDivElement>(null);
   const downloadsWrapRef = useRef<HTMLDivElement>(null);
   const ombiWrapRef = useRef<HTMLDivElement>(null);
   const plexWrapRef = useRef<HTMLDivElement>(null);
+
+  const closeAllPopovers = useCallback(() => {
+    setHubOpen(false);
+    setQueueOpen(false);
+    setDownloadsOpen(false);
+    setOmbiOpen(false);
+    setPlexOpen(false);
+  }, []);
 
   const {
     status: plexStatus,
@@ -166,7 +183,11 @@ export function DashboardStatus({
   } = usePlexUpdate(serverUp);
 
   const load = useCallback(async () => {
-    if (serverUp === false) return;
+    if (serverUp === false) {
+      setSummary(null);
+      setError(null);
+      return;
+    }
     try {
       const res = await fetch("/api/status/summary", {
         method: "POST",
@@ -181,6 +202,26 @@ export function DashboardStatus({
       setError(err instanceof Error ? err.message : String(err));
     }
   }, [services, connectionMode, serverUp]);
+
+  const loadHubInfo = useCallback(async () => {
+    if (serverUp === false) {
+      setHubInfo(null);
+      return;
+    }
+    try {
+      const res = await fetch("/api/health");
+      const json = (await res.json()) as {
+        version?: string;
+        bind?: string;
+        port?: number;
+        lanReachable?: boolean;
+      };
+      if (!res.ok) throw new Error("health failed");
+      setHubInfo(json);
+    } catch {
+      setHubInfo(null);
+    }
+  }, [serverUp]);
 
   const loadOmbiPending = useCallback(async () => {
     if (serverUp === false) return;
@@ -231,14 +272,32 @@ export function DashboardStatus({
   }, [load]);
 
   useEffect(() => {
+    void loadHubInfo();
+  }, [loadHubInfo]);
+
+  useEffect(() => {
+    if (serverUp === false) {
+      closeAllPopovers();
+      setOmbiItems([]);
+      setOmbiError(null);
+      setOmbiSuccess(null);
+    }
+  }, [serverUp, closeAllPopovers]);
+
+  useEffect(() => {
     if (!ombiOpen) return;
     void loadOmbiPending();
   }, [ombiOpen, loadOmbiPending]);
 
   useEffect(() => {
-    if (!queueOpen && !downloadsOpen && !ombiOpen && !plexOpen) return;
+    if (!hubOpen && !queueOpen && !downloadsOpen && !ombiOpen && !plexOpen)
+      return;
     const onDoc = (event: MouseEvent) => {
       const target = event.target as Node;
+      if (hubOpen) {
+        const el = hubWrapRef.current;
+        if (el && !el.contains(target)) setHubOpen(false);
+      }
       if (queueOpen) {
         const el = queueWrapRef.current;
         if (el && !el.contains(target)) setQueueOpen(false);
@@ -257,12 +316,7 @@ export function DashboardStatus({
       }
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setQueueOpen(false);
-        setDownloadsOpen(false);
-        setOmbiOpen(false);
-        setPlexOpen(false);
-      }
+      if (event.key === "Escape") closeAllPopovers();
     };
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
@@ -270,12 +324,13 @@ export function DashboardStatus({
       document.removeEventListener("mousedown", onDoc);
       document.removeEventListener("keydown", onKey);
     };
-  }, [queueOpen, downloadsOpen, ombiOpen, plexOpen]);
+  }, [hubOpen, queueOpen, downloadsOpen, ombiOpen, plexOpen, closeAllPopovers]);
 
   const approveOmbi = async (item: OmbiPendingItem) => {
     const key = `${item.type}-${item.id}`;
     setOmbiApprovingId(key);
     setOmbiError(null);
+    setOmbiSuccess(null);
     try {
       const res = await fetch("/api/activity/ombi/approve", {
         method: "POST",
@@ -288,6 +343,7 @@ export function DashboardStatus({
       });
       const json = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(json.error || "Approve failed");
+      setOmbiSuccess(`Approved “${item.title}”.`);
       await Promise.all([loadOmbiPending(), load()]);
     } catch (err) {
       setOmbiError(err instanceof Error ? err.message : String(err));
@@ -345,6 +401,14 @@ export function DashboardStatus({
 
   const chips = [
     {
+      id: "hub",
+      label: "Hub",
+      value:
+        serverUp === true ? "ok" : serverUp === false ? "down" : "…",
+      tone:
+        serverUp === true ? "good" : serverUp === false ? "bad" : "muted",
+    },
+    {
       id: "up",
       label: "Apps up",
       value: scanning ? "…" : String(upCount),
@@ -360,58 +424,80 @@ export function DashboardStatus({
       id: "streams",
       label: "Streams",
       value:
-        pendingSummary || streams == null
+        serverUp === false
           ? "—"
-          : summary?.streams?.configured
-            ? String(streams)
-            : "setup",
+          : pendingSummary || streams == null
+            ? "—"
+            : summary?.streams?.configured
+              ? String(streams)
+              : "setup",
       tone:
-        streams && streams > 0
-          ? "accent"
-          : summary?.streams?.configured
-            ? "muted"
-            : "warn",
+        serverUp === false
+          ? "muted"
+          : streams && streams > 0
+            ? "accent"
+            : summary?.streams?.configured
+              ? "muted"
+              : "warn",
     },
     {
       id: "downloads",
       label: "Downloads",
       value:
-        pendingSummary || downloads == null
+        serverUp === false
           ? "—"
-          : summary?.downloads?.qbittorrent?.configured ||
-              summary?.downloads?.sabnzbd?.configured
-            ? String(downloads)
-            : "setup",
-      tone: downloads && downloads > 0 ? "accent" : "muted",
+          : pendingSummary || downloads == null
+            ? "—"
+            : summary?.downloads?.qbittorrent?.configured ||
+                summary?.downloads?.sabnzbd?.configured
+              ? String(downloads)
+              : "setup",
+      tone:
+        serverUp === false
+          ? "muted"
+          : downloads && downloads > 0
+            ? "accent"
+            : "muted",
     },
     {
       id: "queue",
       label: "*arr queue",
       value:
-        pendingSummary || queueTotal == null
+        serverUp === false
           ? "—"
-          : summary?.arr?.sonarr?.ok ||
-              summary?.arr?.radarr?.ok ||
-              summary?.arr?.lidarr?.ok
-            ? String(queueTotal)
-            : "setup",
-      tone: queueTotal && queueTotal > 0 ? "warn" : "muted",
+          : pendingSummary || queueTotal == null
+            ? "—"
+            : summary?.arr?.sonarr?.ok ||
+                summary?.arr?.radarr?.ok ||
+                summary?.arr?.lidarr?.ok
+              ? String(queueTotal)
+              : "setup",
+      tone:
+        serverUp === false
+          ? "muted"
+          : queueTotal && queueTotal > 0
+            ? "warn"
+            : "muted",
     },
     {
       id: "ombi",
       label: "Ombi pending",
       value:
-        pendingSummary || ombiPending == null
+        serverUp === false
           ? "—"
-          : summary?.ombi?.configured
-            ? String(ombiPending)
-            : "setup",
+          : pendingSummary || ombiPending == null
+            ? "—"
+            : summary?.ombi?.configured
+              ? String(ombiPending)
+              : "setup",
       tone:
-        ombiPending && ombiPending > 0
-          ? "warn"
-          : summary?.ombi?.configured
-            ? "good"
-            : "muted",
+        serverUp === false
+          ? "muted"
+          : ombiPending && ombiPending > 0
+            ? "warn"
+            : summary?.ombi?.configured
+              ? "good"
+              : "muted",
     },
     {
       id: "plex",
@@ -464,6 +550,90 @@ export function DashboardStatus({
       )}
       <div className="dash-chips">
         {chips.map((chip) => {
+          if (chip.id === "hub") {
+            const bind = hubInfo?.bind || "0.0.0.0";
+            const port = hubInfo?.port ?? 3000;
+            const lanOk = hubInfo?.lanReachable !== false;
+            return (
+              <div key={chip.id} className="dash-chip-wrap" ref={hubWrapRef}>
+                <button
+                  type="button"
+                  className={`dash-chip dash-chip-btn tone-${chip.tone}`}
+                  aria-expanded={hubOpen}
+                  aria-haspopup="dialog"
+                  title="Arrs Hub API connectivity — click for bind / LAN tip"
+                  onClick={() => {
+                    if (hubOpen) {
+                      setHubOpen(false);
+                      return;
+                    }
+                    closeAllPopovers();
+                    setHubOpen(true);
+                    void loadHubInfo();
+                  }}
+                >
+                  <span className="dash-chip-value">{chip.value}</span>
+                  <span className="dash-chip-label">{chip.label}</span>
+                </button>
+                {hubOpen && (
+                  <div
+                    className="dash-chip-popover"
+                    role="dialog"
+                    aria-label="Hub connectivity"
+                  >
+                    <p className="dash-chip-popover-title">Arrs Hub API</p>
+                    <ul className="dash-queue-breakdown">
+                      <li>
+                        <span className="dash-queue-app-static">
+                          <span>Status</span>
+                          <strong>
+                            {serverUp === true
+                              ? "Online"
+                              : serverUp === false
+                                ? "Offline"
+                                : "Checking…"}
+                          </strong>
+                        </span>
+                      </li>
+                      <li>
+                        <span className="dash-queue-app-static">
+                          <span>Version</span>
+                          <strong>{hubInfo?.version || "—"}</strong>
+                        </span>
+                      </li>
+                      <li>
+                        <span className="dash-queue-app-static">
+                          <span>Listen</span>
+                          <strong>
+                            {bind}:{port}
+                          </strong>
+                        </span>
+                      </li>
+                    </ul>
+                    {serverUp === false ? (
+                      <p className="dash-chip-popover-empty">
+                        Hub API offline — start Arrs Hub / the tray app so
+                        streams, queue, Plex update, and mobile can connect.
+                      </p>
+                    ) : lanOk ? (
+                      <p className="dash-chip-popover-hint">
+                        Listening on all interfaces ({bind}) — phones on LAN
+                        (or port-forwarded :{port}) can reach the hub. Mobile
+                        needs this; localhost-only blocks the phone.
+                      </p>
+                    ) : (
+                      <p className="dash-chip-popover-hint">
+                        Bound to localhost only — set{" "}
+                        <code>ARRS_HUB_BIND=0.0.0.0</code> (default) so Arrs
+                        Hub Mobile can connect on the LAN, then restart Hub.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          }
+
           if (chip.id === "streams" && onOpenStreams) {
             return (
               <button
@@ -475,7 +645,10 @@ export function DashboardStatus({
                     ? "Open Streams — live Plex streams from Tautulli"
                     : "Open Streams"
                 }
-                onClick={onOpenStreams}
+                onClick={() => {
+                  closeAllPopovers();
+                  onOpenStreams();
+                }}
               >
                 <span className="dash-chip-value">{chip.value}</span>
                 <span className="dash-chip-label">{chip.label}</span>
@@ -497,6 +670,7 @@ export function DashboardStatus({
                   aria-haspopup="dialog"
                   title="Active downloads — click for qBittorrent / SABnzbd; open an app to jump to its UI"
                   onClick={() => {
+                    setHubOpen(false);
                     setQueueOpen(false);
                     setOmbiOpen(false);
                     setPlexOpen(false);
@@ -553,8 +727,8 @@ export function DashboardStatus({
                     </ul>
                     <p className="dash-chip-popover-hint">
                       Click qBittorrent or SABnzbd to open that download client.
-                      Set Home URLs on the dashboard cards if a row is not
-                      clickable.
+                      If a row is not clickable, set its Home URL on the
+                      dashboard service card (or Settings → Services).
                     </p>
                   </div>
                 )}
@@ -576,6 +750,7 @@ export function DashboardStatus({
                   aria-haspopup="dialog"
                   title="*arr queue — click for per-app counts; open an app to jump to its Activity Queue"
                   onClick={() => {
+                    setHubOpen(false);
                     setDownloadsOpen(false);
                     setOmbiOpen(false);
                     setPlexOpen(false);
@@ -701,6 +876,7 @@ export function DashboardStatus({
                   aria-haspopup="dialog"
                   title="Requests awaiting approval in Ombi — click to review"
                   onClick={() => {
+                    setHubOpen(false);
                     setQueueOpen(false);
                     setDownloadsOpen(false);
                     setPlexOpen(false);
@@ -779,6 +955,11 @@ export function DashboardStatus({
                     {ombiError ? (
                       <p className="dash-chip-popover-error">{ombiError}</p>
                     ) : null}
+                    {ombiSuccess && !ombiError ? (
+                      <p className="dash-chip-popover-hint dash-ombi-success">
+                        {ombiSuccess}
+                      </p>
+                    ) : null}
 
                     {ombiOpenUrl ? (
                       <p className="dash-chip-popover-hint">
@@ -821,6 +1002,7 @@ export function DashboardStatus({
                         : "Plex Media Server update — click for details"
                   }
                   onClick={() => {
+                    setHubOpen(false);
                     setQueueOpen(false);
                     setDownloadsOpen(false);
                     setOmbiOpen(false);
