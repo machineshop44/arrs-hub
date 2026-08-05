@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ConnectionMode, ServiceConfig } from "../types";
 import { getServiceUrl } from "../types";
+import { usePlexUpdate } from "../hooks/usePlexUpdate";
+import {
+  plexInstallBlockedReason,
+  shortPlexVersion,
+} from "../lib/plexUpdate";
 
 export type ArrQueueIssue = {
   id?: number | null;
@@ -133,12 +138,26 @@ export function DashboardStatus({
   const [error, setError] = useState<string | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
   const [ombiOpen, setOmbiOpen] = useState(false);
+  const [plexOpen, setPlexOpen] = useState(false);
   const [ombiItems, setOmbiItems] = useState<OmbiPendingItem[]>([]);
   const [ombiLoading, setOmbiLoading] = useState(false);
   const [ombiError, setOmbiError] = useState<string | null>(null);
   const [ombiApprovingId, setOmbiApprovingId] = useState<string | null>(null);
   const queueWrapRef = useRef<HTMLDivElement>(null);
   const ombiWrapRef = useRef<HTMLDivElement>(null);
+  const plexWrapRef = useRef<HTMLDivElement>(null);
+
+  const {
+    status: plexStatus,
+    loading: plexLoading,
+    checking: plexChecking,
+    busy: plexBusy,
+    error: plexError,
+    actionMsg: plexActionMsg,
+    load: loadPlex,
+    startJob: runPlexAction,
+    jobBusy: plexJobIsBusy,
+  } = usePlexUpdate(serverUp);
 
   const load = useCallback(async () => {
     if (serverUp === false) return;
@@ -211,7 +230,7 @@ export function DashboardStatus({
   }, [ombiOpen, loadOmbiPending]);
 
   useEffect(() => {
-    if (!queueOpen && !ombiOpen) return;
+    if (!queueOpen && !ombiOpen && !plexOpen) return;
     const onDoc = (event: MouseEvent) => {
       const target = event.target as Node;
       if (queueOpen) {
@@ -222,11 +241,16 @@ export function DashboardStatus({
         const el = ombiWrapRef.current;
         if (el && !el.contains(target)) setOmbiOpen(false);
       }
+      if (plexOpen) {
+        const el = plexWrapRef.current;
+        if (el && !el.contains(target)) setPlexOpen(false);
+      }
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setQueueOpen(false);
         setOmbiOpen(false);
+        setPlexOpen(false);
       }
     };
     document.addEventListener("mousedown", onDoc);
@@ -235,7 +259,7 @@ export function DashboardStatus({
       document.removeEventListener("mousedown", onDoc);
       document.removeEventListener("keydown", onKey);
     };
-  }, [queueOpen, ombiOpen]);
+  }, [queueOpen, ombiOpen, plexOpen]);
 
   const approveOmbi = async (item: OmbiPendingItem) => {
     const key = `${item.type}-${item.id}`;
@@ -356,7 +380,46 @@ export function DashboardStatus({
             ? "good"
             : "muted",
     },
+    {
+      id: "plex",
+      label: "Plex",
+      value: (() => {
+        if (serverUp === false) return "—";
+        if (
+          (!plexStatus && (plexLoading || plexChecking)) ||
+          plexChecking
+        )
+          return "…";
+        if (!plexStatus) return "—";
+        if (plexJobIsBusy) {
+          return `${Math.round(plexStatus.job?.progress ?? 0)}%`;
+        }
+        if (plexStatus.updateAvailable) return "upd";
+        if (plexStatus.ok && plexStatus.installedVersion) return "ok";
+        if (plexStatus.error && !plexStatus.updateAvailable) return "err";
+        return "—";
+      })(),
+      tone: (() => {
+        if (serverUp === false || !plexStatus) return "muted";
+        if (plexChecking) return "accent";
+        if (plexJobIsBusy || plexStatus.job?.phase === "error") return "warn";
+        if (plexStatus.updateAvailable) return "warn";
+        if (
+          plexStatus.ok &&
+          (!plexStatus.error || plexStatus.updateAvailable)
+        )
+          return "good";
+        return "muted";
+      })(),
+    },
   ];
+
+  const plexCanInstall =
+    serverUp !== false &&
+    Boolean(plexStatus?.canInstall) &&
+    Boolean(plexStatus?.updateAvailable);
+
+  const plexBlocked = plexInstallBlockedReason(plexStatus, serverUp);
 
   return (
     <section className="dash-status" aria-label="Hub status summary">
@@ -402,6 +465,7 @@ export function DashboardStatus({
                   title="Sonarr + Radarr (+ Lidarr) queue total — click for breakdown"
                   onClick={() => {
                     setOmbiOpen(false);
+                    setPlexOpen(false);
                     setQueueOpen((open) => !open);
                   }}
                 >
@@ -505,6 +569,7 @@ export function DashboardStatus({
                   title="Requests awaiting approval in Ombi — click to review"
                   onClick={() => {
                     setQueueOpen(false);
+                    setPlexOpen(false);
                     setOmbiOpen((open) => !open);
                   }}
                 >
@@ -599,6 +664,222 @@ export function DashboardStatus({
                         Set Ombi&apos;s Home URL on the dashboard service card
                         to open the web UI.
                       </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          }
+
+          if (chip.id === "plex") {
+            return (
+              <div key={chip.id} className="dash-chip-wrap" ref={plexWrapRef}>
+                <button
+                  type="button"
+                  className={`dash-chip dash-chip-btn tone-${chip.tone}`}
+                  aria-expanded={plexOpen}
+                  aria-haspopup="dialog"
+                  title={
+                    plexStatus?.updateAvailable
+                      ? `Plex update: ${shortPlexVersion(plexStatus.installedVersion)} → ${shortPlexVersion(plexStatus.latestVersion)}`
+                      : plexStatus?.installedVersion
+                        ? `Plex ${shortPlexVersion(plexStatus.installedVersion)} — click for update details`
+                        : "Plex Media Server update — click for details"
+                  }
+                  onClick={() => {
+                    setQueueOpen(false);
+                    setOmbiOpen(false);
+                    setPlexOpen((open) => !open);
+                  }}
+                >
+                  <span className="dash-chip-value">{chip.value}</span>
+                  <span className="dash-chip-label">{chip.label}</span>
+                </button>
+                {plexOpen && (
+                  <div
+                    className="dash-chip-popover dash-chip-popover-plex"
+                    role="dialog"
+                    aria-label="Plex Media Server update"
+                  >
+                    <p className="dash-chip-popover-title">
+                      Plex Media Server
+                    </p>
+
+                    {serverUp === false ? (
+                      <p className="dash-chip-popover-empty">
+                        Hub offline — cannot reach Plex update status.
+                      </p>
+                    ) : plexLoading && !plexStatus && !plexChecking ? (
+                      <p className="dash-chip-popover-empty">Loading…</p>
+                    ) : (
+                      <>
+                        <ul className="dash-queue-breakdown dash-plex-versions">
+                          <li>
+                            <span>Installed</span>
+                            <strong>
+                              {shortPlexVersion(plexStatus?.installedVersion)}
+                            </strong>
+                          </li>
+                          <li>
+                            <span>Latest</span>
+                            <strong>
+                              {shortPlexVersion(plexStatus?.latestVersion)}
+                            </strong>
+                          </li>
+                          <li>
+                            <span>Status</span>
+                            <strong>
+                              {plexChecking
+                                ? "Checking…"
+                                : plexStatus?.updateAvailable
+                                  ? "Update available"
+                                  : plexStatus?.ok
+                                    ? "Up to date"
+                                    : "Unavailable"}
+                            </strong>
+                          </li>
+                          {plexStatus?.channel ? (
+                            <li>
+                              <span>Source</span>
+                              <strong>{plexStatus.channel}</strong>
+                            </li>
+                          ) : null}
+                          {plexStatus?.lastChecked ? (
+                            <li>
+                              <span>Checked</span>
+                              <strong>
+                                {new Date(
+                                  plexStatus.lastChecked,
+                                ).toLocaleString()}
+                              </strong>
+                            </li>
+                          ) : null}
+                        </ul>
+
+                        {plexStatus?.updateAvailable ? (
+                          <p className="dash-plex-badge" role="status">
+                            Update available
+                            {plexStatus.canInstall
+                              ? ""
+                              : " · cannot install from hub"}
+                          </p>
+                        ) : null}
+
+                        {plexJobIsBusy ||
+                        plexStatus?.job?.phase === "done" ||
+                        plexStatus?.job?.phase === "error" ? (
+                          <div className="dash-plex-job" aria-live="polite">
+                            <div className="dash-plex-job-row">
+                              <span>{plexStatus?.job?.phase ?? "idle"}</span>
+                              <strong>
+                                {Math.round(plexStatus?.job?.progress ?? 0)}%
+                              </strong>
+                            </div>
+                            {plexStatus?.job?.message ? (
+                              <p className="dash-chip-popover-empty">
+                                {plexStatus.job.message}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
+
+                        {plexBlocked && plexStatus?.updateAvailable ? (
+                          <p className="dash-chip-popover-empty">
+                            {plexBlocked}
+                          </p>
+                        ) : null}
+
+                        <div className="dash-plex-actions">
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            disabled={
+                              plexChecking || plexBusy || plexJobIsBusy
+                            }
+                            aria-busy={plexChecking}
+                            onClick={() =>
+                              void loadPlex(true, { announce: true })
+                            }
+                          >
+                            {plexChecking ? "Checking…" : "Check"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            disabled={
+                              !plexCanInstall ||
+                              plexChecking ||
+                              plexBusy ||
+                              plexJobIsBusy
+                            }
+                            title={
+                              plexBlocked || "Download and apply update now"
+                            }
+                            onClick={() =>
+                              void runPlexAction(
+                                {
+                                  download: true,
+                                  apply: true,
+                                  tonight: false,
+                                },
+                                true,
+                              )
+                            }
+                          >
+                            Install
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            disabled={
+                              !plexCanInstall ||
+                              plexChecking ||
+                              plexBusy ||
+                              plexJobIsBusy
+                            }
+                            title={
+                              plexBlocked ||
+                              "Schedule update for tonight (Butler)"
+                            }
+                            onClick={() =>
+                              void runPlexAction(
+                                {
+                                  download: true,
+                                  apply: true,
+                                  tonight: true,
+                                },
+                                true,
+                              )
+                            }
+                          >
+                            Tonight
+                          </button>
+                        </div>
+
+                        {plexChecking ? (
+                          <p
+                            className="dash-chip-popover-hint"
+                            aria-live="polite"
+                          >
+                            Checking for updates…
+                          </p>
+                        ) : null}
+                        {plexActionMsg ? (
+                          <p
+                            className="dash-chip-popover-hint"
+                            aria-live="polite"
+                          >
+                            {plexActionMsg}
+                          </p>
+                        ) : null}
+                        {plexError ? (
+                          <p className="dash-chip-popover-error">{plexError}</p>
+                        ) : null}
+                        <p className="dash-chip-popover-hint">
+                          Full controls stay in Settings → Plex Media Server
+                          updates. Uses Workouts Plex sign-in.
+                        </p>
+                      </>
                     )}
                   </div>
                 )}

@@ -1,214 +1,35 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  plexInstallBlockedReason,
+  plexJobBusy,
+  shortPlexVersion,
+} from "../lib/plexUpdate";
+import { usePlexUpdate } from "../hooks/usePlexUpdate";
 
-type JobPhase =
-  | "idle"
-  | "checking"
-  | "downloading"
-  | "applying"
-  | "done"
-  | "error";
-
-export type PlexUpdateStatus = {
-  ok?: boolean;
-  installedVersion?: string | null;
-  latestVersion?: string | null;
-  updateAvailable?: boolean;
-  canInstall?: boolean;
-  channel?: string | null;
-  releaseState?: string | null;
-  lastChecked?: string | null;
-  error?: string | null;
-  job?: {
-    id?: string | null;
-    phase?: JobPhase;
-    progress?: number;
-    message?: string;
-    error?: string | null;
-  };
-};
-
-function shortVer(version: string | null | undefined): string {
-  if (!version) return "—";
-  return version.split("-")[0] || version;
-}
-
-function jobBusy(phase?: string | null): boolean {
-  return (
-    phase === "checking" ||
-    phase === "downloading" ||
-    phase === "applying"
-  );
-}
+export type { PlexUpdateStatus } from "../lib/plexUpdate";
 
 interface PlexUpdateCardProps {
   serverUp: boolean | null;
-  /** Compact chip-style card for the dashboard */
-  compact?: boolean;
 }
 
-export function PlexUpdateCard({
-  serverUp,
-  compact = false,
-}: PlexUpdateCardProps) {
-  const [status, setStatus] = useState<PlexUpdateStatus | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<{
-    type: "ok" | "err";
-    text: string;
-  } | null>(null);
-  const [expanded, setExpanded] = useState(!compact);
-  const pollRef = useRef<number | null>(null);
+export function PlexUpdateCard({ serverUp }: PlexUpdateCardProps) {
+  const {
+    status,
+    busy,
+    checking,
+    error,
+    actionMsg,
+    load,
+    startJob,
+    jobBusy,
+  } = usePlexUpdate(serverUp);
 
-  const load = useCallback(
-    async (refresh = false) => {
-      if (serverUp === false) return;
-      try {
-        const qs = refresh ? "?refresh=1" : "";
-        const res = await fetch(`/api/plex/update-status${qs}`);
-        const json = (await res.json()) as PlexUpdateStatus;
-        if (!res.ok) throw new Error(json.error || "Status failed");
-        setStatus(json);
-        if (!refresh) setMessage(null);
-      } catch (err) {
-        setMessage({
-          type: "err",
-          text: err instanceof Error ? err.message : String(err),
-        });
-      }
-    },
-    [serverUp],
-  );
-
-  useEffect(() => {
-    void load(false);
-    const timer = window.setInterval(() => void load(false), 60000);
-    return () => window.clearInterval(timer);
-  }, [load]);
-
-  useEffect(() => {
-    const phase = status?.job?.phase;
-    const shouldPoll = jobBusy(phase) || busy;
-    if (!shouldPoll) {
-      if (pollRef.current != null) {
-        window.clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-      return;
-    }
-    if (pollRef.current != null) return;
-    pollRef.current = window.setInterval(() => {
-      void (async () => {
-        try {
-          const res = await fetch("/api/plex/update-job");
-          const json = (await res.json()) as {
-            ok?: boolean;
-            job?: PlexUpdateStatus["job"];
-            error?: string;
-          };
-          if (!res.ok) throw new Error(json.error || "Job poll failed");
-          setStatus((prev) => (prev ? { ...prev, job: json.job } : prev));
-          if (!jobBusy(json.job?.phase)) {
-            setBusy(false);
-            await load(false);
-            if (json.job?.phase === "error") {
-              setMessage({
-                type: "err",
-                text: json.job.error || json.job.message || "Update failed",
-              });
-            } else if (json.job?.message) {
-              setMessage({ type: "ok", text: json.job.message });
-            }
-          }
-        } catch (err) {
-          setBusy(false);
-          setMessage({
-            type: "err",
-            text: err instanceof Error ? err.message : String(err),
-          });
-        }
-      })();
-    }, 1200);
-    return () => {
-      if (pollRef.current != null) {
-        window.clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-    };
-  }, [status?.job?.phase, busy, load]);
-
-  const startJob = async (
-    body: { download?: boolean; apply?: boolean; tonight?: boolean },
-    confirmApply: boolean,
-  ) => {
-    if (confirmApply) {
-      const tonight = Boolean(body.tonight);
-      const ok = window.confirm(
-        tonight
-          ? "Schedule Plex Media Server update for tonight (Butler)? Streams may still drop when it applies."
-          : "Apply Plex Media Server update now? PMS will restart and active streams will disconnect.",
-      );
-      if (!ok) return;
-    }
-    setBusy(true);
-    setMessage(null);
-    try {
-      const res = await fetch("/api/plex/update", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const json = (await res.json()) as {
-        ok?: boolean;
-        job?: PlexUpdateStatus["job"];
-        error?: string;
-      };
-      if (!res.ok) throw new Error(json.error || "Request failed");
-      setStatus((prev) => (prev ? { ...prev, job: json.job } : prev));
-      if (!jobBusy(json.job?.phase)) {
-        setBusy(false);
-        setMessage({
-          type: "ok",
-          text: json.job?.message || "Done.",
-        });
-        await load(false);
-      }
-    } catch (err) {
-      setBusy(false);
-      setMessage({
-        type: "err",
-        text: err instanceof Error ? err.message : String(err),
-      });
-    }
-  };
-
-  const installed = shortVer(status?.installedVersion);
-  const latest = shortVer(status?.latestVersion);
+  const installed = shortPlexVersion(status?.installedVersion);
+  const latest = shortPlexVersion(status?.latestVersion);
   const updateAvailable = Boolean(status?.updateAvailable);
   const canInstall = Boolean(status?.canInstall);
   const phase = status?.job?.phase;
   const progress = status?.job?.progress ?? 0;
-
-  let summaryLabel = "Plex Server";
-  let summaryValue = "—";
-  let tone: "good" | "warn" | "muted" | "accent" | "bad" = "muted";
-
-  if (serverUp === false) {
-    summaryValue = "hub offline";
-  } else if (!status) {
-    summaryValue = "…";
-  } else if (jobBusy(phase)) {
-    summaryValue = `${Math.round(progress)}%`;
-    tone = "warn";
-  } else if (status.error && !status.installedVersion) {
-    summaryValue = "unreachable";
-    tone = "bad";
-  } else if (updateAvailable) {
-    summaryValue = `${installed} → ${latest}`;
-    tone = "warn";
-  } else if (status.installedVersion) {
-    summaryValue = "up to date";
-    tone = "good";
-  }
+  const blocked = plexInstallBlockedReason(status, serverUp);
 
   const headline = updateAvailable
     ? `Update available: ${installed} → ${latest}`
@@ -217,14 +38,22 @@ export function PlexUpdateCard({
       : "Plex Media Server updates";
 
   const installDisabled =
-    serverUp === false || busy || jobBusy(phase) || !canInstall || !updateAvailable;
+    serverUp === false ||
+    busy ||
+    jobBusy ||
+    checking ||
+    !canInstall ||
+    !updateAvailable;
 
-  const body = (
-    <>
+  return (
+    <section className="settings-group plex-update-card">
+      <h3>{headline}</h3>
       <p className="settings-hint plex-update-copy">
         Uses your Workouts Plex sign-in. The hub talks to PMS{" "}
         <code>/updater/*</code> on this PC — install only works when{" "}
-        <code>canInstall</code> is true (Windows PMS).
+        <code>canInstall</code> is true (Windows PMS). When{" "}
+        <code>/updater/status</code> is empty, latest comes from plex.tv
+        downloads JSON (Install stays disabled until PMS lists the Release).
       </p>
 
       <div className="plex-update-meta">
@@ -237,14 +66,18 @@ export function PlexUpdateCard({
           <strong>{latest}</strong>
         </div>
         <div>
+          <span>Source</span>
+          <strong>{status?.channel || "—"}</strong>
+        </div>
+        <div>
           <span>canInstall</span>
           <strong>{canInstall ? "yes" : "no"}</strong>
         </div>
       </div>
 
-      {(jobBusy(phase) || phase === "done" || phase === "error") && (
+      {(jobBusy || phase === "done" || phase === "error") && (
         <div className="plex-update-progress" role="status" aria-live="polite">
-          {jobBusy(phase) ? (
+          {jobBusy ? (
             <div className="stream-progress-bar" aria-hidden="true">
               <div
                 className="stream-progress-fill"
@@ -260,17 +93,11 @@ export function PlexUpdateCard({
         </div>
       )}
 
-      {message ? (
-        <div
-          className={`sync-alert ${message.type === "ok" ? "sync-alert-ok" : "sync-alert-err"}`}
-        >
-          {message.text}
-        </div>
+      {actionMsg ? (
+        <div className="sync-alert sync-alert-ok">{actionMsg}</div>
       ) : null}
 
-      {status?.error ? (
-        <div className="sync-alert sync-alert-err">{status.error}</div>
-      ) : null}
+      {error ? <div className="sync-alert sync-alert-err">{error}</div> : null}
 
       {!canInstall && status?.updateAvailable ? (
         <p className="settings-hint plex-update-hint">
@@ -279,25 +106,23 @@ export function PlexUpdateCard({
             : "PMS reports canInstall=false — update on the host (manual/NAS installs cannot be applied from Arrs Hub)."}
         </p>
       ) : !canInstall && status?.installedVersion ? (
-        <p className="settings-hint plex-update-hint">
-          PMS reports canInstall=false — update on the host (manual/NAS installs
-          cannot be applied from Arrs Hub).
-        </p>
+        <p className="settings-hint plex-update-hint">{blocked}</p>
       ) : null}
 
       <div className="watchdog-bar-actions plex-update-actions">
         <button
           type="button"
           className="btn btn-ghost"
-          disabled={serverUp === false || busy || jobBusy(phase)}
-          onClick={() => void load(true)}
+          disabled={serverUp === false || busy || jobBusy || checking}
+          onClick={() => void load(true, { announce: true })}
         >
-          Check now
+          {checking ? "Checking…" : "Check now"}
         </button>
         <button
           type="button"
           className="btn btn-primary"
           disabled={installDisabled}
+          title={blocked || "Download and apply update now"}
           onClick={() =>
             void startJob(
               { download: true, apply: true, tonight: false },
@@ -311,6 +136,7 @@ export function PlexUpdateCard({
           type="button"
           className="btn btn-secondary"
           disabled={installDisabled}
+          title={blocked || "Schedule update for tonight (Butler)"}
           onClick={() =>
             void startJob({ download: true, apply: true, tonight: true }, true)
           }
@@ -318,33 +144,6 @@ export function PlexUpdateCard({
           Tonight
         </button>
       </div>
-    </>
-  );
-
-  if (compact) {
-    return (
-      <div className={`plex-update-card plex-update-compact tone-${tone}`}>
-        <button
-          type="button"
-          className="plex-update-summary"
-          aria-expanded={expanded}
-          onClick={() => setExpanded((v) => !v)}
-        >
-          <span className="plex-update-summary-label">{summaryLabel}</span>
-          <span className="plex-update-summary-value">{summaryValue}</span>
-          <span className="plex-update-chevron" aria-hidden="true">
-            {expanded ? "▾" : "▸"}
-          </span>
-        </button>
-        {expanded ? <div className="plex-update-body">{body}</div> : null}
-      </div>
-    );
-  }
-
-  return (
-    <section className="settings-group plex-update-card">
-      <h3>{headline}</h3>
-      {body}
     </section>
   );
 }
