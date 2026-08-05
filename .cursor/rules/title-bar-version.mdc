@@ -1,0 +1,13 @@
+﻿---
+description: Show app version in the window title bar (like Market Advisor)
+alwaysApply: true
+---
+
+# Title bar version
+
+Arrs Hub shows the app version in the OS/Electron window title bar, matching Market Advisor:
+
+`Arrs Hub v{semver} — {tagline}`
+
+- Source: `src/version.ts` (`APP_WINDOW_TITLE`), mirrored in `desktop/main.cjs` for BrowserWindow and set on `document.title` in the UI.
+- Keep title-bar version in sync whenever `package.json` version changes.

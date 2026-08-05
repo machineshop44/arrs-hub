@@ -398,6 +398,19 @@ function stopServer() {
   }
 }
 
+function getWindowTitle() {
+  let version = app.getVersion();
+  try {
+    const pkgPath = path.join(app.getAppPath(), "package.json");
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+      if (pkg.version) version = String(pkg.version);
+    }
+  } catch {
+    // app.getVersion() is enough
+  }
+  return "Arrs Hub v" + version + " — Your Plex & *arr stack in one place";
+}
 function createWindow() {
   const icon = loadIcon();
   mainWindow = new BrowserWindow({
@@ -408,7 +421,7 @@ function createWindow() {
     show: false,
     autoHideMenuBar: true,
     icon,
-    title: "Arrs Hub",
+    title: getWindowTitle(),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
