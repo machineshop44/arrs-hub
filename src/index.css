@@ -1146,6 +1146,31 @@ input {
   font-size: 0.88rem;
 }
 
+.dash-queue-app-link,
+.dash-queue-app-static {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  flex: 1;
+  min-width: 0;
+  padding: 0.2rem 0.35rem;
+  margin: 0 -0.35rem;
+  border-radius: 6px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.dash-queue-app-link:hover {
+  background: color-mix(in srgb, var(--border) 55%, transparent);
+  color: #93c5fd;
+}
+
+.dash-queue-app-link:focus-visible {
+  outline: 2px solid color-mix(in srgb, #93c5fd 70%, transparent);
+  outline-offset: 1px;
+}
+
 .dash-queue-breakdown strong {
   font-variant-numeric: tabular-nums;
 }

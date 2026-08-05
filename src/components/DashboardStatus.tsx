@@ -462,7 +462,7 @@ export function DashboardStatus({
                   className={`dash-chip dash-chip-btn tone-${chip.tone}`}
                   aria-expanded={queueOpen}
                   aria-haspopup="dialog"
-                  title="Sonarr + Radarr (+ Lidarr) queue total — click for breakdown"
+                  title="*arr queue — click for per-app counts; open an app to jump to its Activity Queue"
                   onClick={() => {
                     setOmbiOpen(false);
                     setPlexOpen(false);
@@ -495,10 +495,29 @@ export function DashboardStatus({
                             : app.data?.error
                               ? "err"
                               : "—";
-                        return (
-                          <li key={app.id}>
+                        const openUrl = activityQueueUrl(urls[app.id]);
+                        const row = (
+                          <>
                             <span>{app.label}</span>
                             <strong>{value}</strong>
+                          </>
+                        );
+                        return (
+                          <li key={app.id}>
+                            {openUrl ? (
+                              <a
+                                className="dash-queue-app-link"
+                                href={openUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title={`Open ${app.label} Activity Queue`}
+                                onClick={() => setQueueOpen(false)}
+                              >
+                                {row}
+                              </a>
+                            ) : (
+                              <span className="dash-queue-app-static">{row}</span>
+                            )}
                           </li>
                         );
                       })}
@@ -539,7 +558,7 @@ export function DashboardStatus({
                                 rel="noopener noreferrer"
                                 onClick={() => setQueueOpen(false)}
                               >
-                                Open in {appLabel}
+                                Open Activity
                               </a>
                             ) : null}
                           </li>
@@ -549,8 +568,9 @@ export function DashboardStatus({
                     {/* TODO: interactive Manual Import from hub (fetch /api/v3/manualimport
                         candidates, pick episode/movie, confirm) — deferred beyond this release. */}
                     <p className="dash-chip-popover-hint">
-                      Matching still happens in Sonarr/Radarr Activity. Hub links
-                      open the queue; in-hub Manual Import is planned later.
+                      Click Sonarr / Radarr / Lidarr above to open that app&apos;s
+                      Activity Queue. Matching still happens there; in-hub Manual
+                      Import is planned later.
                     </p>
                   </div>
                 )}
