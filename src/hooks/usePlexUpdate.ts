@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 import {
   confirmPlexApply,
   fetchPlexUpdateJob,
@@ -6,7 +6,6 @@ import {
   plexCheckResultMessage,
   plexJobBusy,
   postPlexUpdateJob,
-  type PlexUpdateJob,
   type PlexUpdateStartBody,
   type PlexUpdateStatus,
 } from "../lib/plexUpdate";
@@ -84,7 +83,6 @@ async function loadStatus(
   }
 
   try {
-    // Coalesce concurrent cached polls; refresh=1 always runs.
     let next: PlexUpdateStatus;
     if (!refresh && inflightStatus) {
       next = await inflightStatus;
@@ -125,9 +123,7 @@ async function pollJobOnce() {
   try {
     const job = await fetchPlexUpdateJob();
     setStore({
-      status: store.status
-        ? { ...store.status, job }
-        : { ok: true, job },
+      status: store.status ? { ...store.status, job } : { ok: true, job },
     });
     if (!plexJobBusy(job)) {
       setStore({ busy: false });
@@ -233,11 +229,9 @@ function getSnapshot(): Store {
 
 export function usePlexUpdate(nextServerUp: boolean | null) {
   const snap = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  const mounted = useRef(false);
 
   useEffect(() => {
     subscriberCount += 1;
-    mounted.current = true;
     serverUp = nextServerUp;
 
     void loadStatus(false);
@@ -255,7 +249,6 @@ export function usePlexUpdate(nextServerUp: boolean | null) {
 
     return () => {
       subscriberCount = Math.max(0, subscriberCount - 1);
-      mounted.current = false;
       stopIfIdle();
     };
   }, [nextServerUp]);
@@ -272,10 +265,6 @@ export function usePlexUpdate(nextServerUp: boolean | null) {
     [],
   );
 
-  const clearActionMsg = useCallback(() => {
-    setStore({ actionMsg: null });
-  }, []);
-
   return {
     status: snap.status,
     loading: snap.loading,
@@ -285,9 +274,6 @@ export function usePlexUpdate(nextServerUp: boolean | null) {
     actionMsg: snap.actionMsg,
     load,
     startJob: runJob,
-    clearActionMsg,
     jobBusy: plexJobBusy(snap.status?.job),
   };
 }
-
-export type { PlexUpdateStatus, PlexUpdateJob, PlexUpdateStartBody };

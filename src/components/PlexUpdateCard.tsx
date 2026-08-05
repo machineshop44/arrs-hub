@@ -1,6 +1,5 @@
 import {
   plexInstallBlockedReason,
-  plexJobBusy,
   shortPlexVersion,
 } from "../lib/plexUpdate";
 import { usePlexUpdate } from "../hooks/usePlexUpdate";
