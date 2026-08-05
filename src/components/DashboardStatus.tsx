@@ -99,9 +99,13 @@ function activityQueueUrl(baseUrl: string | undefined): string | null {
   return `${baseUrl.replace(/\/+$/, "")}/activity/queue`;
 }
 
-function ombiHomeUrl(baseUrl: string | undefined): string | null {
+function serviceHomeUrl(baseUrl: string | undefined): string | null {
   if (!baseUrl) return null;
   return `${baseUrl.replace(/\/+$/, "")}/`;
+}
+
+function ombiHomeUrl(baseUrl: string | undefined): string | null {
+  return serviceHomeUrl(baseUrl);
 }
 
 function ombiRequestsUrl(baseUrl: string | undefined): string | null {
@@ -137,6 +141,7 @@ export function DashboardStatus({
   const [summary, setSummary] = useState<HubStatusSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
+  const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [ombiOpen, setOmbiOpen] = useState(false);
   const [plexOpen, setPlexOpen] = useState(false);
   const [ombiItems, setOmbiItems] = useState<OmbiPendingItem[]>([]);
@@ -144,6 +149,7 @@ export function DashboardStatus({
   const [ombiError, setOmbiError] = useState<string | null>(null);
   const [ombiApprovingId, setOmbiApprovingId] = useState<string | null>(null);
   const queueWrapRef = useRef<HTMLDivElement>(null);
+  const downloadsWrapRef = useRef<HTMLDivElement>(null);
   const ombiWrapRef = useRef<HTMLDivElement>(null);
   const plexWrapRef = useRef<HTMLDivElement>(null);
 
@@ -230,12 +236,16 @@ export function DashboardStatus({
   }, [ombiOpen, loadOmbiPending]);
 
   useEffect(() => {
-    if (!queueOpen && !ombiOpen && !plexOpen) return;
+    if (!queueOpen && !downloadsOpen && !ombiOpen && !plexOpen) return;
     const onDoc = (event: MouseEvent) => {
       const target = event.target as Node;
       if (queueOpen) {
         const el = queueWrapRef.current;
         if (el && !el.contains(target)) setQueueOpen(false);
+      }
+      if (downloadsOpen) {
+        const el = downloadsWrapRef.current;
+        if (el && !el.contains(target)) setDownloadsOpen(false);
       }
       if (ombiOpen) {
         const el = ombiWrapRef.current;
@@ -249,6 +259,7 @@ export function DashboardStatus({
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setQueueOpen(false);
+        setDownloadsOpen(false);
         setOmbiOpen(false);
         setPlexOpen(false);
       }
@@ -259,7 +270,7 @@ export function DashboardStatus({
       document.removeEventListener("mousedown", onDoc);
       document.removeEventListener("keydown", onKey);
     };
-  }, [queueOpen, ombiOpen, plexOpen]);
+  }, [queueOpen, downloadsOpen, ombiOpen, plexOpen]);
 
   const approveOmbi = async (item: OmbiPendingItem) => {
     const key = `${item.type}-${item.id}`;
@@ -301,6 +312,26 @@ export function DashboardStatus({
     { id: "sonarr", label: "Sonarr", data: summary?.arr?.sonarr },
     { id: "radarr", label: "Radarr", data: summary?.arr?.radarr },
     { id: "lidarr", label: "Lidarr", data: summary?.arr?.lidarr },
+  ];
+
+  const downloadApps: {
+    id: "qbittorrent" | "sabnzbd";
+    label: string;
+    data?: { ok: boolean; configured: boolean; active: number };
+    openUrl: string | null;
+  }[] = [
+    {
+      id: "qbittorrent",
+      label: "qBittorrent",
+      data: summary?.downloads?.qbittorrent,
+      openUrl: serviceHomeUrl(urls.qbittorrent),
+    },
+    {
+      id: "sabnzbd",
+      label: "SABnzbd",
+      data: summary?.downloads?.sabnzbd,
+      openUrl: serviceHomeUrl(urls.sabnzbd),
+    },
   ];
 
   const problemItems = arrApps.flatMap((app) =>
@@ -359,7 +390,9 @@ export function DashboardStatus({
       value:
         pendingSummary || queueTotal == null
           ? "—"
-          : summary?.arr?.sonarr?.ok || summary?.arr?.radarr?.ok
+          : summary?.arr?.sonarr?.ok ||
+              summary?.arr?.radarr?.ok ||
+              summary?.arr?.lidarr?.ok
             ? String(queueTotal)
             : "setup",
       tone: queueTotal && queueTotal > 0 ? "warn" : "muted",
@@ -450,6 +483,85 @@ export function DashboardStatus({
             );
           }
 
+          if (chip.id === "downloads") {
+            return (
+              <div
+                key={chip.id}
+                className="dash-chip-wrap"
+                ref={downloadsWrapRef}
+              >
+                <button
+                  type="button"
+                  className={`dash-chip dash-chip-btn tone-${chip.tone}`}
+                  aria-expanded={downloadsOpen}
+                  aria-haspopup="dialog"
+                  title="Active downloads — click for qBittorrent / SABnzbd; open an app to jump to its UI"
+                  onClick={() => {
+                    setQueueOpen(false);
+                    setOmbiOpen(false);
+                    setPlexOpen(false);
+                    setDownloadsOpen((open) => !open);
+                  }}
+                >
+                  <span className="dash-chip-value">{chip.value}</span>
+                  <span className="dash-chip-label">{chip.label}</span>
+                </button>
+                {downloadsOpen && (
+                  <div
+                    className="dash-chip-popover"
+                    role="dialog"
+                    aria-label="Downloads breakdown"
+                  >
+                    <p className="dash-chip-popover-title">
+                      Active downloads
+                      {downloads != null ? ` · ${downloads} total` : ""}
+                    </p>
+                    <ul className="dash-queue-breakdown">
+                      {downloadApps.map((app) => {
+                        const configured =
+                          app.data?.configured || Boolean(app.openUrl);
+                        const value = !configured
+                          ? "—"
+                          : app.data?.ok
+                            ? String(app.data.active ?? 0)
+                            : "err";
+                        const row = (
+                          <>
+                            <span>{app.label}</span>
+                            <strong>{value}</strong>
+                          </>
+                        );
+                        return (
+                          <li key={app.id}>
+                            {app.openUrl ? (
+                              <a
+                                className="dash-queue-app-link"
+                                href={app.openUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title={`Open ${app.label}`}
+                                onClick={() => setDownloadsOpen(false)}
+                              >
+                                {row}
+                              </a>
+                            ) : (
+                              <span className="dash-queue-app-static">{row}</span>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <p className="dash-chip-popover-hint">
+                      Click qBittorrent or SABnzbd to open that download client.
+                      Set Home URLs on the dashboard cards if a row is not
+                      clickable.
+                    </p>
+                  </div>
+                )}
+              </div>
+            );
+          }
+
           if (chip.id === "queue") {
             return (
               <div
@@ -464,6 +576,7 @@ export function DashboardStatus({
                   aria-haspopup="dialog"
                   title="*arr queue — click for per-app counts; open an app to jump to its Activity Queue"
                   onClick={() => {
+                    setDownloadsOpen(false);
                     setOmbiOpen(false);
                     setPlexOpen(false);
                     setQueueOpen((open) => !open);
@@ -589,6 +702,7 @@ export function DashboardStatus({
                   title="Requests awaiting approval in Ombi — click to review"
                   onClick={() => {
                     setQueueOpen(false);
+                    setDownloadsOpen(false);
                     setPlexOpen(false);
                     setOmbiOpen((open) => !open);
                   }}
@@ -708,6 +822,7 @@ export function DashboardStatus({
                   }
                   onClick={() => {
                     setQueueOpen(false);
+                    setDownloadsOpen(false);
                     setOmbiOpen(false);
                     setPlexOpen((open) => !open);
                   }}
