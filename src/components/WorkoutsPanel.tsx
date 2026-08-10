@@ -83,6 +83,7 @@ function WorkoutPlayer({
   );
   const [scrubbing, setScrubbing] = useState(false);
   const [readyPrompt, setReadyPrompt] = useState(false);
+  const [playError, setPlayError] = useState<string | null>(null);
   const nextItem = playlist[index + 1];
   const isWarmup = index === 0 && playlist.length > 1;
 
@@ -91,6 +92,7 @@ function WorkoutPlayer({
     setCurrent(0);
     setDuration(item.durationMs ? item.durationMs / 1000 : 0);
     setReadyPrompt(false);
+    setPlayError(null);
   }, [item.url, item.durationMs, index]);
 
   const seekTo = (seconds: number) => {
@@ -146,6 +148,12 @@ function WorkoutPlayer({
           autoPlay
           playsInline
           preload="auto"
+          onError={() => {
+            setPlayError(
+              "Could not play this stream (often AC3 audio / empty transcoder). " +
+                "Update Arrs Hub if you are behind, or install ffmpeg on this PC.",
+            );
+          }}
           onLoadedMetadata={(e) => {
             const d = e.currentTarget.duration;
             if (Number.isFinite(d) && d > 0) setDuration(d);
@@ -162,6 +170,11 @@ function WorkoutPlayer({
             else onFinished();
           }}
         />
+        {playError ? (
+          <p className="settings-error" role="alert">
+            {playError}
+          </p>
+        ) : null}
         <div className="workout-player-controls">
           <button
             type="button"

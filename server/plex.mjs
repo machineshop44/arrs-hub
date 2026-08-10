@@ -1145,12 +1145,14 @@ function mediaLooksLikeMatroska(contentType, firstChunk) {
 }
 
 /**
- * Resolve ffmpeg binary once (PATH). Returns null when unavailable.
+ * Resolve ffmpeg binary once. Prefer PATH, then common Windows locations /
+ * Plex's bundled transcoder (ffmpeg-compatible).
  * @returns {Promise<string|null>}
  */
 async function resolveFfmpegPath() {
   if (cachedFfmpegPath !== undefined) return cachedFfmpegPath;
-  cachedFfmpegPath = await new Promise((resolve) => {
+
+  const fromPath = await new Promise((resolve) => {
     const cmd = process.platform === "win32" ? "where" : "which";
     const child = spawn(cmd, ["ffmpeg"], { windowsHide: true });
     let out = "";
@@ -1170,6 +1172,44 @@ async function resolveFfmpegPath() {
       resolve(first || null);
     });
   });
+  if (fromPath) {
+    cachedFfmpegPath = fromPath;
+    return cachedFfmpegPath;
+  }
+
+  if (process.platform === "win32") {
+    const programFiles = process.env.ProgramFiles || "C:\\Program Files";
+    const programFilesX86 =
+      process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+    const candidates = [
+      path.join(programFiles, "Plex", "Plex Media Server", "Plex Transcoder.exe"),
+      path.join(
+        programFilesX86,
+        "Plex",
+        "Plex Media Server",
+        "Plex Transcoder.exe",
+      ),
+      path.join(
+        programFiles,
+        "Plex",
+        "Plex Media Server",
+        "Resources",
+        "Plex Transcoder.exe",
+      ),
+    ];
+    for (const candidate of candidates) {
+      try {
+        if (fs.existsSync(candidate)) {
+          cachedFfmpegPath = candidate;
+          return cachedFfmpegPath;
+        }
+      } catch {
+        // try next
+      }
+    }
+  }
+
+  cachedFfmpegPath = null;
   return cachedFfmpegPath;
 }
 
@@ -1585,6 +1625,31 @@ function wantsVlcDirectPlay(req) {
 }
 
 /**
+ * Chromium / Electron <video> cannot decode AC3/DTS — need AAC for in-app play.
+ * @param {string} audioCodec
+ */
+function browserNeedsAudioConvert(audioCodec) {
+  const a = String(audioCodec || "").toLowerCase();
+  if (!a) return false;
+  return !["aac", "mp3", "mp4a", "opus", "vorbis", "flac"].includes(a);
+}
+
+/**
+ * Absolute Plex library part URL for remux / direct fetch.
+ * @param {object} settings
+ * @param {string} partKey
+ * @param {string} token
+ */
+function plexPartAbsoluteUrl(settings, partKey, token) {
+  const partUrl = new URL(
+    partKey,
+    `${normalizePlexBaseUrl(settings.plexBaseUrl)}/`,
+  );
+  partUrl.searchParams.set("X-Plex-Token", token);
+  return partUrl.toString();
+}
+
+/**
  * Resolve a Plex upstream URL the hub can fetch (localhost PMS is fine here).
  * Prefer browser-direct H.264+AAC MP4; otherwise universal convert with
  * directStream (audio-only when video is already H.264).
@@ -1659,6 +1724,15 @@ async function resolvePlexUpstreamStream(settings, ratingKey, opts = {}) {
     throw new Error(
       `No playable Plex part for direct/VLC play (ratingKey ${ratingKey}).`,
     );
+  } else if (browserNeedsAudioConvert(audioCodec) && part?.key) {
+    // Chromium can't play AC3/DTS; PMS universal often returns empty for these
+    // workout rips. streamWorkoutMedia remuxes the raw part via ffmpeg.
+    const direct = new URL(part.key, `${base}/`);
+    direct.searchParams.set("X-Plex-Token", token);
+    plexUrl = direct.toString();
+    seekable = false;
+    mode = "needs-aac";
+    contentType = "video/mp4";
   } else {
     const opened = await openTranscodeUpstream(settings, ratingKey, {
       offsetMs,
@@ -1984,6 +2058,85 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
       return;
     }
 
+    /**
+     * Pipe ffmpeg H.264-copy + AAC to the client (browser-safe).
+     * @param {string} partUrl
+     * @param {string} label
+     */
+    async function tryFfmpegBrowserRemux(partUrl, label) {
+      console.info(
+        `[workouts/media] ${label} for ${key} ` +
+          `codecs=${upstream.videoCodec}/${upstream.audioCodec} via ffmpeg`,
+      );
+      const remux = await openFfmpegMp4Remux(
+        partUrl,
+        { "X-Plex-Token": token, Accept: "*/*" },
+        ac.signal,
+      );
+      if (!remux) return false;
+      attemptLabel = label;
+      upstream.mode = "ffmpeg-remux";
+      res.status(200);
+      res.setHeader("Content-Type", "video/mp4");
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("X-Arrs-Stream-Mode", "ffmpeg-remux");
+      res.setHeader("X-Arrs-Stream-Attempt", label);
+      res.setHeader("Accept-Ranges", "none");
+      try {
+        await pipeline(remux.stdout, res);
+      } finally {
+        remux.kill();
+      }
+      return true;
+    }
+
+    // Browser/Electron <video>: AC3/DTS in an otherwise fine H.264 MP4 will
+    // load duration from playlist metadata but never play. PMS universal
+    // transcoder often returns empty for these workout rips — remux with
+    // ffmpeg (or Plex Transcoder) from the raw part first.
+    if (
+      (upstream.mode === "needs-aac" ||
+        browserNeedsAudioConvert(upstream.audioCodec)) &&
+      upstream.partKey
+    ) {
+      const partUrl = plexPartAbsoluteUrl(settings, upstream.partKey, token);
+      if (await tryFfmpegBrowserRemux(partUrl, "ffmpeg-aac-from-part")) {
+        return;
+      }
+      console.warn(
+        `[workouts/media] ffmpeg unavailable/failed for ${key}; falling back to PMS transcoder`,
+      );
+      try {
+        const opened = await openTranscodeUpstream(settings, key, {
+          offsetMs,
+          platform: "Chrome",
+          hasMDE: "0",
+          directStream: "1",
+          mp4Only: true,
+        });
+        applyTranscodeOpen(opened, "plex-after-ffmpeg-miss");
+      } catch (openErr) {
+        const msg =
+          openErr instanceof Error ? openErr.message : String(openErr);
+        console.warn(
+          `[workouts/media] PMS transcoder open failed for ${key}: ${msg}`,
+        );
+        if (!res.headersSent) {
+          res.status(502).json({
+            error:
+              "Could not convert AC3/DTS audio for in-app playback. " +
+              "Install ffmpeg on the Arrs Hub PC (or ensure Plex Transcoder is installed), " +
+              "or play from Arrs Hub Mobile with VLC (mode=direct).",
+            code: "AAC_CONVERT_FAILED",
+            videoCodec: upstream.videoCodec,
+            audioCodec: upstream.audioCodec,
+            detail: msg,
+          });
+        }
+        return;
+      }
+    }
+
     const isTranscode = upstream.mode === "transcode";
     const forwardRange = !isTranscode && Boolean(req.headers.range);
 
@@ -2099,13 +2252,29 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
           plexIncoming = null;
           console.warn(
             `[workouts/media] still empty after retry for ${key} status=${status} ` +
-              `partKey=${upstream.partKey || "(none)"} — refusing CL:0 as playable`,
+              `partKey=${upstream.partKey || "(none)"} — trying ffmpeg remux`,
           );
+          if (upstream.partKey) {
+            const partUrl = plexPartAbsoluteUrl(
+              settings,
+              upstream.partKey,
+              token,
+            );
+            if (
+              await tryFfmpegBrowserRemux(partUrl, "ffmpeg-after-plex-empty")
+            ) {
+              return;
+            }
+          }
           if (!res.headersSent) {
             res.status(502).json({
               error:
                 "Plex universal/start.mp4 returned an empty media body " +
-                "(after Android + Chrome MP4 retries). Check PMS transcoder / codecs.",
+                "(after Android + Chrome MP4 retries). " +
+                (upstream.partKey
+                  ? "ffmpeg/Plex Transcoder remux also failed or is not installed on this PC. " +
+                    "Install ffmpeg on the PATH, or play via Arrs Hub Mobile VLC (mode=direct)."
+                  : "No Plex part key available for remux."),
               code: "PLEX_EMPTY",
               attempt: attemptLabel,
               videoCodec: upstream.videoCodec,
