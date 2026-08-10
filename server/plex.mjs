@@ -1554,12 +1554,44 @@ async function openTranscodeUpstream(settings, ratingKey, opts = {}) {
 }
 
 /**
+ * Content-Type for a raw Plex library part (VLC / direct play).
+ * @param {string} container
+ */
+function contentTypeForContainer(container) {
+  const c = String(container || "").toLowerCase();
+  if (c === "mkv" || c === "matroska") return "video/x-matroska";
+  if (c === "webm") return "video/webm";
+  if (c === "mp4" || c === "m4v" || c === "mov") return "video/mp4";
+  if (c === "ts" || c === "mpegts") return "video/mp2t";
+  if (c === "avi") return "video/x-msvideo";
+  if (c === "mpeg" || c === "mpg") return "video/mpeg";
+  return "application/octet-stream";
+}
+
+/**
+ * Mobile VLC / external players send mode=direct&player=vlc — do not force MP4.
+ * @param {import('express').Request} req
+ */
+function wantsVlcDirectPlay(req) {
+  const mode = String(req.query?.mode || "").trim().toLowerCase();
+  const player = String(req.query?.player || "").trim().toLowerCase();
+  return (
+    mode === "direct" ||
+    mode === "raw" ||
+    player === "vlc" ||
+    player === "libvlc" ||
+    player === "external"
+  );
+}
+
+/**
  * Resolve a Plex upstream URL the hub can fetch (localhost PMS is fine here).
  * Prefer browser-direct H.264+AAC MP4; otherwise universal convert with
  * directStream (audio-only when video is already H.264).
+ * When forceDirect (VLC): always proxy the raw part — Matroska/AC3 OK.
  * @param {object} settings
  * @param {string} ratingKey
- * @param {{ offsetMs?: number, platform?: string, hasMDE?: string }} [opts]
+ * @param {{ offsetMs?: number, platform?: string, hasMDE?: string, forceDirect?: boolean }} [opts]
  */
 async function resolvePlexUpstreamStream(settings, ratingKey, opts = {}) {
   const base = normalizePlexBaseUrl(settings.plexBaseUrl);
@@ -1597,11 +1629,11 @@ async function resolvePlexUpstreamStream(settings, ratingKey, opts = {}) {
   const friendlyAudio = ["", "aac", "mp3", "mp4a", "opus", "vorbis"].includes(
     audioCodec,
   );
+  const forceDirect = Boolean(opts.forceDirect);
   const directPlayable =
-    friendlyContainer &&
-    friendlyVideo &&
-    friendlyAudio &&
-    Boolean(part?.key);
+    Boolean(part?.key) &&
+    (forceDirect ||
+      (friendlyContainer && friendlyVideo && friendlyAudio));
 
   const offsetMs = Math.max(0, Number(opts.offsetMs) || 0);
   let plexUrl;
@@ -1612,13 +1644,21 @@ async function resolvePlexUpstreamStream(settings, ratingKey, opts = {}) {
   let profileExtra = PLEX_BROWSER_TRANSCODE_PROFILE;
   /** @type {Record<string, string>|null} */
   let transcodeParams = null;
+  let contentType = "video/mp4";
 
   if (directPlayable) {
     const direct = new URL(part.key, `${base}/`);
     direct.searchParams.set("X-Plex-Token", token);
     plexUrl = direct.toString();
     seekable = true;
-    mode = "direct";
+    mode = forceDirect ? "direct-vlc" : "direct";
+    contentType = forceDirect
+      ? contentTypeForContainer(container)
+      : "video/mp4";
+  } else if (forceDirect) {
+    throw new Error(
+      `No playable Plex part for direct/VLC play (ratingKey ${ratingKey}).`,
+    );
   } else {
     const opened = await openTranscodeUpstream(settings, ratingKey, {
       offsetMs,
@@ -1633,6 +1673,7 @@ async function resolvePlexUpstreamStream(settings, ratingKey, opts = {}) {
     seekable = false;
     mode = "transcode";
     profileExtra = opened.profileExtra || PLEX_BROWSER_TRANSCODE_PROFILE;
+    contentType = "video/mp4";
   }
 
   return {
@@ -1649,7 +1690,7 @@ async function resolvePlexUpstreamStream(settings, ratingKey, opts = {}) {
     videoCodec,
     audioCodec,
     durationMs: Number(meta.duration) || Number(part?.duration) || null,
-    contentType: "video/mp4",
+    contentType,
     transcodeParams,
   };
 }
@@ -1692,6 +1733,11 @@ async function getBrowserPlayable(
 
 /**
  * Proxy Plex media to the mobile/browser player.
+ *
+ * Query flags (Arrs Hub Mobile / VLC):
+ *   mode=direct | player=vlc  → raw Plex library part (Matroska/AC3 OK).
+ *   Default (no flag)         → browser-safe progressive MP4 (may transcode).
+ *
  * Direct parts support HTTP Range. Universal transcode (start.mp4) often returns
  * empty bodies when Range is forwarded — tablets always send Range — so for
  * transcode we seek via Plex `offset` only and stream a progressive 200.
@@ -1713,10 +1759,14 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
     0,
     Number(req.query?.offset) || Number(req.query?.X_Plex_Offset) || 0,
   );
+  const vlcDirect = wantsVlcDirectPlay(req);
 
   let upstream;
   try {
-    upstream = await resolvePlexUpstreamStream(settings, key, { offsetMs });
+    upstream = await resolvePlexUpstreamStream(settings, key, {
+      offsetMs,
+      forceDirect: vlcDirect,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const missing = /could not load media|no playable part/i.test(message);
@@ -1843,6 +1893,97 @@ export async function streamWorkoutMedia(req, res, ratingKey) {
   let ffmpegRemux = null;
 
   try {
+    // --- VLC / direct: raw part only — no transcode, Matroska/AC3 OK ---
+    if (vlcDirect) {
+      const forwardRange = Boolean(req.headers.range);
+      console.info(
+        `[workouts/media] VLC/direct raw part for ${key} ` +
+          `container=${upstream.container || "?"} ` +
+          `codecs=${upstream.videoCodec}/${upstream.audioCodec}`,
+      );
+      plexIncoming = await openUpstreamBody(
+        upstream.plexUrl,
+        false,
+        "Android",
+        forwardRange,
+      );
+
+      if (
+        !plexIncoming ||
+        (plexIncoming.statusCode &&
+          plexIncoming.statusCode >= 400 &&
+          plexIncoming.statusCode !== 206)
+      ) {
+        const status = plexIncoming?.statusCode || 502;
+        abandonIncoming(plexIncoming);
+        plexIncoming = null;
+        if (!res.headersSent) {
+          res.status(status === 404 ? 404 : 502).json({
+            error:
+              status === 404
+                ? `Plex media missing for ${key}.`
+                : `Plex part returned HTTP ${status} (direct/VLC).`,
+            code: status === 404 ? "MEDIA_MISSING" : "PLEX_HTTP",
+            mode: "direct-vlc",
+          });
+        }
+        return;
+      }
+
+      if (plexIncoming.headers["content-length"] === "0") {
+        abandonIncoming(plexIncoming);
+        plexIncoming = null;
+        if (!res.headersSent) {
+          res.status(502).json({
+            error: "Plex returned Content-Length: 0 for direct/VLC part.",
+            code: "PLEX_EMPTY",
+            mode: "direct-vlc",
+          });
+        }
+        return;
+      }
+
+      const upstreamCt = String(
+        Array.isArray(plexIncoming.headers["content-type"])
+          ? plexIncoming.headers["content-type"][0]
+          : plexIncoming.headers["content-type"] || "",
+      ).trim();
+      const outType =
+        upstreamCt && !upstreamCt.includes("text/") && !upstreamCt.includes("json")
+          ? upstreamCt
+          : upstream.contentType || contentTypeForContainer(upstream.container);
+
+      res.status(plexIncoming.statusCode || 200);
+      res.setHeader("Content-Type", outType);
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("X-Arrs-Stream-Mode", "direct-vlc");
+      res.setHeader(
+        "X-Arrs-Stream-Container",
+        upstream.container || "unknown",
+      );
+      const passHeaders = [
+        "content-length",
+        "content-range",
+        "accept-ranges",
+        "content-disposition",
+      ];
+      for (const name of passHeaders) {
+        const value = plexIncoming.headers[name];
+        if (
+          value &&
+          !(name === "content-length" && String(value) === "0")
+        ) {
+          res.setHeader(name, Array.isArray(value) ? value.join(", ") : value);
+        }
+      }
+
+      const upstreamBody = plexIncoming;
+      plexIncoming = null;
+      upstreamBody.resume();
+      await pipeline(upstreamBody, res);
+      return;
+    }
+
     const isTranscode = upstream.mode === "transcode";
     const forwardRange = !isTranscode && Boolean(req.headers.range);
 
