@@ -49,6 +49,45 @@ function formatClock(seconds: number) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+/** Absolute hub media URL with mode=direct&player=vlc (same as Arrs Hub Mobile). */
+function toVlcDirectMediaUrl(url: string): string {
+  const trimmed = String(url || "").trim();
+  if (!trimmed) return trimmed;
+  try {
+    const next = new URL(trimmed, window.location.origin);
+    if (!next.pathname.includes("/api/workouts/media/")) {
+      return next.toString();
+    }
+    next.searchParams.set("mode", "direct");
+    next.searchParams.set("player", "vlc");
+    return next.toString();
+  } catch {
+    return trimmed;
+  }
+}
+
+async function openLocalPlaylistInVlc(
+  playlist: PlaylistItem[],
+): Promise<{ ok: boolean; error?: string }> {
+  const urls = playlist.map((item) => toVlcDirectMediaUrl(item.url)).filter(Boolean);
+  if (urls.length === 0) {
+    return { ok: false, error: "No playlist URLs for VLC." };
+  }
+  const desktop = window.arrsHubDesktop;
+  if (desktop?.playInVlc) {
+    return desktop.playInVlc(urls);
+  }
+  // Browser-only (not Electron): open first clip; user can install desktop app for playlist.
+  window.open(urls[0], "_blank", "noopener,noreferrer");
+  return {
+    ok: true,
+    error:
+      urls.length > 1
+        ? "Opened first clip in a new tab (install Arrs Hub desktop + VLC for full warm-up→day playlist)."
+        : undefined,
+  };
+}
+
 function withStreamOffset(url: string, offsetSeconds: number) {
   try {
     const next = new URL(url);
@@ -570,9 +609,25 @@ export function WorkoutsPanel({
       if (!res.ok) throw new Error(json.error || "Play failed");
       if (json.mode === "local" && Array.isArray(json.playlist)) {
         setCastReadyDay(null);
-        setPlaylist(json.playlist);
-        setPlaylistIndex(0);
-        setMessage(`Playing here: ${json.warmup} → ${json.day}`);
+        const items = json.playlist as PlaylistItem[];
+        const vlc = await openLocalPlaylistInVlc(items);
+        if (vlc.ok) {
+          setPlaylist(null);
+          setPlaylistIndex(0);
+          setMessage(
+            vlc.error
+              ? vlc.error
+              : `Opened in VLC (direct play, no transcode): ${json.warmup} → ${json.day}`,
+          );
+        } else {
+          // Last resort: in-app HTML5 (needs AAC remux for AC3).
+          setPlaylist(items);
+          setPlaylistIndex(0);
+          setMessage(
+            `VLC unavailable (${vlc.error || "unknown"}). Using built-in player — install VLC for reliable AC3/Matroska play.`,
+          );
+          setError(vlc.error || "VLC not available");
+        }
       } else if (json.awaitingDayConfirm) {
         setCastReadyDay({
           day,
@@ -982,11 +1037,18 @@ export function WorkoutsPanel({
                 )}
                 <p className="settings-hint">
                   Pick where to play each time. <strong>This device</strong>{" "}
-                  plays in Arrs Hub. <strong>Cast</strong> devices
-                  (Chromecast/Cast TVs) and controllable <strong>Plex</strong>{" "}
-                  apps appear when they&apos;re on the network — hit Refresh.
-                  Plex Desktop on this laptop often won&apos;t list as
-                  castable; use This device for local playback.
+                  opens <strong>VLC</strong> with a direct hub stream (no
+                  browser transcode — same as Arrs Hub Mobile). Install{" "}
+                  <a
+                    href="https://www.videolan.org/vlc/"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    VLC for Windows
+                  </a>{" "}
+                  if needed. <strong>Cast</strong> / controllable{" "}
+                  <strong>Plex</strong> apps appear when they&apos;re on the
+                  network — hit Refresh.
                 </p>
                 {!configured && (
                   <p className="settings-hint">

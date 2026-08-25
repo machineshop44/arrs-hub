@@ -479,7 +479,7 @@ function upsertPlayer(byId, player) {
 export async function listClients(settings = getWorkoutConfig()) {
   requireToken(settings);
   const local = {
-    name: "This device (play here)",
+    name: "This device (VLC)",
     host: "local",
     address: "local",
     port: 0,

@@ -1,0 +1,21 @@
+---
+description: Investigate slow NSIS/Electron installer first-open (SmartScreen / scan / UAC)
+alwaysApply: true
+---
+
+# Installer slow to open
+
+Andrew reports the Windows Arrs Hub installer takes a long time before the UI/popup appears (even from Desktop).
+
+## Known / likely causes (not all fixable in packaging)
+
+1. **Windows SmartScreen / Defender** first scan of a newly built **unsigned** ~95MB Electron NSIS exe — often the main delay.
+2. **UAC elevation** when installing to Program Files.
+3. electron-builder NSIS assisted installer (`oneClick: false`) starts a bit heavier than one-click.
+
+## On each rebuild / when investigating
+
+- Prefer documenting: copy to Desktop, wait for first SmartScreen scan; subsequent opens are faster.
+- Optional packaging experiments: `compression` (store vs normal), portable build for “just run” without NSIS UI.
+- Code signing (cert) would help SmartScreen most — only if Andrew obtains a cert.
+- Do not block feature ships solely for this; note in release notes when relevant.

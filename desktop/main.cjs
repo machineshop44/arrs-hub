@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, nativeImage, shell } = require("electron");
+const { app, BrowserWindow, Tray, Menu, nativeImage, shell, ipcMain } = require("electron");
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -411,6 +411,85 @@ function getWindowTitle() {
   }
   return "Arrs Hub v" + version + " — Your Plex & *arr stack in one place";
 }
+
+/**
+ * Locate VLC for Windows (same idea as mobile external player).
+ * @returns {string|null}
+ */
+function findVlcPath() {
+  const candidates = [
+    path.join(process.env.ProgramFiles || "C:\\Program Files", "VideoLAN", "VLC", "vlc.exe"),
+    path.join(
+      process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)",
+      "VideoLAN",
+      "VLC",
+      "vlc.exe",
+    ),
+    path.join(process.env.LOCALAPPDATA || "", "Programs", "VideoLAN", "VLC", "vlc.exe"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (candidate && fs.existsSync(candidate)) return candidate;
+    } catch {
+      // try next
+    }
+  }
+  try {
+    const which = spawnSync("where", ["vlc"], {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    if (which.status === 0) {
+      const first = String(which.stdout || "")
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .find(Boolean);
+      if (first && fs.existsSync(first)) return first;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+ipcMain.handle("workouts:play-vlc", async (_event, payload) => {
+  const urls = Array.isArray(payload?.urls)
+    ? payload.urls.map((u) => String(u || "").trim()).filter(Boolean)
+    : [];
+  if (urls.length === 0) {
+    return { ok: false, error: "No media URLs to open in VLC." };
+  }
+  for (const url of urls) {
+    if (!/^https?:\/\//i.test(url)) {
+      return { ok: false, error: `VLC needs an absolute http(s) URL (got: ${url})` };
+    }
+  }
+  const vlcPath = findVlcPath();
+  if (!vlcPath) {
+    return {
+      ok: false,
+      error:
+        "VLC is not installed. Install VLC for Windows (videolan.org), then try again — same as Arrs Hub Mobile.",
+    };
+  }
+  try {
+    // Playlist: warm-up then day. --no-video-title-show keeps UI cleaner.
+    const child = spawn(vlcPath, ["--started-from-file", ...urls], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: false,
+    });
+    child.unref();
+    return { ok: true, vlcPath };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      vlcPath,
+    };
+  }
+});
+
 function createWindow() {
   const icon = loadIcon();
   mainWindow = new BrowserWindow({
@@ -425,6 +504,7 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      preload: path.join(__dirname, "preload.cjs"),
     },
   });
 
