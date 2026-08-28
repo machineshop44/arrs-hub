@@ -18,8 +18,17 @@ const pkg = JSON.parse(
 );
 const version = pkg.version;
 
+function hubArtifact(filename) {
+  const dirs = ["release", "release-133"];
+  for (const dir of dirs) {
+    const full = path.join(root, dir, filename);
+    if (fs.existsSync(full)) return full;
+  }
+  return path.join(root, "release", filename);
+}
+
 function companionArtifact(filename) {
-  const dirs = ["release-companion", "release-companion-132"];
+  const dirs = ["release-companion", "release-companion-132", "release-companion-133"];
   for (const dir of dirs) {
     const full = path.join(root, dir, filename);
     if (fs.existsSync(full)) return full;
@@ -30,11 +39,11 @@ function companionArtifact(filename) {
 const artifacts = [
   {
     label: "Arrs Hub NSIS",
-    src: path.join(root, "release", `Arrs Hub-${version}-x64.exe`),
+    src: hubArtifact(`Arrs Hub-${version}-x64.exe`),
   },
   {
     label: "Arrs Hub portable",
-    src: path.join(root, "release", `Arrs Hub-${version}-portable.exe`),
+    src: hubArtifact(`Arrs Hub-${version}-portable.exe`),
   },
   {
     label: "Arrs Hub Companion NSIS",

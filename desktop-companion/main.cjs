@@ -1,8 +1,12 @@
-const { app, Tray, Menu, nativeImage, shell } = require("electron");
+const { app, Tray, Menu, nativeImage, shell, BrowserWindow, ipcMain, dialog } = require("electron");
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const http = require("node:http");
+const {
+  syncOpenAtLogin,
+  toggleOpenAtLogin,
+} = require("../desktop/win-login-item.cjs");
 
 const DEFAULT_PORT = "3901";
 const HEALTH_TIMEOUT_MS = 60000;
@@ -12,6 +16,8 @@ let serverProcess = null;
 let isQuitting = false;
 let serverExit = null;
 let companionPort = DEFAULT_PORT;
+
+let openAtLoginEnabled = true;
 
 app.setAppUserModelId("com.machineshop44.arrs-hub-companion");
 
@@ -39,20 +45,30 @@ function getDataDir() {
 
 function getIconPaths() {
   const root = getCompanionRoot();
-  return {
-    ico: path.join(root, "build", "icon.ico"),
-    png: path.join(root, "desktop", "icon.png"),
-  };
+  return [
+    path.join(__dirname, "icon.ico"),
+    path.join(__dirname, "icon.png"),
+    path.join(root, "build", "icon.ico"),
+    path.join(root, "build", "icon.png"),
+    path.join(root, "desktop", "icon.ico"),
+    path.join(root, "desktop", "icon.png"),
+  ];
 }
 
 function loadIcon() {
-  const icons = getIconPaths();
-  for (const candidate of [icons.ico, icons.png]) {
+  for (const candidate of getIconPaths()) {
     if (candidate && fs.existsSync(candidate)) {
-      return nativeImage.createFromPath(candidate);
+      const image = nativeImage.createFromPath(candidate);
+      if (!image.isEmpty()) return image;
     }
   }
   return nativeImage.createEmpty();
+}
+
+function trayIcon() {
+  const icon = loadIcon();
+  if (icon.isEmpty()) return icon;
+  return icon.resize({ width: 16, height: 16 });
 }
 
 function readConfiguredPort(dataDir) {
@@ -213,15 +229,72 @@ function saveHubUrl(hubUrl) {
   fs.writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`, "utf8");
 }
 
-function promptHubUrl(current = "") {
-  const escaped = String(current).replace(/'/g, "''");
-  const script = `Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.Interaction]::InputBox('LAN URL of Arrs Hub on your Plex PC (e.g. http://192.168.1.10:3000)','Arrs Hub Companion','${escaped}')`;
-  const result = spawnSync("powershell", ["-NoProfile", "-Command", script], {
-    encoding: "utf8",
-    windowsHide: true,
-    timeout: 120000,
+function promptHubUrlDialog(defaultValue = "") {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(String(value || "").trim());
+    };
+
+    const win = new BrowserWindow({
+      width: 520,
+      height: 220,
+      show: false,
+      alwaysOnTop: true,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      title: "Set Arrs Hub URL",
+      autoHideMenuBar: true,
+      icon: loadIcon().isEmpty() ? undefined : loadIcon(),
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false,
+      },
+    });
+
+    const channel = `hub-url-prompt:${win.id}`;
+    ipcMain.once(channel, (_event, value) => {
+      finish(value);
+      if (!win.isDestroyed()) win.close();
+    });
+
+    win.on("closed", () => finish(""));
+
+    const safeDefault = String(defaultValue)
+      .replace(/\\/g, "\\\\")
+      .replace(/'/g, "\\'");
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:Segoe UI,sans-serif;margin:0;padding:20px;background:#1a1d24;color:#e8eaed">
+<p style="margin:0 0 8px">LAN URL of Arrs Hub on your Plex PC</p>
+<p style="margin:0 0 12px;font-size:12px;color:#9aa0a6">Example: http://10.0.0.50:3000</p>
+<input id="url" type="text" style="width:100%;box-sizing:border-box;padding:10px;font-size:14px;margin-bottom:16px" />
+<div style="text-align:right">
+<button id="cancel" type="button" style="margin-right:8px;padding:8px 16px">Cancel</button>
+<button id="ok" type="button" style="padding:8px 16px;background:#5b8def;color:#fff;border:none;cursor:pointer">Save</button>
+</div>
+<script>
+const { ipcRenderer } = require('electron');
+const channel = ${JSON.stringify(channel)};
+const input = document.getElementById('url');
+input.value = '${safeDefault}';
+function submit(value) { ipcRenderer.send(channel, value); }
+document.getElementById('ok').onclick = () => submit(input.value.trim());
+document.getElementById('cancel').onclick = () => submit('');
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') submit(input.value.trim());
+  if (e.key === 'Escape') submit('');
+});
+input.focus(); input.select();
+</script></body></html>`;
+
+    win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).then(() => {
+      win.show();
+      win.focus();
+    });
   });
-  return String(result.stdout || "").trim();
 }
 
 function companionApiRequest(apiPath, method = "GET", body = null) {
@@ -266,7 +339,6 @@ function companionApiRequest(apiPath, method = "GET", body = null) {
 }
 
 async function registerWithHubNow() {
-  const { dialog } = require("electron");
   try {
     const { status, json } = await companionApiRequest("/api/register-hub", "POST");
     if (status === 200 && json.ok) {
@@ -293,21 +365,32 @@ async function registerWithHubNow() {
 }
 
 async function setHubUrlFromTray() {
-  const { dialog } = require("electron");
   const settings = readCompanionSettings();
-  const entered = promptHubUrl(settings.hubUrl || "http://192.168.1.10:3000");
+  const entered = await promptHubUrlDialog(
+    settings.hubUrl || "http://10.0.0.50:3000",
+  );
   if (!entered) return;
   saveHubUrl(entered);
   try {
     await companionApiRequest("/api/settings", "PUT", { hubUrl: entered });
+    await companionApiRequest("/api/register-hub", "POST");
   } catch {
-    // settings file already saved; server reloads on next register tick
+    // settings file saved; registration retries on the next loop
   }
   dialog.showMessageBox({
     type: "info",
     title: "Arrs Hub URL saved",
     message: `Hub URL: ${entered}\nCompanion will register automatically.`,
   });
+  refreshTrayMenu();
+}
+
+function toggleStartup() {
+  openAtLoginEnabled = toggleOpenAtLogin(
+    app,
+    LOGIN_SETTINGS_FILE,
+    APP_DISPLAY_NAME,
+  );
   refreshTrayMenu();
 }
 
@@ -319,12 +402,7 @@ function registrationStatusLabel() {
   if (settings.hubUrl) {
     return `Hub URL set · waiting for register…`;
   }
-  return "Scanning LAN for Arrs Hub…";
-}
-
-function refreshTrayMenu() {
-  if (!tray) return;
-  createTray();
+  return "Scanning LAN for Arrs Hub (VPN may require manual URL)…";
 }
 
 function openSetupInfo() {
@@ -345,8 +423,8 @@ function openSetupInfo() {
   const text = [
     "Arrs Hub Companion setup",
     "",
-    "Automatic mode: Companion scans your LAN for Arrs Hub on the Plex PC,",
-    "registers itself, and wires qBit/SAB restarts — no manual Port Watch setup.",
+    "Automatic mode: Companion scans physical LAN adapters (Surfshark/VPN",
+    "adapters are skipped). Set Hub URL manually if auto-find fails.",
     "",
     `Hub URL (optional override): ${hubUrl || "(auto-discover on LAN)"}`,
     `API URL: http://<this-PC-LAN-IP>:${port}`,
@@ -394,7 +472,15 @@ function buildTrayMenu() {
     },
     {
       label: "Set Arrs Hub URL…",
-      click: () => void setHubUrlFromTray(),
+      click: () => {
+        void setHubUrlFromTray();
+      },
+    },
+    {
+      label: "Start with Windows",
+      type: "checkbox",
+      checked: openAtLoginEnabled,
+      click: () => toggleStartup(),
     },
     {
       label: "Open health check",
@@ -411,11 +497,17 @@ function buildTrayMenu() {
 }
 
 function createTray() {
-  const icon = loadIcon();
-  tray = new Tray(
-    icon.isEmpty() ? nativeImage.createEmpty() : icon.resize({ width: 16, height: 16 }),
-  );
-  tray.setToolTip(`Arrs Hub Companion v${app.getVersion()} · :${companionPort}`);
+  if (tray) {
+    try {
+      tray.destroy();
+    } catch {
+      // ignore
+    }
+    tray = null;
+  }
+  const icon = trayIcon();
+  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
+  tray.setToolTip(`${APP_DISPLAY_NAME} v${app.getVersion()} · :${companionPort}`);
   tray.setContextMenu(buildTrayMenu());
 }
 
@@ -425,6 +517,12 @@ function refreshTrayMenu() {
 }
 
 async function boot() {
+  openAtLoginEnabled = syncOpenAtLogin(
+    app,
+    LOGIN_SETTINGS_FILE,
+    APP_DISPLAY_NAME,
+    true,
+  );
   startServer();
   await waitForHealth(companionPort);
   createTray();

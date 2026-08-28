@@ -3,6 +3,10 @@ const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const http = require("node:http");
+const {
+  syncOpenAtLogin,
+  toggleOpenAtLogin,
+} = require("./win-login-item.cjs");
 
 const HUB_PORT = String(
   process.env.ARRS_HUB_PORT ||
@@ -21,7 +25,8 @@ let serverProcess = null;
 let isQuitting = false;
 let serverLog = "";
 let serverExit = null;
-let systemCaSupported = null;
+let openAtLoginEnabled = true;
+const HUB_LOGIN_SETTINGS_FILE = "hub-desktop-settings.json";
 
 app.setAppUserModelId("com.machineshop44.arrs-hub");
 
@@ -590,10 +595,21 @@ function forceQuitFromTray() {
   }
 }
 
-function createTray() {
-  const icon = loadIcon();
-  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon.resize({ width: 16, height: 16 }));
-  tray.setToolTip(isLiteHub() ? "Arrs Hub Lite" : "Arrs Hub");
+function hubAppDisplayName() {
+  return isLiteHub() ? "Arrs Hub Lite" : "Arrs Hub";
+}
+
+function toggleHubStartup() {
+  openAtLoginEnabled = toggleOpenAtLogin(
+    app,
+    HUB_LOGIN_SETTINGS_FILE,
+    hubAppDisplayName(),
+  );
+  refreshHubTrayMenu();
+}
+
+function refreshHubTrayMenu() {
+  if (!tray) return;
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {
@@ -606,15 +622,35 @@ function createTray() {
       },
       { type: "separator" },
       {
+        label: "Start with Windows",
+        type: "checkbox",
+        checked: openAtLoginEnabled,
+        click: () => toggleHubStartup(),
+      },
+      { type: "separator" },
+      {
         label: "Quit",
         click: () => forceQuitFromTray(),
       },
     ]),
   );
+}
+
+function createTray() {
+  const icon = loadIcon();
+  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon.resize({ width: 16, height: 16 }));
+  tray.setToolTip(hubAppDisplayName());
+  refreshHubTrayMenu();
   tray.on("double-click", () => showWindow());
 }
 
 async function boot() {
+  openAtLoginEnabled = syncOpenAtLogin(
+    app,
+    HUB_LOGIN_SETTINGS_FILE,
+    hubAppDisplayName(),
+    true,
+  );
   startServer();
   await waitForHealth();
   createTray();

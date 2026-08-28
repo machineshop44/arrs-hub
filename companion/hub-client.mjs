@@ -3,7 +3,11 @@ import {
   loadCompanionSettings,
   saveCompanionSettings,
 } from "./companion-store.mjs";
-import { pickPrimaryLan, subnetHosts } from "./network.mjs";
+import {
+  listPhysicalSubnets,
+  pickPrimaryLan,
+  subnetHosts,
+} from "./network.mjs";
 
 const HUB_PORTS = [3000, 3847];
 const COMPANION_SERVICE_IDS = ["qbittorrent", "sabnzbd"];
@@ -34,7 +38,7 @@ async function probeHub(baseUrl) {
   if (!url) return "";
   try {
     const res = await fetch(`${url}/api/health`, {
-      signal: AbortSignal.timeout(500),
+      signal: AbortSignal.timeout(1500),
     });
     if (!res.ok) return "";
     const data = await res.json();
@@ -49,6 +53,28 @@ async function probeHub(baseUrl) {
   }
 }
 
+/** Likely Plex/hub hosts to try before a full subnet sweep. */
+function priorityHosts(prefix) {
+  const common = [1, 2, 10, 50, 100, 137, 200, 254];
+  return common.map((n) => `${prefix}.${n}`);
+}
+
+async function scanHostsForHub(hosts) {
+  const urls = [];
+  for (const host of hosts) {
+    for (const port of HUB_PORTS) {
+      urls.push(`http://${host}:${port}`);
+    }
+  }
+  for (let i = 0; i < urls.length; i += 30) {
+    const batch = urls.slice(i, i + 30);
+    const results = await Promise.all(batch.map((url) => probeHub(url)));
+    const hit = results.find(Boolean);
+    if (hit) return hit;
+  }
+  return "";
+}
+
 /**
  * Scan the LAN for an Arrs Hub instance (once when hubUrl is not configured).
  */
@@ -60,16 +86,19 @@ export async function discoverHubUrl() {
     }
   }
 
-  const primary = pickPrimaryLan();
-  if (!primary) return "";
+  const subnets = listPhysicalSubnets();
+  if (subnets.length === 0) return "";
 
-  const hosts = subnetHosts(primary.address);
-  const urls = hosts.map((host) => `http://${host}:3000`);
+  // Quick pass: common IPs on each physical LAN (works when Surfshark adds a VPN route).
+  for (const { prefix } of subnets) {
+    const hit = await scanHostsForHub(priorityHosts(prefix));
+    if (hit) return hit;
+  }
 
-  for (let i = 0; i < urls.length; i += 40) {
-    const batch = urls.slice(i, i + 40);
-    const results = await Promise.all(batch.map((url) => probeHub(url)));
-    const hit = results.find(Boolean);
+  // Full sweep per physical subnet (skip VPN-only routes).
+  for (const { prefix, iface } of subnets) {
+    const hosts = subnetHosts(iface.address);
+    const hit = await scanHostsForHub(hosts);
     if (hit) return hit;
   }
 
