@@ -1,19 +1,29 @@
 import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_SERVICES } from "../services";
+import { LITE_SERVICES } from "../services-lite";
+import { IS_LITE_VARIANT } from "../variant";
 import type {
   AppSettings,
   ConnectionPreference,
   ServiceConfig,
 } from "../types";
 
-const STORAGE_KEY = "arrs-hub-settings";
-const REMOTE_URLS_MIGRATION_KEY = "arrs-hub-remote-urls-v1";
+const STORAGE_KEY = IS_LITE_VARIANT
+  ? "arrs-hub-lite-settings"
+  : "arrs-hub-settings";
+const REMOTE_URLS_MIGRATION_KEY = IS_LITE_VARIANT
+  ? "arrs-hub-lite-remote-urls-v1"
+  : "arrs-hub-remote-urls-v1";
+
+const catalogServices = IS_LITE_VARIANT ? LITE_SERVICES : DEFAULT_SERVICES;
 
 const defaultSettings = (): AppSettings => ({
-  title: "Arr's Hub",
-  subtitle: "Your Plex & *arr stack in one place",
+  title: IS_LITE_VARIANT ? "Arr's Hub Lite" : "Arr's Hub",
+  subtitle: IS_LITE_VARIANT
+    ? "qBit & SAB port watch for downloaders"
+    : "Your Plex & *arr stack in one place",
   connectionPreference: "auto",
-  services: DEFAULT_SERVICES.map((service) => ({
+  services: catalogServices.map((service) => ({
     ...service,
     homeUrl: service.defaultUrl,
     remoteUrl: service.defaultRemoteUrl ?? "",
@@ -24,7 +34,7 @@ const defaultSettings = (): AppSettings => ({
 function migrateService(
   service: ServiceConfig & { url?: string },
 ): ServiceConfig {
-  const definition = DEFAULT_SERVICES.find((item) => item.id === service.id);
+  const definition = catalogServices.find((item) => item.id === service.id);
   return {
     ...service,
     ...(definition ?? {}),
@@ -42,7 +52,7 @@ function fillMissingRemoteUrls(services: ServiceConfig[]): ServiceConfig[] {
   if (alreadyMigrated) return services;
 
   const next = services.map((service) => {
-    const definition = DEFAULT_SERVICES.find((item) => item.id === service.id);
+    const definition = catalogServices.find((item) => item.id === service.id);
     if (service.remoteUrl?.trim() || !definition?.defaultRemoteUrl) {
       return service;
     }
@@ -62,10 +72,10 @@ function loadSettings(): AppSettings {
       connectionMode?: "home" | "remote";
       services: (ServiceConfig & { url?: string })[];
     };
-    const knownIds = new Set(DEFAULT_SERVICES.map((s) => s.id));
+    const knownIds = new Set(catalogServices.map((s) => s.id));
     const storedIds = new Set(parsed.services.map((s) => s.id));
 
-    const merged = DEFAULT_SERVICES.filter((s) => !storedIds.has(s.id)).map(
+    const merged = catalogServices.filter((s) => !storedIds.has(s.id)).map(
       (service) => ({
         ...service,
         homeUrl: service.defaultUrl,

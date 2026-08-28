@@ -25,6 +25,27 @@ let systemCaSupported = null;
 
 app.setAppUserModelId("com.machineshop44.arrs-hub");
 
+function getHubVariant() {
+  const fromEnv = String(process.env.ARRS_HUB_VARIANT || "").trim().toLowerCase();
+  if (fromEnv === "lite" || fromEnv === "arrs-hub-lite") return "lite";
+  try {
+    const pkgPath = path.join(app.getAppPath(), "package.json");
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+      const meta = String(pkg.arrsHubVariant || "").trim().toLowerCase();
+      if (meta === "lite") return "lite";
+      if (String(pkg.name || "").includes("lite")) return "lite";
+    }
+  } catch {
+    // ignore
+  }
+  return "full";
+}
+
+function isLiteHub() {
+  return getHubVariant() === "lite";
+}
+
 function isPackaged() {
   return app.isPackaged;
 }
@@ -291,6 +312,7 @@ function startServer() {
   // app.asar.unpacked/server (ELECTRON_RUN_AS_NODE cannot read inside asar).
   let hubVersion = app.getVersion();
   let hubName = "arrs-hub";
+  const hubVariant = getHubVariant();
   try {
     const pkgPath = path.join(app.getAppPath(), "package.json");
     if (fs.existsSync(pkgPath)) {
@@ -300,6 +322,10 @@ function startServer() {
     }
   } catch {
     // app.getVersion() is enough
+  }
+
+  if (isLiteHub()) {
+    app.setAppUserModelId("com.machineshop44.arrs-hub-lite");
   }
 
   const env = {
@@ -314,6 +340,7 @@ function startServer() {
     ARRS_HUB_APP_PATH: app.getAppPath(),
     ARRS_HUB_VERSION: hubVersion,
     ARRS_HUB_NAME: hubName,
+    ARRS_HUB_VARIANT: hubVariant,
   };
 
   if (node.electronAsNode) {
@@ -408,6 +435,9 @@ function getWindowTitle() {
     }
   } catch {
     // app.getVersion() is enough
+  }
+  if (isLiteHub()) {
+    return "Arrs Hub Lite v" + version + " — qBit & SAB port watch for downloaders";
   }
   return "Arrs Hub v" + version + " — Your Plex & *arr stack in one place";
 }
@@ -563,10 +593,13 @@ function forceQuitFromTray() {
 function createTray() {
   const icon = loadIcon();
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon.resize({ width: 16, height: 16 }));
-  tray.setToolTip("Arrs Hub");
+  tray.setToolTip(isLiteHub() ? "Arrs Hub Lite" : "Arrs Hub");
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: "Open Arrs Hub", click: () => showWindow() },
+      {
+        label: isLiteHub() ? "Open Arrs Hub Lite" : "Open Arrs Hub",
+        click: () => showWindow(),
+      },
       {
         label: "Open in browser",
         click: () => shell.openExternal(HUB_URL),

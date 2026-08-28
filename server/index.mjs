@@ -21,8 +21,14 @@ import {
   updateWatchdogSettings,
   runWatchCycle,
   testDiscordWebhook,
+  wakeByMacNow,
   wakePcNow,
 } from "./watchdog.mjs";
+import {
+  getCompanionUrlHints,
+  registerCompanionPeer,
+} from "./companion-register.mjs";
+import { hubProductName, isLiteVariant } from "./variant.mjs";
 import {
   discoverWorkoutDays,
   getPlexAuthStatus,
@@ -134,6 +140,8 @@ app.get("/api/health", (_req, res) => {
     ok: true,
     version: packageJson.version,
     name: packageJson.name,
+    productName: hubProductName(),
+    variant: isLiteVariant() ? "lite" : "full",
     bind: HOST,
     port: PORT,
     lanReachable,
@@ -256,12 +264,34 @@ app.post("/api/watchdog/check", async (_req, res) => {
 
 app.post("/api/watchdog/wol", async (req, res) => {
   try {
-    const pcId = String(req.body?.pcId || "");
-    const result = await wakePcNow(pcId);
-    res.json({ ok: true, ...result, ...getWatchStatus() });
+    const pcId = String(req.body?.pcId || "").trim();
+    const mac = String(req.body?.mac || "").trim();
+    const host = String(req.body?.host || "").trim();
+    const result = pcId
+      ? await wakePcNow(pcId)
+      : await wakeByMacNow(mac, host);
+    res.json({
+      ok: true,
+      ...result,
+      message: result.message,
+      ...getWatchStatus(),
+    });
   } catch (err) {
     res.status(400).json({ error: err.message || String(err) });
   }
+});
+
+app.post("/api/watchdog/companion-register", (req, res) => {
+  try {
+    const result = registerCompanionPeer(req.body ?? {});
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message || String(err) });
+  }
+});
+
+app.get("/api/watchdog/companion-url-hints", (_req, res) => {
+  res.json({ hints: getCompanionUrlHints() });
 });
 
 app.get("/api/workouts/settings", (_req, res) => {

@@ -1,0 +1,16 @@
+{
+  "extends": "./package.json",
+  "productName": "Arrs Hub Lite",
+  "appId": "com.machineshop44.arrs-hub-lite",
+  "directories": {
+    "output": "release-lite"
+  },
+  "extraMetadata": {
+    "main": "desktop/main.cjs",
+    "name": "arrs-hub-lite",
+    "arrsHubVariant": "lite"
+  },
+  "nsis": {
+    "shortcutName": "Arrs Hub Lite"
+  }
+}

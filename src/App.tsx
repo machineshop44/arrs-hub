@@ -3,6 +3,7 @@ import { useSettings } from "./hooks/useSettings";
 import { useNetworkMode } from "./hooks/useNetworkMode";
 import { useTrashUpdates } from "./hooks/useTrashUpdates";
 import { useServiceHealth } from "./hooks/useServiceHealth";
+import { useCompanionUrlHints } from "./hooks/useCompanionUrlHints";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ServiceSection } from "./components/ServiceSection";
 import { TrashUpdateBanner } from "./components/TrashUpdateBanner";
@@ -26,6 +27,8 @@ export default function App() {
     setConnectionPreference,
     resetSettings,
   } = useSettings();
+
+  useCompanionUrlHints(settings.services, updateService);
 
   const [showSync, setShowSync] = useState(false);
 

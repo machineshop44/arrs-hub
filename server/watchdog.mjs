@@ -1,17 +1,20 @@
 import net from "node:net";
-import path from "node:path";
-import { spawn } from "node:child_process";
-import {
-  loadWatchdogSettings,
-  saveWatchdogSettings,
-} from "./watchdog-store.mjs";
-import { DISCORD_COLORS, sendDiscordWebhook } from "./discord.mjs";
 import {
   guessBroadcastAddress,
   isHostOnline,
   normalizeMac,
   sendWakeOnLan,
 } from "./wol.mjs";
+import {
+  loadWatchdogSettings,
+  saveWatchdogSettings,
+} from "./watchdog-store.mjs";
+import { DISCORD_COLORS, sendDiscordWebhook } from "./discord.mjs";
+import {
+  checkCompanionHealth,
+  requestCompanionRestart,
+} from "./companion-client.mjs";
+import { restartServiceOrExe } from "./restart-windows.mjs";
 
 /**
  * @typedef {object} WatchTarget
@@ -76,7 +79,18 @@ export function getWatchStatus() {
       autoRestart: settings.autoRestart,
       wolEnabled: settings.wolEnabled !== false,
       wolCooldownSeconds: settings.wolCooldownSeconds || 300,
-      pcs: settings.pcs || [],
+      pcs: (settings.pcs || []).map((pc) => ({
+        id: pc.id,
+        name: pc.name,
+        host: pc.host,
+        mac: pc.mac,
+        monitor: pc.monitor,
+        wakeOnLan: pc.wakeOnLan,
+        companionUrl: pc.companionUrl || "",
+        companionApiKeySet: Boolean(pc.companionApiKey),
+        companionId: pc.companionId || "",
+        lastRegisterAt: pc.lastRegisterAt || null,
+      })),
       discordWebhookUrl: settings.discordWebhookUrl
         ? maskWebhook(settings.discordWebhookUrl)
         : "",
@@ -110,15 +124,25 @@ export function updateWatchdogSettings(partial) {
     },
     pcs: Array.isArray(pcs)
       ? pcs
-          .map((pc) => ({
-            id: String(pc.id || cryptoRandomId()),
-            name: String(pc.name || "PC").trim() || "PC",
-            host: String(pc.host || "").trim(),
-            mac: normalizeMac(pc.mac) || String(pc.mac || "").trim(),
-            monitor: pc.monitor !== false,
-            wakeOnLan: pc.wakeOnLan !== false,
-          }))
-          .filter((pc) => pc.host || pc.mac)
+          .map((pc) => {
+            const prev = (current.pcs || []).find((item) => item.id === pc.id);
+            return {
+              id: String(pc.id || cryptoRandomId()),
+              name: String(pc.name || "PC").trim() || "PC",
+              host: String(pc.host || "").trim(),
+              mac: normalizeMac(pc.mac) || String(pc.mac || "").trim(),
+              monitor: pc.monitor !== false,
+              wakeOnLan: pc.wakeOnLan !== false,
+              companionUrl: String(pc.companionUrl || "").trim(),
+              companionApiKey: pickSecret(
+                pc.companionApiKey,
+                prev?.companionApiKey || "",
+              ),
+              companionId: String(pc.companionId || prev?.companionId || "").trim(),
+              lastRegisterAt: prev?.lastRegisterAt || null,
+            };
+          })
+          .filter((pc) => pc.host || pc.mac || pc.companionUrl)
       : current.pcs,
   };
   saveWatchdogSettings(next);
@@ -128,6 +152,22 @@ export function updateWatchdogSettings(partial) {
 
 function cryptoRandomId() {
   return `pc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export async function wakeByMacNow(macRaw, hostHint = "") {
+  const mac = normalizeMac(macRaw);
+  if (!mac) {
+    throw new Error("MAC address must look like AA:BB:CC:DD:EE:FF");
+  }
+  const broadcast =
+    guessBroadcastAddress(hostHint) || "255.255.255.255";
+  const result = await sendWakeOnLan(mac, { broadcastAddress: broadcast });
+  return {
+    ok: true,
+    mac: result.mac,
+    broadcast,
+    message: `Wake-on-LAN sent to ${result.mac} via ${broadcast}`,
+  };
 }
 
 export async function wakePcNow(pcId) {
@@ -147,7 +187,13 @@ export async function wakePcNow(pcId) {
     lastWakeResult: `WOL sent to ${result.mac}`,
     message: `Manual WOL sent via ${broadcast}`,
   });
-  return { ok: true, pc: pc.name, mac: result.mac, broadcast };
+  return {
+    ok: true,
+    pc: pc.name,
+    mac: result.mac,
+    broadcast,
+    message: `Wake-on-LAN sent for ${pc.name}`,
+  };
 }
 
 export async function testDiscordWebhook() {
@@ -204,135 +250,43 @@ function checkPort(host, port, timeoutMs = 2500) {
   });
 }
 
-function startWindowsService(serviceName) {
-  return new Promise((resolve) => {
-    if (!serviceName?.trim()) {
-      resolve({ ok: false, message: "No Windows service name configured" });
-      return;
-    }
+async function restartForService(serviceCfg, settings) {
+  const pcId = String(serviceCfg.restartPcId || "").trim();
+  if (!pcId) {
+    return restartServiceOrExe(serviceCfg);
+  }
 
-    const child = spawn(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-Command",
-        `try { Start-Service -Name '${serviceName.replace(/'/g, "''")}' -ErrorAction Stop; 'STARTED' } catch { $_.Exception.Message }`,
-      ],
-      { windowsHide: true },
-    );
-
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on("close", (code) => {
-      const output = (stdout || stderr).trim();
-      if (code === 0 && output.includes("STARTED")) {
-        resolve({ ok: true, message: `Started Windows service "${serviceName}"` });
-      } else {
-        resolve({
-          ok: false,
-          message: output || `Could not start service "${serviceName}"`,
-        });
-      }
-    });
-  });
-}
-
-function splitExeArgs(raw) {
-  const text = String(raw || "").trim();
-  if (!text) return [];
-  const matches = text.match(/(?:[^\s"]+|"[^"]*")+/g);
-  if (!matches) return [];
-  return matches.map((part) =>
-    part.startsWith('"') && part.endsWith('"') ? part.slice(1, -1) : part,
-  );
-}
-
-function startExeProcess(exePath, exeArgs, exeCwd) {
-  return new Promise((resolve) => {
-    const file = String(exePath || "").trim();
-    if (!file) {
-      resolve({ ok: false, message: "No exe path configured" });
-      return;
-    }
-
-    const args = splitExeArgs(exeArgs);
-    const cwd = String(exeCwd || "").trim() || path.dirname(file);
-    let settled = false;
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      resolve(result);
+  const pc = (settings.pcs || []).find((item) => item.id === pcId);
+  if (!pc) {
+    return { ok: false, message: "Companion PC not found in Port Watch settings." };
+  }
+  if (!String(pc.companionUrl || "").trim()) {
+    return {
+      ok: false,
+      message: `Set Companion URL on "${pc.name || "PC"}" in Port Watch.`,
     };
-
-    try {
-      const child = spawn(file, args, {
-        cwd,
-        detached: true,
-        stdio: "ignore",
-        windowsHide: true,
-        shell: false,
-      });
-      child.on("error", (err) => {
-        finish({
-          ok: false,
-          message: err?.message || `Could not start exe "${file}"`,
-        });
-      });
-      child.unref();
-      setTimeout(() => {
-        finish({
-          ok: true,
-          message: `Started exe "${file}"${args.length ? ` ${args.join(" ")}` : ""}`,
-        });
-      }, 250);
-    } catch (err) {
-      finish({
-        ok: false,
-        message: err instanceof Error ? err.message : String(err),
-      });
-    }
-  });
-}
-
-/**
- * Prefer Windows service; if that fails or no service name, try optional exe.
- * @param {{ windowsService?: string, exePath?: string, exeArgs?: string, exeCwd?: string }} serviceCfg
- */
-async function restartServiceOrExe(serviceCfg) {
-  const serviceName = String(serviceCfg.windowsService || "").trim();
-  const exePath = String(serviceCfg.exePath || "").trim();
-
-  if (serviceName) {
-    const serviceResult = await startWindowsService(serviceName);
-    if (serviceResult.ok) return serviceResult;
-    if (exePath) {
-      const exeResult = await startExeProcess(
-        exePath,
-        serviceCfg.exeArgs,
-        serviceCfg.exeCwd,
-      );
-      return {
-        ok: exeResult.ok,
-        message: `${serviceResult.message}; exe fallback: ${exeResult.message}`,
-      };
-    }
-    return serviceResult;
   }
 
-  if (exePath) {
-    return startExeProcess(exePath, serviceCfg.exeArgs, serviceCfg.exeCwd);
+  const live = pcState.get(pcId);
+  if (live?.online !== true) {
+    return {
+      ok: false,
+      message: `Companion PC offline (${pc.name || pc.host}) — Wake-on-LAN may be pending.`,
+    };
   }
 
-  return {
-    ok: false,
-    message: "No Windows service name or exe path configured",
-  };
+  const result = await requestCompanionRestart(
+    pc.companionUrl,
+    pc.companionApiKey,
+    serviceCfg,
+  );
+  if (result.ok) {
+    return {
+      ok: true,
+      message: `Companion restart: ${result.message}`,
+    };
+  }
+  return result;
 }
 
 async function notifyDiscord(settings, payload) {
@@ -399,9 +353,10 @@ async function checkOne(target) {
   const hasRestartTarget =
     Boolean(String(serviceCfg.windowsService || "").trim()) ||
     Boolean(String(serviceCfg.exePath || "").trim());
+  const usesCompanion = Boolean(String(serviceCfg.restartPcId || "").trim());
   const canRestart =
     target.allowRestart !== false &&
-    target.mode !== "remote" &&
+    (usesCompanion || target.mode !== "remote") &&
     settings.autoRestart &&
     serviceCfg.autoRestart &&
     hasRestartTarget;
@@ -421,7 +376,9 @@ async function checkOne(target) {
         `Failed checks: **${consecutiveFails}** (threshold ${settings.failThreshold})`,
         `Detail: ${result.message}`,
         canRestart
-          ? "Arrs Hub will try to restart the Windows service."
+          ? usesCompanion
+            ? "Arrs Hub will ask the Companion app on that PC to restart."
+            : "Arrs Hub will try to restart the Windows service."
           : target.mode === "remote"
             ? "Remote status only — restart is Home/Plex-PC only."
             : "Auto-restart is not enabled for this app.",
@@ -440,7 +397,7 @@ async function checkOne(target) {
     const cooledDown =
       Date.now() - last >= settings.restartCooldownSeconds * 1000;
     if (cooledDown) {
-      const restart = await restartServiceOrExe(serviceCfg);
+      const restart = await restartForService(serviceCfg, settings);
       lastRestartAt = new Date().toISOString();
       lastRestartResult = restart.message;
       consecutiveFails = 0;
@@ -529,16 +486,40 @@ async function checkPcs() {
     };
 
     const probe = await isHostOnline(pc.host);
-    let consecutiveFails = probe.online ? 0 : (prev.consecutiveFails || 0) + 1;
+    let online = probe.online;
+    let method = probe.method;
+    let message = probe.message;
+
+    if (String(pc.companionUrl || "").trim()) {
+      const companion = await checkCompanionHealth(
+        pc.companionUrl,
+        pc.companionApiKey,
+      );
+      if (companion.online) {
+        online = true;
+        message = `Companion online (${companion.message})`;
+        method =
+          companion.latencyMs != null
+            ? `companion:${companion.latencyMs}ms`
+            : "companion";
+      } else if (!probe.online) {
+        online = false;
+        message = companion.message || probe.message || "Offline";
+        method = null;
+      } else {
+        message = `${probe.message}; companion: ${companion.message}`;
+      }
+    }
+
+    let consecutiveFails = online ? 0 : (prev.consecutiveFails || 0) + 1;
     let lastWakeAt = prev.lastWakeAt ?? null;
     let lastWakeResult = prev.lastWakeResult ?? null;
     let downAlertSent = Boolean(prev.downAlertSent);
-    let message = probe.message;
 
-    if (probe.online) downAlertSent = false;
+    if (online) downAlertSent = false;
 
     const wasOffline = prev.online === false;
-    if (probe.online && wasOffline && settings.discordNotifyRecovered !== false) {
+    if (online && wasOffline && settings.discordNotifyRecovered !== false) {
       await notifyDiscord(settings, {
         title: `${pc.name} is back online`,
         description: `Host \`${pc.host}\` responded (${probe.method || "ok"}).`,
@@ -547,7 +528,7 @@ async function checkPcs() {
     }
 
     if (
-      !probe.online &&
+      !online &&
       !downAlertSent &&
       consecutiveFails >= settings.failThreshold &&
       settings.discordNotifyDown !== false
@@ -568,7 +549,7 @@ async function checkPcs() {
     }
 
     const shouldWake =
-      !probe.online &&
+      !online &&
       settings.wolEnabled !== false &&
       pc.wakeOnLan &&
       Boolean(normalizeMac(pc.mac)) &&
@@ -612,7 +593,7 @@ async function checkPcs() {
     }
 
     pcState.set(pc.id, {
-      online: probe.online,
+      online,
       lastChecked: new Date().toISOString(),
       consecutiveFails,
       lastWakeAt,

@@ -5,6 +5,7 @@ export type ServiceWatchConfig = {
   autoRestart: boolean;
   windowsService: string;
   exePath: string;
+  restartPcId?: string;
 };
 
 export type PcWatchConfig = {
@@ -14,6 +15,9 @@ export type PcWatchConfig = {
   mac: string;
   monitor: boolean;
   wakeOnLan: boolean;
+  companionUrl?: string;
+  companionApiKey?: string;
+  companionApiKeySet?: boolean;
 };
 
 export type PcLiveStatus = {
@@ -35,6 +39,9 @@ export type WatchdogSettings = {
   wolEnabled: boolean;
   wolCooldownSeconds: number;
   discordWebhookSet?: boolean;
+  discordNotifyDown?: boolean;
+  discordNotifyRestart?: boolean;
+  discordNotifyRecovered?: boolean;
   services: Record<string, ServiceWatchConfig>;
   pcs: PcWatchConfig[];
 };
@@ -42,6 +49,10 @@ export type WatchdogSettings = {
 interface WatchdogPanelProps {
   onClose: () => void;
   serviceNames: { id: string; name: string; enabled: boolean }[];
+  /** Full-page lite layout (no modal overlay). */
+  embedded?: boolean;
+  /** Downloader lite build — qBit/SAB defaults and Discord inline. */
+  lite?: boolean;
 }
 
 function newPcId() {
@@ -56,28 +67,50 @@ function emptyPc(): PcWatchConfig {
     mac: "",
     monitor: true,
     wakeOnLan: true,
+    companionUrl: "",
+    companionApiKey: "",
   };
 }
 
-export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
+export function WatchdogPanel({
+  onClose,
+  serviceNames,
+  embedded = false,
+  lite = false,
+}: WatchdogPanelProps) {
   const [settings, setSettings] = useState<WatchdogSettings | null>(null);
   const [pcStatus, setPcStatus] = useState<Record<string, PcLiveStatus>>({});
   const [busy, setBusy] = useState(false);
   const [wakingId, setWakingId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [serverUp, setServerUp] = useState<boolean | null>(null);
+  const [discordWebhookUrl, setDiscordWebhookUrl] = useState("");
+  const [discordNotifyDown, setDiscordNotifyDown] = useState(true);
+  const [discordNotifyRestart, setDiscordNotifyRestart] = useState(true);
+  const [discordNotifyRecovered, setDiscordNotifyRecovered] = useState(true);
+  const [discordBusy, setDiscordBusy] = useState(false);
 
   const applyStatus = (json: {
     settings?: WatchdogSettings;
     pcs?: Record<string, PcLiveStatus>;
   }) => {
     if (json.settings) {
+      const pcs = Array.isArray(json.settings.pcs)
+        ? json.settings.pcs.map((pc: PcWatchConfig) => ({
+            ...pc,
+            companionApiKey: "",
+          }))
+        : [];
       setSettings({
         ...json.settings,
         wolEnabled: json.settings.wolEnabled !== false,
         wolCooldownSeconds: json.settings.wolCooldownSeconds || 300,
-        pcs: Array.isArray(json.settings.pcs) ? json.settings.pcs : [],
+        pcs,
       });
+      setDiscordWebhookUrl("");
+      setDiscordNotifyDown(json.settings.discordNotifyDown !== false);
+      setDiscordNotifyRestart(json.settings.discordNotifyRestart !== false);
+      setDiscordNotifyRecovered(json.settings.discordNotifyRecovered !== false);
     }
     setPcStatus(json.pcs ?? {});
   };
@@ -115,6 +148,10 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
           autoRestart: settings.autoRestart,
           wolEnabled: settings.wolEnabled,
           wolCooldownSeconds: settings.wolCooldownSeconds,
+          discordWebhookUrl,
+          discordNotifyDown,
+          discordNotifyRestart,
+          discordNotifyRecovered,
           services: settings.services,
           pcs: settings.pcs,
         }),
@@ -163,6 +200,7 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
         autoRestart: false,
         windowsService: "",
         exePath: "",
+        restartPcId: "",
       };
       return {
         ...prev,
@@ -198,6 +236,23 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
     });
   };
 
+  const testDiscord = async () => {
+    setDiscordBusy(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/watchdog/discord-test", { method: "POST" });
+      const json = await res.json();
+      if (!res.ok || !json.ok) {
+        throw new Error(json.message || json.error || "Discord test failed");
+      }
+      setMessage(json.message || "Discord test sent.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDiscordBusy(false);
+    }
+  };
+
   const apps = serviceNames.filter(
     (service) => service.enabled && service.id !== "trash-guides",
   );
@@ -212,17 +267,19 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
     return { text: "Offline", className: "pc-status pc-status-offline" };
   };
 
-  return (
-    <div className="settings-overlay" onClick={onClose} role="presentation">
-      <div
-        className="settings-panel sync-panel"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-labelledby="watchdog-title"
-        aria-modal="true"
-      >
-        <header className="settings-header">
-          <h2 id="watchdog-title">Port watch &amp; restart</h2>
+  const panelBody = (
+    <div
+      className={`settings-panel sync-panel${embedded ? " lite-main-panel" : ""}`}
+      onClick={embedded ? undefined : (e) => e.stopPropagation()}
+      role={embedded ? undefined : "dialog"}
+      aria-labelledby="watchdog-title"
+      aria-modal={embedded ? undefined : true}
+    >
+      <header className="settings-header">
+        <h2 id="watchdog-title">
+          {lite ? "Port watch, restart & alerts" : "Port watch & restart"}
+        </h2>
+        {!embedded && (
           <button
             type="button"
             className="icon-btn"
@@ -231,30 +288,45 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
           >
             ✕
           </button>
-        </header>
+        )}
+      </header>
 
-        <div className="settings-body">
+      <div className="settings-body">
           {serverUp === false && (
             <div className="sync-alert sync-alert-err">
-              Sync/watch server offline. Run <code>npm run dev</code> or{" "}
-              <code>start-hub.bat</code> on this Plex PC.
+              {lite
+                ? "Hub server offline. Restart Arrs Hub Lite on this PC."
+                : "Sync/watch server offline. Run npm run dev or start-hub.bat on this Plex PC."}
             </div>
           )}
 
           {serverUp && settings && (
             <>
               <section className="settings-group">
-                <h3>Plex PC watchdog</h3>
+                <h3>{lite ? "Downloader watchdog" : "Plex PC watchdog"}</h3>
                 <p className="settings-hint">
-                  Keep Arr&apos;s Hub running on this PC. Status uses your
-                  current link mode: <strong>Home</strong> ports when Home/Auto
-                  says you&apos;re home (restart allowed),{" "}
-                  <strong>Remote</strong> URLs when you&apos;re away (status
-                  only — no remote restart). Prefer a Windows service name when
-                  the app is installed as a service; optionally set an{" "}
-                  <strong>exe path</strong> as fallback if the service restart
-                  fails or no service is configured. Discord webhook for
-                  down/restart alerts is under hub <strong>Settings</strong>.
+                  {lite ? (
+                    <>
+                      Keep Arr&apos;s Hub Lite on this downloader PC. It
+                      watches qBittorrent and SABnzbd ports and can restart
+                      their Windows services or default exe paths. Wake-on-LAN
+                      below can power on another PC (e.g. Plex) — mobile can
+                      relay through this hub when you&apos;re away.
+                    </>
+                  ) : (
+                    <>
+                      Keep Arr&apos;s Hub running on this PC. Status uses your
+                      current link mode: <strong>Home</strong> ports when
+                      Home/Auto says you&apos;re home (restart allowed),{" "}
+                      <strong>Remote</strong> URLs when you&apos;re away (status
+                      only — no remote restart). Prefer a Windows service name
+                      when the app is installed as a service; optionally set an{" "}
+                      <strong>exe path</strong> as fallback if the service
+                      restart fails or no service is configured. Discord webhook
+                      for down/restart alerts is under hub{" "}
+                      <strong>Settings</strong>.
+                    </>
+                  )}
                   {settings.discordWebhookSet ? " (webhook saved)" : ""}
                 </p>
                 <label className="toggle">
@@ -326,9 +398,9 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
               <section className="settings-group">
                 <h3>Per app</h3>
                 <p className="settings-hint">
-                  Defaults use standard install paths (ProgramData for *arr;
-                  user profile where relevant) and can be edited. Empty fields
-                  only — your saved paths are never overwritten.
+                  {lite
+                    ? "Default install paths for qBittorrent and SABnzbd are pre-filled. Edit only if yours differ."
+                    : "Defaults use standard install paths (ProgramData for *arr; user profile where relevant) and can be edited. Empty fields only — your saved paths are never overwritten."}
                 </p>
                 <div className="sync-presets">
                   {apps.map((app) => {
@@ -337,6 +409,7 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
                       autoRestart: false,
                       windowsService: "",
                       exePath: "",
+                      restartPcId: "",
                     };
                     const exePlaceholder =
                       {
@@ -402,10 +475,30 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
                             }
                           />
                         </label>
+                        <label className="field">
+                          <span>Restart on</span>
+                          <select
+                            value={cfg.restartPcId || ""}
+                            onChange={(e) =>
+                              updateService(app.id, {
+                                restartPcId: e.target.value,
+                              })
+                            }
+                          >
+                            <option value="">This PC (Plex hub)</option>
+                            {settings.pcs
+                              .filter((pc) => pc.companionUrl?.trim())
+                              .map((pc) => (
+                                <option key={pc.id} value={pc.id}>
+                                  Companion — {pc.name.trim() || pc.host || pc.id}
+                                </option>
+                              ))}
+                          </select>
+                        </label>
                         <p className="settings-hint">
-                          Restart tries the Windows service first. If that fails
-                          or the service name is blank, Arrs Hub starts the exe
-                          from its folder (Home / Plex PC only).
+                          {cfg.restartPcId
+                            ? "Port checks use the service Home URL; restart runs on the Companion PC via LAN API."
+                            : "Restart tries the Windows service first, then the exe path on this Plex PC."}
                         </p>
                       </div>
                     );
@@ -416,13 +509,10 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
               <section className="settings-group">
                 <h3>PC power &amp; Wake-on-LAN</h3>
                 <p className="settings-hint">
-                  Monitor whole PCs by host/IP and optionally send a Wake-on-LAN
-                  magic packet when they go offline.{" "}
-                  <strong>WOL is LAN-only</strong> — it works after a power
-                  outage when Arrs Hub runs on a machine that is still on the
-                  same local network (or comes back with the network). It does{" "}
-                  <strong>not</strong> work over the internet or remote links;
-                  magic packets never leave your LAN.
+                  Install <strong>Arrs Hub Companion</strong> on your downloader
+                  PC — it scans the LAN, registers with this hub, and wires qBit /
+                  SAB restarts automatically. Manual fields below are optional
+                  overrides.
                 </p>
                 <label className="toggle">
                   <input
@@ -522,6 +612,38 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
                             }
                           />
                         </label>
+                        <label className="field">
+                          <span>Companion URL (optional)</span>
+                          <input
+                            type="text"
+                            value={pc.companionUrl || ""}
+                            placeholder="http://192.168.1.50:3901"
+                            onChange={(e) =>
+                              updatePc(pc.id, { companionUrl: e.target.value })
+                            }
+                          />
+                        </label>
+                        <label className="field">
+                          <span>
+                            Companion API key
+                            {pc.companionApiKeySet
+                              ? " (saved — leave blank to keep)"
+                              : ""}
+                          </span>
+                          <input
+                            type="password"
+                            autoComplete="off"
+                            placeholder={
+                              pc.companionApiKeySet
+                                ? "•••• saved ••••"
+                                : "Paste from Companion tray"
+                            }
+                            value={pc.companionApiKey || ""}
+                            onChange={(e) =>
+                              updatePc(pc.id, { companionApiKey: e.target.value })
+                            }
+                          />
+                        </label>
                         <label className="toggle">
                           <input
                             type="checkbox"
@@ -573,6 +695,81 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
                 </button>
               </section>
 
+              {lite && (
+                <section className="settings-group">
+                  <h3>Discord notifications</h3>
+                  <p className="settings-hint">
+                    Webhook alerts when a monitored port goes down, a restart
+                    succeeds or fails, or the port recovers.
+                  </p>
+                  <label className="field">
+                    <span>
+                      Webhook URL
+                      {settings.discordWebhookSet
+                        ? " (saved — leave blank to keep)"
+                        : ""}
+                    </span>
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      placeholder={
+                        settings.discordWebhookSet
+                          ? "•••• saved ••••"
+                          : "https://discord.com/api/webhooks/…"
+                      }
+                      value={discordWebhookUrl}
+                      disabled={discordBusy}
+                      onChange={(e) => setDiscordWebhookUrl(e.target.value)}
+                    />
+                  </label>
+                  <label className="toggle">
+                    <input
+                      type="checkbox"
+                      checked={discordNotifyDown}
+                      disabled={discordBusy}
+                      onChange={(e) => setDiscordNotifyDown(e.target.checked)}
+                    />
+                    <span className="toggle-label">Notify when port goes down</span>
+                  </label>
+                  <label className="toggle">
+                    <input
+                      type="checkbox"
+                      checked={discordNotifyRestart}
+                      disabled={discordBusy}
+                      onChange={(e) =>
+                        setDiscordNotifyRestart(e.target.checked)
+                      }
+                    />
+                    <span className="toggle-label">
+                      Notify restart success / failure
+                    </span>
+                  </label>
+                  <label className="toggle">
+                    <input
+                      type="checkbox"
+                      checked={discordNotifyRecovered}
+                      disabled={discordBusy}
+                      onChange={(e) =>
+                        setDiscordNotifyRecovered(e.target.checked)
+                      }
+                    />
+                    <span className="toggle-label">
+                      Notify when port comes back up
+                    </span>
+                  </label>
+                  <div className="watchdog-bar-actions">
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={discordBusy}
+                      onClick={() => void testDiscord()}
+                    >
+                      Send test
+                    </button>
+                  </div>
+                </section>
+              )}
+
               {message && (
                 <div className="sync-alert sync-alert-ok">{message}</div>
               )}
@@ -580,20 +777,31 @@ export function WatchdogPanel({ onClose, serviceNames }: WatchdogPanelProps) {
           )}
         </div>
 
-        <footer className="settings-footer">
+      <footer className="settings-footer">
+        {!embedded && (
           <button type="button" className="btn btn-secondary" onClick={onClose}>
             Close
           </button>
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={busy || !serverUp || !settings}
-            onClick={() => void save()}
-          >
-            {busy ? "Saving…" : "Save"}
-          </button>
-        </footer>
-      </div>
+        )}
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={busy || !serverUp || !settings}
+          onClick={() => void save()}
+        >
+          {busy ? "Saving…" : "Save"}
+        </button>
+      </footer>
+    </div>
+  );
+
+  if (embedded) {
+    return panelBody;
+  }
+
+  return (
+    <div className="settings-overlay" onClick={onClose} role="presentation">
+      {panelBody}
     </div>
   );
 }

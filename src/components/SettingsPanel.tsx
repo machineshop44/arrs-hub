@@ -13,6 +13,8 @@ interface SettingsPanelProps {
   onReset: () => void;
   /** Optional: open Streams panel (closes Settings) */
   onOpenStreams?: () => void;
+  /** Downloader lite — service URLs + optional download creds only */
+  liteMode?: boolean;
 }
 
 export function SettingsPanel({
@@ -23,6 +25,7 @@ export function SettingsPanel({
   onUpdateSubtitle,
   onReset,
   onOpenStreams,
+  liteMode = false,
 }: SettingsPanelProps) {
   const [sonarrApiKey, setSonarrApiKey] = useState("");
   const [radarrApiKey, setRadarrApiKey] = useState("");
@@ -339,6 +342,7 @@ export function SettingsPanel({
         </header>
 
         <div className="settings-body">
+          {!liteMode && (
           <section className="settings-group">
             <h3>Dashboard</h3>
             <label className="field">
@@ -358,14 +362,14 @@ export function SettingsPanel({
               />
             </label>
           </section>
+          )}
 
           <section className="settings-group">
             <h3>Hub network (phone / LAN)</h3>
             <p className="settings-hint">
-              The Hub API must listen on the LAN so Arrs Hub Mobile and remote
-              chips can connect. Default bind is{" "}
-              <code>0.0.0.0</code> (all interfaces) on port{" "}
-              <code>3000</code> in the desktop app.
+              {liteMode
+                ? "Phones reach this downloader hub on port 3000. Port-forward 3000 for Wake-on-LAN relay from mobile while away."
+                : "The Hub API must listen on the LAN so Arrs Hub Mobile and remote chips can connect. Default bind is 0.0.0.0 (all interfaces) on port 3000 in the desktop app."}
             </p>
             <ul className="settings-hint-list">
               <li>
@@ -400,10 +404,9 @@ export function SettingsPanel({
           <section className="settings-group">
             <h3>Services</h3>
             <p className="settings-hint">
-              Enter a Home address (local IP &amp; port) and optional Remote
-              address for each app. With <strong>Auto</strong> selected, the
-              dashboard picks Home or Remote from your network — use Home/Remote
-              in the header only if you need to override.
+              {liteMode
+                ? "Local URLs for qBittorrent and SABnzbd (defaults: localhost:8080 and :8085)."
+                : "Enter a Home address (local IP & port) and optional Remote address for each app. With Auto selected, the dashboard picks Home or Remote from your network — use Home/Remote in the header only if you need to override."}
             </p>
             <div className="settings-services">
               {settings.services.map((service) => (
@@ -459,8 +462,9 @@ export function SettingsPanel({
             </div>
           </section>
 
-          <PlexUpdateCard serverUp={apiServerUp} />
+          {!liteMode && <PlexUpdateCard serverUp={apiServerUp} />}
 
+          {!liteMode && (
           <section className="settings-group">
             <h3>TRaSH Sync API keys</h3>
             <p className="settings-hint">
@@ -517,7 +521,9 @@ export function SettingsPanel({
               {apiBusy ? "Saving…" : "Save API keys"}
             </button>
           </section>
+          )}
 
+          {!liteMode && (
           <section className="settings-group">
             <h3>Tautulli</h3>
             <p className="settings-hint">
@@ -586,13 +592,14 @@ export function SettingsPanel({
               )}
             </div>
           </section>
+          )}
 
           <section className="settings-group">
-            <h3>Downloads &amp; Ombi</h3>
+            <h3>{liteMode ? "Download clients" : "Downloads & Ombi"}</h3>
             <p className="settings-hint">
-              Optional credentials for dashboard chips (active downloads and
-              open Ombi requests). URLs come from each service&apos;s Home
-              address above.
+              {liteMode
+                ? "Optional credentials if your qBit or SAB web UI requires login for port checks."
+                : "Optional credentials for dashboard chips (active downloads and open Ombi requests). URLs come from each service's Home address above."}
             </p>
             <label className="field">
               <span>qBittorrent username</span>
@@ -632,6 +639,7 @@ export function SettingsPanel({
                 onChange={(e) => setSabKey(e.target.value)}
               />
             </label>
+            {!liteMode && (
             <label className="field">
               <span>
                 Ombi API key
@@ -646,6 +654,7 @@ export function SettingsPanel({
                 onChange={(e) => setOmbiKey(e.target.value)}
               />
             </label>
+            )}
             {integrationsMessage && (
               <div
                 className={`sync-alert ${integrationsMessage.type === "ok" ? "sync-alert-ok" : "sync-alert-err"}`}
@@ -659,10 +668,11 @@ export function SettingsPanel({
               disabled={apiServerUp === false || integrationsBusy}
               onClick={() => void saveIntegrations()}
             >
-              {integrationsBusy ? "Saving…" : "Save download / Ombi creds"}
+              {integrationsBusy ? "Saving…" : liteMode ? "Save download creds" : "Save download / Ombi creds"}
             </button>
           </section>
 
+          {!liteMode && (
           <section className="settings-group">
             <h3>Discord notifications</h3>
             <p className="settings-hint">
@@ -748,6 +758,7 @@ export function SettingsPanel({
               </button>
             </div>
           </section>
+          )}
 
           <p className="settings-version" aria-label="App version">
             {APP_VERSION_LABEL}

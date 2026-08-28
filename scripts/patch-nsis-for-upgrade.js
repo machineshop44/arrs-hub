@@ -7,6 +7,7 @@
  * 2) extractAppPackage.nsh: on locked CopyFiles, force-kill + non-atomic extract
  *    fallback — never MessageBox / Retry / Quit.
  * 3) installSection.nsh: always CHECK_APP_RUNNING on elevated UAC inner instance.
+ * 4) allowOnlyOneInstallerInstance.nsh: backup if customCheckAppRunning is skipped.
  *
  * Idempotent (marker-based). Run before every dist:win (wired via package.json).
  * Never commit the patched node_modules copies.
@@ -27,11 +28,14 @@ const MARKER_UTIL = "; ARRS-HUB-PATCH: no-retry-messagebox";
 const MARKER_UTIL_V2 = "; ARRS-HUB-PATCH: no-retry-messagebox v2";
 const MARKER_EXTRACT = "; ARRS-HUB-PATCH: no-extract-retry-messagebox";
 const MARKER_SECTION = "; ARRS-HUB-PATCH: check-app-running-inner";
+const MARKER_ALLOW_ONE = "; ARRS-HUB-PATCH: no-check-app-running-retry";
 
 const FORCE_KILL_NSIS = [
   '    nsExec::ExecToLog `"$SYSDIR\\cmd.exe" /C taskkill /F /IM "Arrs Hub.exe" /T`',
   "    Pop $R9",
-  '    nsExec::ExecToLog `"$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Get-Process -Name \'Arrs Hub\' -ErrorAction SilentlyContinue | Stop-Process -Force; Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $$_.Name -eq \'Arrs Hub.exe\' } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"`',
+  '    nsExec::ExecToLog `"$SYSDIR\\cmd.exe" /C taskkill /F /IM "Arrs Hub Companion.exe" /T`',
+  "    Pop $R9",
+  '    nsExec::ExecToLog `"$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Get-Process -Name \'Arrs Hub\',\'Arrs Hub Companion\' -ErrorAction SilentlyContinue | Stop-Process -Force; Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $$_.Name -eq \'Arrs Hub.exe\' -or $$_.Name -eq \'Arrs Hub Companion.exe\' } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"`',
   "    Pop $R9",
 ].join("\n");
 
@@ -252,6 +256,82 @@ function patchInstallSection() {
   return true;
 }
 
+function patchAllowOnlyOneInstallerInstance() {
+  const pathAllow = path.join(
+    nsisDir,
+    "include",
+    "allowOnlyOneInstallerInstance.nsh",
+  );
+  if (!fs.existsSync(pathAllow)) {
+    console.log(
+      "[patch-nsis] allowOnlyOneInstallerInstance.nsh: not found — skipping",
+    );
+    return false;
+  }
+
+  let text = normalizeNewlines(fs.readFileSync(pathAllow, "utf8"));
+
+  if (text.includes(MARKER_ALLOW_ONE)) {
+    console.log(
+      "[patch-nsis] allowOnlyOneInstallerInstance.nsh: already patched, skipping",
+    );
+    return false;
+  }
+
+  const stockRe =
+    /\$\{if\} \$R1 > 1\n          MessageBox MB_RETRYCANCEL\|MB_ICONEXCLAMATION "\$\(appCannotBeClosed\)" \/SD IDCANCEL IDRETRY loop\n          Quit\n        \$\{else\}/;
+
+  const patched = [
+    "${if} $R1 > 1",
+    `          ${MARKER_ALLOW_ONE}`,
+    "          DetailPrint \"App still running — force-kill retry (no Retry UI)\"",
+    "          !insertmacro KILL_PROCESS \"${APP_EXECUTABLE_FILENAME}\" 1",
+    "          Sleep 800",
+    "          Goto loop",
+    "        ${else}",
+  ].join("\n");
+
+  if (!stockRe.test(text)) {
+    text = stripAppCannotBeClosedMessageBoxes(
+      text,
+      "allowOnlyOneInstallerInstance.nsh",
+    );
+    if (/MessageBox[^\n]*appCannotBeClosed/.test(text)) {
+      console.error(
+        "[patch-nsis] allowOnlyOneInstallerInstance.nsh: could not remove appCannotBeClosed MessageBox.",
+      );
+      process.exit(1);
+    }
+    if (!text.includes(MARKER_ALLOW_ONE)) {
+      fs.writeFileSync(pathAllow, text, "utf8");
+      console.log(
+        "[patch-nsis] allowOnlyOneInstallerInstance.nsh: stripped MessageBox only",
+      );
+      return true;
+    }
+    return false;
+  }
+
+  text = text.replace(stockRe, patched);
+  text = stripAppCannotBeClosedMessageBoxes(
+    text,
+    "allowOnlyOneInstallerInstance.nsh",
+  );
+
+  if (/MessageBox[^\n]*appCannotBeClosed/.test(text)) {
+    console.error(
+      "[patch-nsis] allowOnlyOneInstallerInstance.nsh: MessageBox still present after patch.",
+    );
+    process.exit(1);
+  }
+
+  fs.writeFileSync(pathAllow, text, "utf8");
+  console.log(
+    "[patch-nsis] allowOnlyOneInstallerInstance.nsh: patched (no Retry UI)",
+  );
+  return true;
+}
+
 mustExist(installUtilPath);
 mustExist(extractAppPackagePath);
 mustExist(installSectionPath);
@@ -260,5 +340,6 @@ let changed = 0;
 if (patchInstallUtil()) changed += 1;
 if (patchExtractAppPackage()) changed += 1;
 if (patchInstallSection()) changed += 1;
+if (patchAllowOnlyOneInstallerInstance()) changed += 1;
 
 console.log(`[patch-nsis] Done (${changed} file(s) updated).`);

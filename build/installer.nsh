@@ -9,6 +9,7 @@
 ;       (never MessageBox / Retry — overwrite install if old uninstall fails)
 ;   (2) extractAppPackage: kill + non-atomic extract fallback (never Retry UI)
 ;   (3) CHECK_APP_RUNNING on UAC inner instance where uninstallOldVersion runs
+;   (4) allowOnlyOneInstallerInstance: no Retry MessageBox if check-app-running loops
 ;
 ; Note: avoid LogicLib (${If}) here — custom include is parsed before LogicLib.
 

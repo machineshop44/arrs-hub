@@ -2,6 +2,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DATA_DIR, ensureDataDirs } from "./config.mjs";
+import { isLiteVariant } from "./variant.mjs";
+
+const LITE_DOWNLOAD_EXE_PATHS = {
+  qbittorrent: "C:\\Program Files\\qBittorrent\\qbittorrent.exe",
+  sabnzbd: "C:\\Program Files\\SABnzbd\\SABnzbd.exe",
+};
+
+const LITE_MONITORED_IDS = ["qbittorrent", "sabnzbd"];
 
 export const WATCHDOG_SETTINGS_PATH = path.join(DATA_DIR, "watchdog-settings.json");
 
@@ -59,10 +67,32 @@ export function getDefaultExePaths() {
     tautulli: path.join(localAppData, "Tautulli", "Tautulli.exe"),
     // ytarr Inno Setup default: {localappdata}\Programs\ytarr\ytarr.exe
     ytarr: path.join(localAppData, "Programs", "ytarr", "ytarr.exe"),
+    qbittorrent: LITE_DOWNLOAD_EXE_PATHS.qbittorrent,
+    sabnzbd: LITE_DOWNLOAD_EXE_PATHS.sabnzbd,
     // Intentionally empty — leave for user:
-    // plex, qbittorrent, sabnzbd, ombi, flaresolverr, overseerr,
-    // fileflows, calibre, trash-guides
+    // plex, ombi, flaresolverr, overseerr, fileflows, calibre, trash-guides
   };
+}
+
+function applyLiteWatchdogDefaults(settings) {
+  for (const id of Object.keys(settings.services)) {
+    if (!LITE_MONITORED_IDS.includes(id)) {
+      settings.services[id].monitor = false;
+      settings.services[id].autoRestart = false;
+    }
+  }
+  for (const id of LITE_MONITORED_IDS) {
+    const cfg = settings.services[id];
+    if (!cfg) continue;
+    cfg.monitor = true;
+    cfg.autoRestart = true;
+    if (!String(cfg.windowsService || "").trim()) {
+      cfg.windowsService = DEFAULT_WINDOWS_SERVICES[id] || "";
+    }
+    if (!String(cfg.exePath || "").trim()) {
+      cfg.exePath = LITE_DOWNLOAD_EXE_PATHS[id] || "";
+    }
+  }
 }
 
 /** @deprecated use getDefaultExePaths() — kept for callers that expect a map */
@@ -80,11 +110,12 @@ function defaultServiceWatch(id, windowsService) {
     exePath: defaults[id] ?? "",
     exeArgs: "",
     exeCwd: "",
+    restartPcId: "",
   };
 }
 
 export function defaultWatchdogSettings() {
-  return {
+  const settings = {
     enabled: true,
     intervalSeconds: 30,
     failThreshold: 2,
@@ -99,6 +130,7 @@ export function defaultWatchdogSettings() {
     wolCooldownSeconds: 300,
     /** @type {{ id: string, name: string, host: string, mac: string, monitor: boolean, wakeOnLan: boolean }[]} */
     pcs: [],
+    companionUrlHints: {},
     /** @type {Record<string, { monitor: boolean, autoRestart: boolean, windowsService: string, exePath: string, exeArgs: string, exeCwd: string }>} */
     services: Object.fromEntries(
       Object.entries(DEFAULT_WINDOWS_SERVICES).map(([id, windowsService]) => [
@@ -107,6 +139,10 @@ export function defaultWatchdogSettings() {
       ]),
     ),
   };
+  if (isLiteVariant()) {
+    applyLiteWatchdogDefaults(settings);
+  }
+  return settings;
 }
 
 /**
@@ -146,6 +182,10 @@ export function loadWatchdogSettings() {
     ...raw,
     services: mergedServices,
     pcs: Array.isArray(raw.pcs) ? raw.pcs : defaults.pcs,
+    companionUrlHints:
+      raw.companionUrlHints && typeof raw.companionUrlHints === "object"
+        ? raw.companionUrlHints
+        : defaults.companionUrlHints,
   };
 }
 
