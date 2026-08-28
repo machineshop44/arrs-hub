@@ -16,8 +16,10 @@ let serverProcess = null;
 let isQuitting = false;
 let serverExit = null;
 let companionPort = DEFAULT_PORT;
-
 let openAtLoginEnabled = true;
+
+const LOGIN_SETTINGS_FILE = "companion-desktop-settings.json";
+const APP_DISPLAY_NAME = "Arrs Hub Companion";
 
 app.setAppUserModelId("com.machineshop44.arrs-hub-companion");
 

@@ -7,7 +7,8 @@ import {
   publicCompanionSettings,
   saveCompanionSettings,
   verifyCompanionApiKey,
-} from "./companion-store.mjs";import { restartServiceOrExe } from "../server/restart-windows.mjs";
+} from "./companion-store.mjs";
+import { restartServiceOrExe } from "../server/restart-windows.mjs";
 import {
   guessBroadcastAddress,
   normalizeMac,
