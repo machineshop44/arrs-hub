@@ -25,6 +25,7 @@ let serverProcess = null;
 let isQuitting = false;
 let serverLog = "";
 let serverExit = null;
+let systemCaSupported = null;
 let openAtLoginEnabled = true;
 const HUB_LOGIN_SETTINGS_FILE = "hub-desktop-settings.json";
 

@@ -19,7 +19,7 @@ const pkg = JSON.parse(
 const version = pkg.version;
 
 function hubArtifact(filename) {
-  const dirs = ["release", "release-133"];
+  const dirs = ["release", "release-133", "release-135"];
   for (const dir of dirs) {
     const full = path.join(root, dir, filename);
     if (fs.existsSync(full)) return full;
