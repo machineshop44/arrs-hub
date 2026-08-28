@@ -7,7 +7,8 @@ A simple, all-in-one dashboard for your Plex and *arr stack. Launch Sonarr, Rada
 Like Sonarr/Radarr: download the installer, click Next, run. **No Node.js or Git required.**
 
 1. Open the latest [GitHub Release](https://github.com/machineshop44/arrs-hub/releases/latest)
-2. Download **`Arrs Hub-*-x64.exe`** (NSIS installer) — or the **portable** build if you prefer no install
+2. Download **`Arrs Hub-*-x64.exe`** (Inno Setup installer, same style as ytarr / Market Advisor) — or the **portable** build if you prefer no install
+3. Optional: verify the download with **`Arrs Hub-*-SHA256.txt`** on Drive (`Get-FileHash -Algorithm SHA256`)
 3. Run the installer → Next → Finish
 4. Launch **Arrs Hub** from the Start Menu or Desktop shortcut
 5. Open **Settings** in the hub and enter Home URLs for each app (e.g. `http://localhost:8989`)
@@ -23,7 +24,7 @@ Settings, Recyclarr binaries, and API keys are stored under:
 
 (not inside the install folder — safe across updates). Migrating from an old folder install? Copy your old `data\` contents into that AppData path.
 
-Windows may show a SmartScreen warning on first run (unsigned installer). Choose **More info** → **Run anyway** if you trust the build from this repo’s Releases.
+Windows may show a SmartScreen warning on first run (unsigned unless built with `ARRS_SIGN_PFX_PATH`). Choose **More info** → **Run anyway** if you trust the build; checksum files on Drive help verify the file was not tampered with.
 
 ### Optional: Recyclarr / TRaSH sync
 

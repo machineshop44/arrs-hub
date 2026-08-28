@@ -21,6 +21,7 @@ const requiredCompanionFiles = [
   "companion/network.mjs",
   "server/restart-windows.mjs",
   "server/wol.mjs",
+  "server/lan-utils.mjs",
   "package.json",
   "build/icon.ico",
 ];
@@ -92,6 +93,9 @@ if (!files.some((f) => f.startsWith("desktop-companion/"))) {
 }
 if (files.some((f) => f.includes("desktop/win-login") && !f.startsWith("!"))) {
   fail("Do not rely on desktop/win-login-item in companion package");
+}
+if (!files.some((f) => f.includes("server/lan-utils.mjs"))) {
+  fail("electron-builder-companion.json must include server/lan-utils.mjs");
 }
 ok("electron-builder companion file patterns");
 

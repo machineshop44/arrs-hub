@@ -1,8 +1,10 @@
 import os from "node:os";
-
-/** VPN / virtual adapters — Surfshark, WireGuard, Hyper-V, etc. */
-const VPN_ADAPTER_RE =
-  /surfshark|wireguard|wintun|tap[- ]|tun[- ]|nordlynx|nordvpn|openvpn|vpn|virtual|hyper-v|vmware|vethernet|loopback|npcap|bluetooth|hotspot/i;
+import {
+  isLikelyVirtualAdapter,
+  isLikelyVirtualIp,
+  isLikelyVirtualMac,
+  lanScore,
+} from "../server/lan-utils.mjs";
 
 /**
  * @returns {{ name: string, address: string, mac: string }[]}
@@ -25,25 +27,15 @@ export function getLanInterfaces() {
   return results;
 }
 
-export function isLikelyVpnAdapter(name) {
-  return VPN_ADAPTER_RE.test(String(name || ""));
-}
-
-function lanScore(ip, adapterName) {
-  if (isLikelyVpnAdapter(adapterName)) return 100;
-  if (ip.startsWith("192.168.")) return 0;
-  // Real home 10.x (e.g. 10.0.0.x) before generic 10.x VPN tunnels
-  if (ip.startsWith("10.0.")) return 1;
-  if (ip.startsWith("10.")) return 4;
-  if (ip.startsWith("172.16.") || ip.startsWith("172.17.")) return 2;
-  if (ip.startsWith("172.")) return 5;
-  return 6;
-}
-
-/** Physical (non-VPN) interfaces, best LAN first. */
+/** Physical (non-VPN, non-virtual) interfaces, best LAN first. */
 export function listPhysicalLanInterfaces() {
   return [...getLanInterfaces()]
-    .filter((iface) => !isLikelyVpnAdapter(iface.name))
+    .filter(
+      (iface) =>
+        !isLikelyVirtualAdapter(iface.name) &&
+        !isLikelyVirtualIp(iface.address) &&
+        !isLikelyVirtualMac(iface.mac),
+    )
     .sort(
       (a, b) =>
         lanScore(a.address, a.name) - lanScore(b.address, b.name) ||

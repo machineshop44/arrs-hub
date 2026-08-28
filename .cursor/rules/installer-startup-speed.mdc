@@ -7,15 +7,22 @@ alwaysApply: true
 
 Andrew reports the Windows Arrs Hub installer takes a long time before the UI/popup appears (even from Desktop).
 
-## Known / likely causes (not all fixable in packaging)
+## Current packaging (1.3.38+)
 
-1. **Windows SmartScreen / Defender** first scan of a newly built **unsigned** ~95MB Electron NSIS exe — often the main delay.
-2. **UAC elevation** when installing to Program Files.
-3. electron-builder NSIS assisted installer (`oneClick: false`) starts a bit heavier than one-click.
+- **Inno Setup** installers (`Arrs Hub-<ver>-x64.exe`) — same stack as ytarr / Market Advisor; lighter wizard than electron-builder NSIS.
+- **SHA256 checksum files** on Drive (`Arrs Hub-<ver>-SHA256.txt`) — verify downloads with `Get-FileHash`.
+- **Optional Authenticode**: set `ARRS_SIGN_PFX_PATH` + `ARRS_SIGN_PFX_PASSWORD` before `npm run publish:exe` (or `dist:win:all`).
+
+## Known / likely causes (not all fixable without a cert)
+
+1. **Windows SmartScreen / Defender** first scan of a newly built **unsigned** ~95MB exe — often the main delay.
+2. **UAC elevation** when installing to Program Files (we use per-user `%LOCALAPPDATA%\Programs` to avoid admin).
+3. Portable exe skips installer UI but still gets first SmartScreen scan.
 
 ## On each rebuild / when investigating
 
 - Prefer documenting: copy to Desktop, wait for first SmartScreen scan; subsequent opens are faster.
-- Optional packaging experiments: `compression` (store vs normal), portable build for “just run” without NSIS UI.
-- Code signing (cert) would help SmartScreen most — only if Andrew obtains a cert.
+- Publish with `npm run publish:exe` so Drive always has checksum sidecars.
+- Portable build for “just run” without installer wizard.
+- **Authenticode code signing cert** is what yields “Verified publisher” in SmartScreen — obtain cert + set env vars above.
 - Do not block feature ships solely for this; note in release notes when relevant.

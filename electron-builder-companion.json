@@ -11,6 +11,7 @@
     "companion/**/*",
     "server/restart-windows.mjs",
     "server/wol.mjs",
+    "server/lan-utils.mjs",
     "package.json",
     "!desktop/**/*",
     "!server/index.mjs",
@@ -26,6 +27,7 @@
     "companion/**/*",
     "server/restart-windows.mjs",
     "server/wol.mjs",
+    "server/lan-utils.mjs",
     "package.json",
     "**/node_modules/**/*"
   ],
@@ -36,7 +38,7 @@
   "win": {
     "target": [
       {
-        "target": "nsis",
+        "target": "dir",
         "arch": ["x64"]
       },
       {
@@ -45,7 +47,8 @@
       }
     ],
     "icon": "build/icon.ico",
-    "artifactName": "${productName}-${version}-${arch}.${ext}"
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "signAndEditExecutable": true
   },
   "nsis": {
     "oneClick": false,
