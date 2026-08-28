@@ -28,7 +28,7 @@ function hubArtifact(filename) {
 }
 
 function companionArtifact(filename) {
-  const dirs = ["release-companion", "release-companion-132", "release-companion-133"];
+  const dirs = ["release-companion", "release-companion-132", "release-companion-133", "release-companion-134"];
   for (const dir of dirs) {
     const full = path.join(root, dir, filename);
     if (fs.existsSync(full)) return full;

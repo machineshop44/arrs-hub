@@ -8,7 +8,6 @@
   },
   "files": [
     "desktop-companion/**/*",
-    "desktop/win-login-item.cjs",
     "companion/**/*",
     "server/restart-windows.mjs",
     "server/wol.mjs",

@@ -6,7 +6,7 @@ const http = require("node:http");
 const {
   syncOpenAtLogin,
   toggleOpenAtLogin,
-} = require("../desktop/win-login-item.cjs");
+} = require("./win-login-item.cjs");
 
 const DEFAULT_PORT = "3901";
 const HEALTH_TIMEOUT_MS = 60000;
