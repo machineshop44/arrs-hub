@@ -110,8 +110,8 @@ const toSign = [];
 let copied = 0;
 
 for (const group of artifactGroups) {
-  pruneOldOnDrive(group.prefix);
   const shaLines = [];
+  let groupCopied = 0;
 
   for (const item of group.items) {
     const src = group.resolve(item.file);
@@ -126,6 +126,12 @@ for (const group of artifactGroups) {
     shaLines.push(`${path.basename(src)}  ${hash}`);
     console.log(`[publish] ${item.label} → ${dest}`);
     copied += 1;
+    groupCopied += 1;
+  }
+
+  // Only prune older Drive copies after this version actually landed.
+  if (groupCopied > 0) {
+    pruneOldOnDrive(group.prefix);
   }
 
   if (shaLines.length > 0) {

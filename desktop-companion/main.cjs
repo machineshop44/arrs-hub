@@ -10,16 +10,19 @@ const {
 
 const DEFAULT_PORT = "3901";
 const HEALTH_TIMEOUT_MS = 60000;
+const LOG_CAP = 12_000;
 
 let tray = null;
 let serverProcess = null;
 let isQuitting = false;
 let serverExit = null;
+let serverLog = "";
 let companionPort = DEFAULT_PORT;
 let openAtLoginEnabled = true;
 
 const LOGIN_SETTINGS_FILE = "companion-desktop-settings.json";
 const APP_DISPLAY_NAME = "Arrs Hub Companion";
+const BOOT_LOG_FILE = "companion-boot.log";
 
 app.setAppUserModelId("com.machineshop44.arrs-hub-companion");
 
@@ -114,11 +117,110 @@ function stopServer() {
   }
 }
 
+function appendServerLog(chunk) {
+  serverLog += String(chunk);
+  if (serverLog.length > LOG_CAP) {
+    serverLog = serverLog.slice(-LOG_CAP);
+  }
+}
+
+function trimLog(text) {
+  const cleaned = String(text || "")
+    .replace(/\r/g, "")
+    .trim();
+  if (!cleaned) return "";
+  const lines = cleaned.split("\n");
+  return lines.slice(-40).join("\n");
+}
+
+function bootLogPath() {
+  try {
+    return path.join(app.getPath("userData"), BOOT_LOG_FILE);
+  } catch {
+    return path.join(getDataDir(), BOOT_LOG_FILE);
+  }
+}
+
+function writeBootLog(message) {
+  try {
+    const file = bootLogPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const stamp = new Date().toISOString();
+    fs.writeFileSync(
+      file,
+      `[${stamp}] ${message}\n\n--- last server output ---\n${trimLog(serverLog)}\n`,
+      "utf8",
+    );
+  } catch {
+    // ignore
+  }
+}
+
+function failureDetails(headline) {
+  const parts = [headline];
+  if (serverExit?.error) {
+    parts.push(`Spawn error: ${serverExit.error.message || serverExit.error}`);
+  } else if (serverExit && (serverExit.code != null || serverExit.signal)) {
+    parts.push(
+      `Server exited (code ${serverExit.code ?? "null"}${
+        serverExit.signal ? `, signal ${serverExit.signal}` : ""
+      }).`,
+    );
+  }
+  const log = trimLog(serverLog);
+  if (log) {
+    parts.push(`Server output:\n${log}`);
+  } else {
+    parts.push(
+      "No server output was captured. Port 3901 may already be in use, or reinstall Arrs Hub Companion from Drive/GitHub.",
+    );
+  }
+  parts.push(`Boot log: ${bootLogPath()}`);
+  return parts.join("\n\n");
+}
+
+/** Kill anything still listening on the companion port (orphaned prior boot). */
+function freeCompanionPort(port) {
+  if (process.platform !== "win32") return;
+  try {
+    const netstat = spawnSync("netstat", ["-ano", "-p", "tcp"], {
+      windowsHide: true,
+      encoding: "utf8",
+      timeout: 10000,
+    });
+    const out = String(netstat.stdout || "");
+    const needle = `:${port}`;
+    const pids = new Set();
+    for (const line of out.split(/\r?\n/)) {
+      if (!line.includes(needle) || !line.includes("LISTENING")) continue;
+      const parts = line.trim().split(/\s+/);
+      const pid = Number(parts[parts.length - 1]);
+      if (Number.isFinite(pid) && pid > 0 && pid !== process.pid) {
+        pids.add(pid);
+      }
+    }
+    for (const pid of pids) {
+      spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], {
+        windowsHide: true,
+        timeout: 15000,
+        encoding: "utf8",
+      });
+      appendServerLog(`Freed port ${port} (killed pid ${pid})\n`);
+    }
+  } catch {
+    // ignore
+  }
+}
+
 function waitForHealth(port, timeoutMs = HEALTH_TIMEOUT_MS) {
   const url = `http://127.0.0.1:${port}/api/health`;
   const started = Date.now();
   return new Promise((resolve, reject) => {
-    const fail = (message) => reject(new Error(message));
+    const fail = (message) => {
+      const details = failureDetails(message);
+      writeBootLog(details);
+      reject(new Error(details));
+    };
 
     const tryOnce = () => {
       if (serverExit) {
@@ -155,6 +257,7 @@ function waitForHealth(port, timeoutMs = HEALTH_TIMEOUT_MS) {
 
 function startServer() {
   serverExit = null;
+  serverLog = "";
   const root = getCompanionRoot();
   const dataDir = getDataDir();
   fs.mkdirSync(dataDir, { recursive: true });
@@ -168,6 +271,21 @@ function startServer() {
   if (!fs.existsSync(serverScript)) {
     throw new Error(`Companion server missing at ${serverScript}`);
   }
+
+  const expressDir = path.join(root, "node_modules", "express");
+  const lanUtils = path.join(root, "server", "lan-utils.mjs");
+  if (!fs.existsSync(expressDir)) {
+    throw new Error(
+      `Companion dependencies missing (${expressDir}). Reinstall Arrs Hub Companion.`,
+    );
+  }
+  if (!fs.existsSync(lanUtils)) {
+    throw new Error(
+      `Companion package incomplete (missing lan-utils.mjs). Reinstall Arrs Hub Companion 1.3.39+.`,
+    );
+  }
+
+  freeCompanionPort(companionPort);
 
   const node = resolveNodeBinary();
   if (!node) {
@@ -188,6 +306,10 @@ function startServer() {
     env.ELECTRON_RUN_AS_NODE = "1";
   }
 
+  appendServerLog(
+    `Starting companion server\n  root=${root}\n  data=${dataDir}\n  port=${companionPort}\n  script=${serverScript}\n`,
+  );
+
   serverProcess = spawn(node.bin, [serverScript], {
     cwd: root,
     env,
@@ -195,12 +317,17 @@ function startServer() {
     windowsHide: true,
   });
 
+  serverProcess.stdout?.on("data", (chunk) => appendServerLog(chunk));
+  serverProcess.stderr?.on("data", (chunk) => appendServerLog(chunk));
+
   serverProcess.on("error", (err) => {
     serverExit = { error: err };
+    appendServerLog(`spawn error: ${err?.message || err}\n`);
   });
 
   serverProcess.on("exit", (code, signal) => {
     serverExit = { code, signal };
+    appendServerLog(`exit code=${code} signal=${signal}\n`);
     serverProcess = null;
   });
 }

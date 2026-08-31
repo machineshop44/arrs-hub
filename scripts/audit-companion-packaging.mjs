@@ -35,6 +35,9 @@ const mainMustDefine = [
   "refreshTrayMenu",
   "createTray",
   "boot",
+  "freeCompanionPort",
+  "failureDetails",
+  "appendServerLog",
 ];
 
 const mainMustRequire = ["./win-login-item.cjs"];

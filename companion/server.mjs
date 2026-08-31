@@ -146,9 +146,23 @@ const server = app.listen(PORT, HOST, () => {
   console.log(
     `Arrs Hub Companion listening on http://${HOST === "0.0.0.0" ? "127.0.0.1" : HOST}:${PORT}`,
   );
-  startHubRegistrationLoop();
+  try {
+    startHubRegistrationLoop();
+  } catch (err) {
+    console.error(
+      "Hub registration loop failed to start:",
+      err instanceof Error ? err.message : err,
+    );
+  }
 });
 server.on("error", (err) => {
-  console.error("Companion server failed:", err);
+  const code = err && typeof err === "object" ? err.code : "";
+  if (code === "EADDRINUSE") {
+    console.error(
+      `Companion server failed: port ${PORT} is already in use. Close the other Arrs Hub Companion / process, then retry.`,
+    );
+  } else {
+    console.error("Companion server failed:", err);
+  }
   process.exit(1);
 });

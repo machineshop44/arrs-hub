@@ -43,7 +43,25 @@ export function loadCompanionSettings() {
     saveCompanionSettings(defaults);
     return defaults;
   }
-  const raw = JSON.parse(fs.readFileSync(COMPANION_SETTINGS_PATH, "utf8"));
+  let raw = {};
+  try {
+    raw = JSON.parse(fs.readFileSync(COMPANION_SETTINGS_PATH, "utf8"));
+    if (!raw || typeof raw !== "object") raw = {};
+  } catch (err) {
+    console.error(
+      "companion-settings.json unreadable — resetting defaults:",
+      err instanceof Error ? err.message : err,
+    );
+    try {
+      const bak = `${COMPANION_SETTINGS_PATH}.bad-${Date.now()}`;
+      fs.renameSync(COMPANION_SETTINGS_PATH, bak);
+    } catch {
+      // ignore
+    }
+    const defaults = defaultCompanionSettings();
+    saveCompanionSettings(defaults);
+    return defaults;
+  }
   const defaults = defaultCompanionSettings();
   return {
     ...defaults,
@@ -55,7 +73,8 @@ export function loadCompanionSettings() {
     hubUrl: String(raw.hubUrl || ""),
     autoDiscoverHub: raw.autoDiscoverHub !== false,
     lastRegisterMessage: String(raw.lastRegisterMessage || ""),
-  };}
+  };
+}
 
 export function saveCompanionSettings(settings) {
   ensureDataDirs();
