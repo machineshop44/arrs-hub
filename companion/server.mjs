@@ -8,7 +8,7 @@ import {
   saveCompanionSettings,
   verifyCompanionApiKey,
 } from "./companion-store.mjs";
-import { restartServiceOrExe } from "../server/restart-windows.mjs";
+import { restartServiceOrExe, checkLocalServiceStatus } from "../server/restart-windows.mjs";
 import {
   guessBroadcastAddress,
   normalizeMac,
@@ -110,6 +110,26 @@ app.post("/api/restart", requireAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({
       ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+});
+
+app.post("/api/service-status", requireAuth, async (req, res) => {
+  try {
+    const body = req.body ?? {};
+    const result = await checkLocalServiceStatus({
+      windowsService: body.windowsService,
+      exePath: body.exePath,
+      exeArgs: body.exeArgs,
+      exeCwd: body.exeCwd,
+      processHints: Array.isArray(body.processHints) ? body.processHints : [],
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      running: false,
       error: err instanceof Error ? err.message : String(err),
     });
   }

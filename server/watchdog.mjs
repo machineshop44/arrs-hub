@@ -13,6 +13,7 @@ import { DISCORD_COLORS, sendDiscordWebhook } from "./discord.mjs";
 import {
   checkCompanionHealth,
   requestCompanionRestart,
+  requestCompanionServiceStatus,
 } from "./companion-client.mjs";
 import { restartServiceOrExe } from "./restart-windows.mjs";
 
@@ -21,7 +22,24 @@ import { restartServiceOrExe } from "./restart-windows.mjs";
  * @property {string} id
  * @property {string} name
  * @property {string} url
+ * @property {"home"|"remote"} [mode]
+ * @property {boolean} [allowRestart]
+ * @property {"tcp"|"companion"} [probe]
  */
+
+const COMPANION_PROBE_URL = "companion://local";
+
+function wantsCompanionProbe(target, serviceCfg) {
+  if (target?.probe === "companion") return true;
+  const url = String(target?.url || "").trim().toLowerCase();
+  if (url.startsWith("companion:")) return true;
+  if (String(target?.id || "") === "fileflows-node") return true;
+  // No TCP URL but Companion restart PC is set - ask Companion.
+  if (!hostPortFromUrl(target?.url) && String(serviceCfg?.restartPcId || "").trim()) {
+    return true;
+  }
+  return false;
+}
 
 /** @type {WatchTarget[]} */
 let targets = [];
@@ -297,6 +315,70 @@ async function notifyDiscord(settings, payload) {
   }
 }
 
+async function probeViaCompanion(target, serviceCfg, settings) {
+  const pcId = String(serviceCfg.restartPcId || "").trim();
+  const pc = (settings.pcs || []).find((item) => item.id === pcId);
+  if (!pcId || !pc) {
+    return {
+      up: false,
+      latencyMs: null,
+      message: "Set Restart on → Companion PC in Port Watch for this service.",
+    };
+  }
+  if (!String(pc.companionUrl || "").trim()) {
+    return {
+      up: false,
+      latencyMs: null,
+      message: `Companion URL missing on "${pc.name || "PC"}".`,
+    };
+  }
+
+  const live = pcState.get(pcId);
+  if (live?.online === false) {
+    return {
+      up: false,
+      latencyMs: null,
+      message: `Companion PC offline (${pc.name || pc.host})`,
+    };
+  }
+
+  const hints = [];
+  if (target.id === "fileflows-node") {
+    hints.push("FileFlows.Node", "fileflows.node");
+  }
+  if (target.id === "fileflows") {
+    hints.push("FileFlows.Server", "fileflows.server");
+  }
+
+  const status = await requestCompanionServiceStatus(
+    pc.companionUrl,
+    pc.companionApiKey,
+    {
+      windowsService: serviceCfg.windowsService,
+      exePath: serviceCfg.exePath,
+      exeArgs: serviceCfg.exeArgs,
+      exeCwd: serviceCfg.exeCwd,
+      processHints: hints,
+    },
+  );
+
+  if (!status.ok && status.running !== true) {
+    return {
+      up: false,
+      latencyMs: status.latencyMs,
+      message: status.message || "Companion status check failed",
+    };
+  }
+
+  return {
+    up: Boolean(status.running),
+    latencyMs: status.latencyMs,
+    message:
+      status.message ||
+      (status.running ? "Running on Companion PC" : "Not running"),
+  };
+}
+
 async function checkOne(target) {
   const settings = loadWatchdogSettings();
   const serviceCfg = settings.services[target.id] ?? {
@@ -316,8 +398,13 @@ async function checkOne(target) {
     return;
   }
 
-  const parsed = hostPortFromUrl(target.url);
-  if (!parsed) {
+  const companionProbe = wantsCompanionProbe(target, serviceCfg);
+  const parsed = companionProbe ? null : hostPortFromUrl(target.url);
+
+  let result;
+  if (companionProbe) {
+    result = await probeViaCompanion(target, serviceCfg, settings);
+  } else if (!parsed) {
     state.set(target.id, {
       ...(state.get(target.id) ?? {}),
       up: false,
@@ -326,9 +413,10 @@ async function checkOne(target) {
       message: "Invalid URL",
     });
     return;
+  } else {
+    result = await checkPort(parsed.host, parsed.port);
   }
 
-  const result = await checkPort(parsed.host, parsed.port);
   const prev = state.get(target.id) ?? {
     consecutiveFails: 0,
     lastRestartAt: null,
@@ -349,7 +437,6 @@ async function checkOne(target) {
     downAlertSent = false;
   }
 
-  // Alert once when failures hit the threshold (not every check while down)
   const hasRestartTarget =
     Boolean(String(serviceCfg.windowsService || "").trim()) ||
     Boolean(String(serviceCfg.exePath || "").trim());
@@ -361,6 +448,12 @@ async function checkOne(target) {
     serviceCfg.autoRestart &&
     hasRestartTarget;
 
+  const locationLabel = companionProbe
+    ? "Companion service/process"
+    : parsed
+      ? `${parsed.host}:${parsed.port}`
+      : "unknown";
+
   if (
     !result.up &&
     !downAlertSent &&
@@ -369,10 +462,12 @@ async function checkOne(target) {
   ) {
     downAlertSent = true;
     await notifyDiscord(settings, {
-      title: `${target.name} port is down`,
+      title: `${target.name} is down`,
       description: [
         `Mode: **${target.mode === "remote" ? "Remote" : "Home"}**`,
-        `Host: \`${parsed.host}:${parsed.port}\``,
+        companionProbe
+          ? `Check: Companion service/process`
+          : `Host: \`${locationLabel}\``,
         `Failed checks: **${consecutiveFails}** (threshold ${settings.failThreshold})`,
         `Detail: ${result.message}`,
         canRestart
@@ -380,7 +475,7 @@ async function checkOne(target) {
             ? "Arrs Hub will ask the Companion app on that PC to restart."
             : "Arrs Hub will try to restart the Windows service."
           : target.mode === "remote"
-            ? "Remote status only — restart is Home/Plex-PC only."
+            ? "Remote status only - restart is Home/Plex-PC only."
             : "Auto-restart is not enabled for this app.",
       ].join("\n"),
       color: DISCORD_COLORS.down,
@@ -415,7 +510,9 @@ async function checkOne(target) {
               ? `Exe: \`${serviceCfg.exePath}\``
               : "Exe: (none)",
             restart.message,
-            `Checked port: \`${parsed.host}:${parsed.port}\``,
+            companionProbe
+              ? "Checked via Companion service status"
+              : `Checked port: \`${locationLabel}\``,
           ].join("\n"),
           color: restart.ok
             ? DISCORD_COLORS.restartOk
@@ -428,9 +525,13 @@ async function checkOne(target) {
   if (recovered && settings.discordNotifyRecovered !== false) {
     await notifyDiscord(settings, {
       title: `${target.name} is back up`,
-      description: `Port \`${parsed.host}:${parsed.port}\` is responding again${
-        result.latencyMs != null ? ` (${result.latencyMs} ms)` : ""
-      }.`,
+      description: companionProbe
+        ? `${result.message}${
+            result.latencyMs != null ? ` (${result.latencyMs} ms)` : ""
+          }.`
+        : `Port \`${locationLabel}\` is responding again${
+            result.latencyMs != null ? ` (${result.latencyMs} ms)` : ""
+          }.`,
       color: DISCORD_COLORS.recovered,
     });
   }
@@ -445,16 +546,41 @@ async function checkOne(target) {
     message:
       target.mode === "remote"
         ? result.up
-          ? "Remote port open"
+          ? companionProbe
+            ? "Remote · running (Companion)"
+            : "Remote port open"
           : result.message || "Remote unreachable"
-        : result.message,
+        : result.up
+          ? companionProbe
+            ? result.message || "Running (Companion)"
+            : result.message || "Port open"
+          : result.message,
     downAlertSent,
     mode: target.mode || "home",
   });
 }
 
 export async function runWatchCycle() {
+  const settings = loadWatchdogSettings();
   const snapshot = [...targets];
+  const checked = new Set(snapshot.map((t) => t.id));
+
+  // Also probe companion-only services (e.g. FileFlows Node) if not in UI targets yet.
+  for (const [id, cfg] of Object.entries(settings.services || {})) {
+    if (checked.has(id)) continue;
+    if (!cfg?.monitor || !String(cfg.restartPcId || "").trim()) continue;
+    if (id !== "fileflows-node") continue;
+    snapshot.push({
+      id,
+      name: id === "fileflows-node" ? "FileFlows Node" : "FileFlows",
+      url: COMPANION_PROBE_URL,
+      mode: "home",
+      allowRestart: true,
+      probe: "companion",
+    });
+    checked.add(id);
+  }
+
   await Promise.all(snapshot.map((target) => checkOne(target)));
   await checkPcs();
   return getWatchStatus();

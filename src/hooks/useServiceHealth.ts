@@ -34,19 +34,27 @@ export function useServiceHealth(
   const [scanning, setScanning] = useState(true);
 
   // Probe Home when home (restart possible). Probe Remote when away (status board only).
+  // FileFlows Node has no TCP URL — Hub asks Companion for Windows service/process status.
   const targets = useMemo(
     () =>
       services
         .filter((service) => service.enabled && service.id !== "trash-guides")
         .map((service) => {
           const url = getServiceUrl(service, activeMode);
-          if (!url) return null;
+          const companionProbe =
+            service.id === "fileflows-node" ||
+            String(service.homeUrl || "")
+              .trim()
+              .toLowerCase()
+              .startsWith("companion:");
+          if (!url && !companionProbe) return null;
           return {
             id: service.id,
             name: service.name,
-            url,
+            url: url || "companion://local",
             mode: activeMode,
             allowRestart: activeMode === "home",
+            probe: companionProbe ? ("companion" as const) : ("tcp" as const),
           };
         })
         .filter(

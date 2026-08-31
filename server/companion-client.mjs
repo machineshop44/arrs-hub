@@ -103,6 +103,74 @@ export async function requestCompanionRestart(baseUrl, apiKey, serviceCfg) {
 }
 
 /**
+ * Ask Companion whether a local Windows service / process is running.
+ * @param {string} baseUrl
+ * @param {string} apiKey
+ * @param {{ windowsService?: string, exePath?: string, exeArgs?: string, exeCwd?: string, processHints?: string[] }} serviceCfg
+ */
+export async function requestCompanionServiceStatus(baseUrl, apiKey, serviceCfg) {
+  const base = normalizeBaseUrl(baseUrl);
+  if (!base) {
+    return {
+      ok: false,
+      running: false,
+      message: "No companion URL configured",
+      latencyMs: null,
+      method: null,
+    };
+  }
+
+  const started = Date.now();
+  try {
+    const res = await fetch(`${base}/api/service-status`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Arrs-Companion-Key": apiKey,
+      },
+      body: JSON.stringify({
+        windowsService: serviceCfg.windowsService || "",
+        exePath: serviceCfg.exePath || "",
+        exeArgs: serviceCfg.exeArgs || "",
+        exeCwd: serviceCfg.exeCwd || "",
+        processHints: serviceCfg.processHints || [],
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const latencyMs = Date.now() - started;
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        ok: false,
+        running: false,
+        latencyMs,
+        method: null,
+        message:
+          data?.error ||
+          data?.message ||
+          `Companion service-status HTTP ${res.status}`,
+      };
+    }
+    return {
+      ok: data?.ok !== false,
+      running: Boolean(data?.running),
+      latencyMs: data?.latencyMs ?? latencyMs,
+      method: data?.method || "companion",
+      message: data?.message || (data?.running ? "Running" : "Not running"),
+      serviceState: data?.serviceState ?? null,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      running: false,
+      latencyMs: Date.now() - started,
+      method: null,
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
  * @param {string} baseUrl
  * @param {string} apiKey
  * @param {string} mac

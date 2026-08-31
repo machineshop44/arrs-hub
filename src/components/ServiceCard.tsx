@@ -28,11 +28,17 @@ export function ServiceCard({
   health,
 }: ServiceCardProps) {
   const activeUrl = getServiceUrl(service, connectionMode);
+  const companionOnly =
+    service.id === "fileflows-node" ||
+    String(activeUrl || "")
+      .trim()
+      .toLowerCase()
+      .startsWith("companion:");
   const isRemoteMissing =
-    connectionMode === "remote" && !service.remoteUrl.trim();
+    connectionMode === "remote" && !service.remoteUrl.trim() && !companionOnly;
 
   const handleClick = () => {
-    if (!activeUrl) return;
+    if (!activeUrl || companionOnly) return;
     window.open(activeUrl, "_blank", "noopener,noreferrer");
   };
 
@@ -48,12 +54,14 @@ export function ServiceCard({
       type="button"
       className={`service-card${isRemoteMissing ? " service-card-disabled" : ""}`}
       onClick={handleClick}
-      disabled={!activeUrl}
+      disabled={isRemoteMissing || (!activeUrl && !companionOnly)}
       style={{ "--accent": service.color } as CSSProperties}
       title={
-        activeUrl
-          ? `${service.name} — ${statusLabel(health)}`
-          : `${service.name} — remote URL not set`
+        companionOnly
+          ? `${service.name} — ${statusLabel(health)} (status via Companion)`
+          : activeUrl
+            ? `${service.name} — ${statusLabel(health)}`
+            : `${service.name} — remote URL not set`
       }
     >
       {badge ? <span className="service-card-badge">{badge}</span> : null}
@@ -73,7 +81,9 @@ export function ServiceCard({
         </h3>
         <p>{service.description}</p>
         <span className="service-card-url">
-          {activeUrl ?? "Remote URL not configured"}
+          {companionOnly
+            ? "Status via Companion (no web UI)"
+            : (activeUrl ?? "Remote URL not configured")}
         </span>
         {service.id !== "trash-guides" && (
           <span className={`service-card-health ${statusClass}`}>
