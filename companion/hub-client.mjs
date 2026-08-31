@@ -8,6 +8,7 @@ import {
   pickPrimaryLan,
   subnetHosts,
 } from "./network.mjs";
+import { detectFileFlowsInstalls } from "./fileflows-detect.mjs";
 
 const HUB_PORTS = [3000, 3847];
 const COMPANION_SERVICE_IDS = ["qbittorrent", "sabnzbd"];
@@ -117,6 +118,18 @@ function buildRegistrationPayload(settings) {
     exePath: exeDefaults[id] || "",
     port: SERVICE_PORTS[id],
   }));
+
+  for (const ff of detectFileFlowsInstalls()) {
+    services.push({
+      id: ff.id,
+      role: ff.role,
+      windowsService: ff.windowsService,
+      exePath: ff.exePath,
+      exeArgs: ff.exeArgs,
+      exeCwd: ff.exeCwd,
+      port: ff.port,
+    });
+  }
 
   return {
     companionId: settings.companionId,
@@ -229,10 +242,21 @@ export function stopHubRegistrationLoop() {
 /** Tray / setup: which downloader apps exist on this PC. */
 export function listLocalDownloaderApps() {
   const exeDefaults = DEFAULT_EXE_PATHS;
-  return COMPANION_SERVICE_IDS.map((id) => ({
+  const base = COMPANION_SERVICE_IDS.map((id) => ({
     id,
     exePath: exeDefaults[id] || "",
     installed: Boolean(exeDefaults[id] && fs.existsSync(exeDefaults[id])),
     port: SERVICE_PORTS[id],
   }));
+  for (const ff of detectFileFlowsInstalls()) {
+    base.push({
+      id: ff.id,
+      exePath: ff.exeCwd || ff.exePath || "",
+      installed: true,
+      port: ff.port,
+      role: ff.role,
+      windowsService: ff.windowsService,
+    });
+  }
+  return base;
 }

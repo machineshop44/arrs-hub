@@ -292,22 +292,39 @@ function startServer() {
     throw new Error("Could not start companion (no Node runtime).");
   }
 
-  const env = {
-    ...process.env,
-    ARRS_COMPANION_ROOT: root,
-    ARRS_COMPANION_DATA_DIR: dataDir,
-    ARRS_COMPANION_PORT: companionPort,
-    ARRS_COMPANION_BIND:
-      process.env.ARRS_COMPANION_BIND || process.env.ARRS_COMPANION_HOST || "0.0.0.0",
-    ARRS_COMPANION_VERSION: app.getVersion(),
-  };
+  // Do not inherit NODE_OPTIONS / Electron flags — they crash ELECTRON_RUN_AS_NODE
+  // (e.g. SyntaxError: Unexpected token '`') on machines with custom Node env.
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (
+      key === "NODE_OPTIONS" ||
+      key === "NODE_PATH" ||
+      key === "ELECTRON_RUN_AS_NODE" ||
+      key.startsWith("ELECTRON_") ||
+      key.startsWith("npm_config_") ||
+      key.startsWith("NPM_CONFIG_") ||
+      key.startsWith("VSCODE_") ||
+      key.startsWith("CURSOR_")
+    ) {
+      delete env[key];
+    }
+  }
+
+  env.ARRS_COMPANION_ROOT = root;
+  env.ARRS_COMPANION_DATA_DIR = dataDir;
+  env.ARRS_COMPANION_PORT = companionPort;
+  env.ARRS_COMPANION_BIND =
+    process.env.ARRS_COMPANION_BIND ||
+    process.env.ARRS_COMPANION_HOST ||
+    "0.0.0.0";
+  env.ARRS_COMPANION_VERSION = app.getVersion();
 
   if (node.electronAsNode) {
     env.ELECTRON_RUN_AS_NODE = "1";
   }
 
   appendServerLog(
-    `Starting companion server\n  root=${root}\n  data=${dataDir}\n  port=${companionPort}\n  script=${serverScript}\n`,
+    `Starting companion server\n  root=${root}\n  data=${dataDir}\n  port=${companionPort}\n  script=${serverScript}\n  nodeOptionsCleared=1\n`,
   );
 
   serverProcess = spawn(node.bin, [serverScript], {

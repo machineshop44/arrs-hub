@@ -49,7 +49,7 @@ export function loadCompanionSettings() {
     if (!raw || typeof raw !== "object") raw = {};
   } catch (err) {
     console.error(
-      "companion-settings.json unreadable — resetting defaults:",
+      "companion-settings.json unreadable - resetting defaults:",
       err instanceof Error ? err.message : err,
     );
     try {

@@ -15,7 +15,25 @@ import {
 } from "./integrations.mjs";
 import { restartWatchLoop } from "./watchdog.mjs";
 
-const COMPANION_SERVICE_IDS = ["qbittorrent", "sabnzbd"];
+const COMPANION_SERVICE_IDS = [
+  "qbittorrent",
+  "sabnzbd",
+  "fileflows",
+  "fileflows-node",
+];
+
+const DEFAULT_SERVICE_PORTS = {
+  qbittorrent: 8080,
+  sabnzbd: 8085,
+  fileflows: 19200,
+  "fileflows-node": 19200,
+};
+
+/** Integrations only track download clients — not FileFlows. */
+const INTEGRATION_SERVICE_IDS = ["qbittorrent", "sabnzbd"];
+
+/** Only overwrite dashboard URL hints for these (FileFlows server UI stays on Plex). */
+const URL_HINT_SERVICE_IDS = ["qbittorrent", "sabnzbd", "fileflows"];
 
 function isLocalServiceUrl(url) {
   try {
@@ -196,8 +214,9 @@ export function registerCompanionPeer(payload) {
       restartPcId: "",
     };
 
-    const svcPort = Number(svc?.port) || (id === "qbittorrent" ? 8080 : 8085);
-    const hintedUrl = serviceHomeUrl(host, svcPort);
+    const svcPort =
+      Number(svc?.port) || DEFAULT_SERVICE_PORTS[id] || 0;
+    const role = String(svc?.role || "").toLowerCase();
     const prevRestartPc = base.restartPcId || "";
     const prevPc = pcs.find((item) => item.id === prevRestartPc);
     const shouldRewire =
@@ -216,13 +235,24 @@ export function registerCompanionPeer(payload) {
         DEFAULT_WINDOWS_SERVICES[id] ||
         "",
       exePath: String(svc?.exePath || "").trim() || base.exePath || "",
+      exeArgs: String(svc?.exeArgs || "").trim() || base.exeArgs || "",
+      exeCwd: String(svc?.exeCwd || "").trim() || base.exeCwd || "",
     };
-    urlHints[id] = hintedUrl;
+
+    // FileFlows Node has no stable public UI — do not steal the FileFlows tile URL.
+    // FileFlows Server on companion may update the hint when role=server.
+    if (
+      URL_HINT_SERVICE_IDS.includes(id) &&
+      svcPort > 0 &&
+      (id !== "fileflows" || role === "server" || !role)
+    ) {
+      urlHints[id] = serviceHomeUrl(host, svcPort);
+    }
   }
 
   const integrations = loadIntegrationsSettings();
   const integrationsPatch = {};
-  for (const id of COMPANION_SERVICE_IDS) {
+  for (const id of INTEGRATION_SERVICE_IDS) {
     const hint = urlHints[id];
     if (!hint) continue;
     const currentUrl = integrations[id]?.baseUrl || "";
@@ -245,14 +275,20 @@ export function registerCompanionPeer(payload) {
   restartWatchLoop();
 
   const merged = existingIdx >= 0;
+  const hasFileFlows = serviceList.some((s) =>
+    String(s?.id || "").startsWith("fileflows"),
+  );
+  const restartBits = hasFileFlows
+    ? "qBit/SAB/FileFlows restarts will use Companion."
+    : "qBit/SAB restarts will use Companion.";
   return {
     ok: true,
     pcId,
     companionUrl,
     merged,
     message: merged
-      ? `Updated ${nextPc.name} — qBit/SAB restarts will use Companion.`
-      : `Registered ${nextPc.name} — qBit/SAB restarts will use Companion.`,
+      ? `Updated ${nextPc.name} — ${restartBits}`
+      : `Registered ${nextPc.name} — ${restartBits}`,
     urlHints,
   };
 }

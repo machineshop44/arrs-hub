@@ -16,7 +16,7 @@ export function normalizeMac(mac) {
 }
 
 /**
- * Send a Wake-on-LAN magic packet (LAN/broadcast only — not over the internet).
+ * Send a Wake-on-LAN magic packet (LAN/broadcast only - not over the internet).
  * @param {string} mac
  * @param {{ broadcastAddress?: string, port?: number }} [options]
  */

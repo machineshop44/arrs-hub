@@ -26,7 +26,8 @@ export const DEFAULT_WINDOWS_SERVICES = {
   tautulli: "Tautulli",
   ombi: "Ombi",
   overseerr: "",
-  fileflows: "",
+  fileflows: "FileFlows",
+  "fileflows-node": "FileFlows Node",
   plex: "PlexUpdateService",
   calibre: "",
   whisparr: "Whisparr",
@@ -69,8 +70,18 @@ export function getDefaultExePaths() {
     ytarr: path.join(localAppData, "Programs", "ytarr", "ytarr.exe"),
     qbittorrent: LITE_DOWNLOAD_EXE_PATHS.qbittorrent,
     sabnzbd: LITE_DOWNLOAD_EXE_PATHS.sabnzbd,
+    fileflows: path.join(
+      process.env.APPDATA || path.join(userProfileDir(), "AppData", "Roaming"),
+      "FileFlows",
+      "Server",
+    ),
+    "fileflows-node": path.join(
+      process.env.APPDATA || path.join(userProfileDir(), "AppData", "Roaming"),
+      "FileFlows",
+      "Node",
+    ),
     // Intentionally empty — leave for user:
-    // plex, ombi, flaresolverr, overseerr, fileflows, calibre, trash-guides
+    // plex, ombi, flaresolverr, overseerr, calibre, trash-guides
   };
 }
 

@@ -1,4 +1,4 @@
-/** VPN / virtual adapters — Surfshark, WireGuard, VirtualBox, Hyper-V, etc. */
+/** VPN / virtual adapters - Surfshark, WireGuard, VirtualBox, Hyper-V, etc. */
 export const VPN_ADAPTER_RE =
   /surfshark|wireguard|wintun|tap[- ]|tun[- ]|nordlynx|nordvpn|openvpn|vpn|virtual|hyper-v|vmware|vethernet|virtualbox|vmnet|loopback|npcap|bluetooth|hotspot/i;
 

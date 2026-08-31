@@ -1,8 +1,8 @@
 {
   "name": "arrs-hub",
   "private": true,
-  "version": "1.3.39",
-  "description": "Arrs Hub — dashboard and watchdog for your Plex / *arr stack",
+  "version": "1.3.40",
+  "description": "Arrs Hub - dashboard and watchdog for your Plex / *arr stack",
   "author": "machineshop44",
   "type": "module",
   "main": "desktop/main.cjs",

@@ -137,12 +137,22 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
   {
     id: "fileflows",
     name: "FileFlows",
-    description: "Automated file processing workflows",
+    description: "Automated file processing workflows (server)",
     category: "automation",
     defaultUrl: "http://localhost:19200",
     defaultRemoteUrl: `${REMOTE_HOST}:19200`,
     icon: SERVICE_ICONS.fileflows,
     color: "#10b981",
+  },
+  {
+    id: "fileflows-node",
+    name: "FileFlows Node",
+    description: "FileFlows processing client (downloader PC)",
+    category: "automation",
+    defaultUrl: "",
+    defaultRemoteUrl: "",
+    icon: SERVICE_ICONS.fileflows,
+    color: "#059669",
   },
   {
     id: "plex",
