@@ -68,9 +68,12 @@ import {
 } from "./app-update.mjs";
 import {
   createPhotoDumpFolder,
+  encodePhotoDumpPairPayload,
   listPhotoDumpFolders,
   loadPhotoDumpSettings,
+  photoDumpPairHostHint,
   publicPhotoDumpSettings,
+  publicPhotoDumpStatus,
   savePhotoDumpUploadStream,
   updatePhotoDumpSettings,
   verifyPhotoDumpApiKey,
@@ -179,46 +182,141 @@ app.get("/api/version", (_req, res) => {
   });
 });
 
+function clientRemoteIp(req) {
+  // Do not trust X-Forwarded-* for auth — port-forward clients can spoof it.
+  const raw = req.socket?.remoteAddress || req.connection?.remoteAddress || "";
+  return String(raw).replace(/^::ffff:/i, "");
+}
+
+function isLocalHubRequest(req) {
+  const ip = clientRemoteIp(req);
+  return (
+    ip === "127.0.0.1" ||
+    ip === "::1" ||
+    ip === "localhost" ||
+    ip === "" ||
+    ip === "::ffff:127.0.0.1"
+  );
+}
+
+function rejectPhotoDumpBody(req) {
+  try {
+    req.destroy?.();
+  } catch {
+    // ignore
+  }
+  try {
+    req.resume?.();
+  } catch {
+    // ignore
+  }
+}
+
 function readPhotoDumpKey(req) {
   const header = req.headers["x-arrs-hub-key"];
   if (typeof header === "string" && header.trim()) return header.trim();
   const alt = req.headers["x-arrs-photo-dump-key"];
   if (typeof alt === "string" && alt.trim()) return alt.trim();
-  const q = req.query?.key;
-  if (typeof q === "string" && q.trim()) return q.trim();
+  // Query-string keys are rejected (logs / Referer leakage).
   return "";
 }
 
 function requirePhotoDumpAuth(req, res) {
   if (!verifyPhotoDumpApiKey(readPhotoDumpKey(req))) {
+    rejectPhotoDumpBody(req);
     res.status(401).json({ error: "Invalid or missing photo dump API key." });
     return false;
   }
   return true;
 }
 
-app.get("/api/photo-dump/settings", (_req, res) => {
-  res.json({ settings: publicPhotoDumpSettings() });
+function requireLocalPhotoDumpAdmin(req, res) {
+  if (!isLocalHubRequest(req)) {
+    rejectPhotoDumpBody(req);
+    res.status(403).json({
+      error:
+        "Photo dump settings can only be changed from the Hub PC (localhost).",
+    });
+    return false;
+  }
+  return true;
+}
+
+function decodePhotoDumpHeader(value, label) {
+  if (typeof value !== "string" || !value) return "";
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    throw new Error(`Invalid encoded ${label}.`);
+  }
+}
+
+/**
+ * Local Hub UI: full settings. Remote + valid key: full settings.
+ * Remote without key: minimal status only (no rootPath / key mask).
+ */
+app.get("/api/photo-dump/settings", (req, res) => {
+  try {
+    const settings = loadPhotoDumpSettings();
+    if (isLocalHubRequest(req) || verifyPhotoDumpApiKey(readPhotoDumpKey(req))) {
+      res.json({ settings: publicPhotoDumpSettings(settings) });
+      return;
+    }
+    res.json({ settings: publicPhotoDumpStatus(settings) });
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+/** Local-only: LAN URL hint for Mobile setup QR. */
+app.get("/api/photo-dump/pair-hint", (req, res) => {
+  if (!requireLocalPhotoDumpAdmin(req, res)) return;
+  res.json({ ok: true, ...photoDumpPairHostHint(PORT) });
 });
 
 app.put("/api/photo-dump/settings", (req, res) => {
+  if (!requireLocalPhotoDumpAdmin(req, res)) return;
   try {
     const body = req.body ?? {};
+    const pairHint = photoDumpPairHostHint(PORT);
+    const pairUrlRaw =
+      typeof body.pairUrl === "string" && body.pairUrl.trim()
+        ? String(body.pairUrl).trim().replace(/\/+$/, "")
+        : pairHint.lanUrl;
+    const willRotate =
+      body.rotateKey === true ||
+      (typeof body.apiKey === "string" &&
+        body.apiKey.trim() &&
+        !body.apiKey.includes("…") &&
+        !body.apiKey.includes("•"));
+    // Validate pair URL before rotating so we never mint a key we cannot return.
+    let pairPayload;
+    if (willRotate && pairUrlRaw) {
+      pairPayload = encodePhotoDumpPairPayload({
+        url: pairUrlRaw,
+        key: "pending",
+      });
+    }
+
     const settings = updatePhotoDumpSettings(body, {
       rotateKey: body.rotateKey === true,
     });
+    const apiKeyPlain = willRotate ? settings.apiKey : undefined;
+    if (apiKeyPlain && pairUrlRaw) {
+      pairPayload = encodePhotoDumpPairPayload({
+        url: pairUrlRaw,
+        key: apiKeyPlain,
+      });
+    } else {
+      pairPayload = undefined;
+    }
     res.json({
       ok: true,
       settings: publicPhotoDumpSettings(settings),
-      /** Only returned when a new key was just generated. */
-      apiKeyPlain:
-        body.rotateKey === true ||
-        (typeof body.apiKey === "string" &&
-          body.apiKey.trim() &&
-          !body.apiKey.includes("…") &&
-          !body.apiKey.includes("•"))
-          ? settings.apiKey
-          : undefined,
+      /** Only returned on localhost when a new key was just set/generated. */
+      apiKeyPlain,
+      pairHint,
+      pairPayload,
     });
   } catch (err) {
     res.status(400).json({ error: err.message || String(err) });
@@ -257,22 +355,47 @@ app.post("/api/photo-dump/upload", async (req, res) => {
     if (!requirePhotoDumpAuth(req, res)) return;
     const settings = loadPhotoDumpSettings();
     if (settings.enabled === false) {
+      rejectPhotoDumpBody(req);
       res.status(403).json({ error: "Photo dump is disabled on the Hub." });
       return;
     }
+
+    const contentType = String(req.headers["content-type"] || "")
+      .split(";")[0]
+      .trim()
+      .toLowerCase();
+    if (
+      contentType &&
+      contentType !== "application/octet-stream"
+    ) {
+      rejectPhotoDumpBody(req);
+      res.status(415).json({
+        error: "Upload Content-Type must be application/octet-stream.",
+      });
+      return;
+    }
+
+    const max = settings.maxFileBytes || 2 * 1024 * 1024 * 1024;
+    const contentLength = Number(req.headers["content-length"]);
+    if (Number.isFinite(contentLength) && contentLength > max) {
+      rejectPhotoDumpBody(req);
+      res.status(413).json({ error: `File exceeds max size (${max} bytes).` });
+      return;
+    }
+
     const originalName =
-      typeof req.headers["x-file-name"] === "string"
-        ? decodeURIComponent(req.headers["x-file-name"])
-        : "upload.bin";
-    const relativeFolder =
-      typeof req.headers["x-relative-folder"] === "string"
-        ? decodeURIComponent(req.headers["x-relative-folder"])
-        : "";
+      decodePhotoDumpHeader(req.headers["x-file-name"], "file name") ||
+      "upload.bin";
+    const relativeFolder = decodePhotoDumpHeader(
+      req.headers["x-relative-folder"],
+      "folder path",
+    );
     const expectedSha256 =
       typeof req.headers["x-content-sha256"] === "string"
         ? req.headers["x-content-sha256"]
         : "";
-    const expectedSizeRaw = req.headers["x-expected-size"] || req.headers["content-length"];
+    const expectedSizeRaw =
+      req.headers["x-expected-size"] || req.headers["content-length"];
     const expectedSize = expectedSizeRaw ? Number(expectedSizeRaw) : undefined;
 
     const result = await savePhotoDumpUploadStream(req, {
@@ -280,10 +403,14 @@ app.post("/api/photo-dump/upload", async (req, res) => {
       originalName,
       expectedSize: Number.isFinite(expectedSize) ? expectedSize : undefined,
       expectedSha256,
+      apiKey: readPhotoDumpKey(req),
     });
     res.json(result);
   } catch (err) {
-    res.status(400).json({ error: err.message || String(err) });
+    rejectPhotoDumpBody(req);
+    if (!res.headersSent) {
+      res.status(400).json({ error: err.message || String(err) });
+    }
   }
 });
 

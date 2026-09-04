@@ -111,10 +111,6 @@ export function SettingsPanel({
 
   const loadDiscord = useCallback(async () => {
     try {
-      const health = await fetch("/api/health");
-      setApiServerUp(health.ok);
-      if (!health.ok) return;
-
       const res = await fetch("/api/watchdog/status");
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Could not load Discord settings");
@@ -124,6 +120,15 @@ export function SettingsPanel({
       setDiscordNotifyDown(json.settings?.discordNotifyDown !== false);
       setDiscordNotifyRestart(json.settings?.discordNotifyRestart !== false);
       setDiscordNotifyRecovered(json.settings?.discordNotifyRecovered !== false);
+    } catch {
+      // Discord settings are optional — do not mark Hub API down.
+    }
+  }, []);
+
+  const probeApiHealth = useCallback(async () => {
+    try {
+      const health = await fetch("/api/health");
+      setApiServerUp(health.ok);
     } catch {
       setApiServerUp(false);
     }
@@ -143,7 +148,7 @@ export function SettingsPanel({
       setSabKey("");
       setSabKeySet(Boolean(json.settings?.sabnzbd?.apiKeySet));
     } catch {
-      setApiServerUp(false);
+      // Keep prior health result from probeApiHealth.
     }
   }, []);
 
@@ -159,12 +164,13 @@ export function SettingsPanel({
   }, [initialSection]);
 
   useEffect(() => {
+    void probeApiHealth();
     void loadDiscord();
     if (liteMode) {
       void loadApiKeys();
       void loadIntegrations();
     }
-  }, [loadApiKeys, loadDiscord, loadIntegrations, liteMode]);
+  }, [loadApiKeys, loadDiscord, loadIntegrations, liteMode, probeApiHealth]);
 
   const saveApiKeys = async () => {
     setApiBusy(true);
