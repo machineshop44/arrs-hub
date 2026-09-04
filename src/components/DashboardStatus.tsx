@@ -1,6 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ConnectionMode, ServiceConfig } from "../types";
 import { getServiceUrl } from "../types";
+import type {
+  PcHealth,
+  PcWatchSummary,
+  ServiceHealth,
+  WatchServiceSummary,
+} from "../hooks/useServiceHealth";
+import {
+  buildCompanionPcStatus,
+  companionAppHealthLabel,
+  companionChipMeta,
+} from "../lib/companionStatus";
 import { usePlexUpdate } from "../hooks/usePlexUpdate";
 import {
   plexInstallBlockedReason,
@@ -68,6 +79,10 @@ interface DashboardStatusProps {
   downCount: number;
   serverUp: boolean | null;
   scanning?: boolean;
+  pcConfigs?: PcWatchSummary[];
+  pcs?: Record<string, PcHealth>;
+  serviceHealth?: Record<string, ServiceHealth>;
+  watchServices?: Record<string, WatchServiceSummary>;
   onOpenStreams?: () => void;
 }
 
@@ -79,10 +94,15 @@ function urlMap(
     "sonarr",
     "radarr",
     "lidarr",
+    "readarr",
+    "prowlarr",
+    "bazarr",
+    "whisparr",
     "qbittorrent",
     "sabnzbd",
     "ombi",
     "tautulli",
+    "fileflows",
   ];
   const out: Record<string, string> = {};
   for (const id of ids) {
@@ -93,6 +113,28 @@ function urlMap(
   }
   return out;
 }
+
+const CLICK_UPDATE_APP_IDS = new Set([
+  "sonarr",
+  "radarr",
+  "lidarr",
+  "readarr",
+  "prowlarr",
+  "whisparr",
+  "tautulli",
+  "qbittorrent",
+  "sabnzbd",
+]);
+
+const COMPANION_CLICK_UPDATE_IDS = new Set(["qbittorrent", "sabnzbd"]);
+
+type AppUpdateJobState = {
+  id: string | null;
+  appId: string | null;
+  phase: "idle" | "running" | "done" | "error";
+  message: string;
+  error?: string | null;
+};
 
 function activityQueueUrl(baseUrl: string | undefined): string | null {
   if (!baseUrl) return null;
@@ -129,6 +171,34 @@ function ombiTypeLabel(type: OmbiPendingItem["type"]): string {
   return "Movie";
 }
 
+type ChipVersionApp = {
+  id: string;
+  label: string;
+  version: string | null;
+  updateAvailable?: boolean;
+  latestVersion?: string | null;
+  openUrl?: string | null;
+  configured?: boolean;
+  ok?: boolean;
+  error?: string;
+};
+
+type ChipVersionsPayload = {
+  hub?: { version?: string | null; arrUpdateCount?: number };
+  arrs?: ChipVersionApp[];
+  companion?: {
+    name?: string;
+    version?: string | null;
+    appUpdateCount?: number;
+    apps?: ChipVersionApp[];
+  } | null;
+};
+
+function ChipProductVersion({ version }: { version?: string | null }) {
+  if (!version) return null;
+  return <span className="dash-chip-meta">v{version}</span>;
+}
+
 export function DashboardStatus({
   services,
   connectionMode,
@@ -136,11 +206,19 @@ export function DashboardStatus({
   downCount,
   serverUp,
   scanning = false,
+  pcConfigs = [],
+  pcs = {},
+  serviceHealth = {},
+  watchServices = {},
   onOpenStreams,
 }: DashboardStatusProps) {
   const [summary, setSummary] = useState<HubStatusSummary | null>(null);
+  const [chipVersions, setChipVersions] = useState<ChipVersionsPayload | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [hubOpen, setHubOpen] = useState(false);
+  const [companionOpen, setCompanionOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [ombiOpen, setOmbiOpen] = useState(false);
@@ -156,7 +234,12 @@ export function DashboardStatus({
     port?: number;
     lanReachable?: boolean;
   } | null>(null);
+  const [appUpdateJobs, setAppUpdateJobs] = useState<
+    Record<string, AppUpdateJobState>
+  >({});
+  const [appUpdateNotice, setAppUpdateNotice] = useState<string | null>(null);
   const hubWrapRef = useRef<HTMLDivElement>(null);
+  const companionWrapRef = useRef<HTMLDivElement>(null);
   const queueWrapRef = useRef<HTMLDivElement>(null);
   const downloadsWrapRef = useRef<HTMLDivElement>(null);
   const ombiWrapRef = useRef<HTMLDivElement>(null);
@@ -164,6 +247,7 @@ export function DashboardStatus({
 
   const closeAllPopovers = useCallback(() => {
     setHubOpen(false);
+    setCompanionOpen(false);
     setQueueOpen(false);
     setDownloadsOpen(false);
     setOmbiOpen(false);
@@ -185,23 +269,128 @@ export function DashboardStatus({
   const load = useCallback(async () => {
     if (serverUp === false) {
       setSummary(null);
+      setChipVersions(null);
       setError(null);
       return;
     }
     try {
-      const res = await fetch("/api/status/summary", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ urls: urlMap(services, connectionMode) }),
-      });
-      const json = (await res.json()) as HubStatusSummary & { error?: string };
-      if (!res.ok) throw new Error(json.error || "Status failed");
+      const urls = urlMap(services, connectionMode);
+      const [summaryRes, versionsRes] = await Promise.all([
+        fetch("/api/status/summary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ urls }),
+        }),
+        fetch("/api/status/chip-versions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ urls }),
+        }),
+      ]);
+      const json = (await summaryRes.json()) as HubStatusSummary & {
+        error?: string;
+      };
+      if (!summaryRes.ok) throw new Error(json.error || "Status failed");
       setSummary(json);
+      if (versionsRes.ok) {
+        setChipVersions((await versionsRes.json()) as ChipVersionsPayload);
+      }
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
   }, [services, connectionMode, serverUp]);
+
+  const startStackAppUpdate = useCallback(
+    async (appId: string, pcId?: string) => {
+      if (!CLICK_UPDATE_APP_IDS.has(appId)) return;
+      const urls = urlMap(services, connectionMode);
+      setAppUpdateNotice(null);
+      setAppUpdateJobs((prev) => ({
+        ...prev,
+        [appId]: {
+          id: null,
+          appId,
+          phase: "running",
+          message: "Starting update…",
+          error: null,
+        },
+      }));
+      try {
+        const res = await fetch("/api/status/app-update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: appId,
+            urls,
+            baseUrl: urls[appId] || undefined,
+            pcId: pcId || undefined,
+          }),
+        });
+        const json = (await res.json()) as {
+          ok?: boolean;
+          error?: string;
+          job?: AppUpdateJobState;
+        };
+        if (!res.ok) {
+          throw new Error(json.error || "Update failed to start");
+        }
+        if (json.job) {
+          setAppUpdateJobs((prev) => ({ ...prev, [appId]: json.job! }));
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setAppUpdateJobs((prev) => ({
+          ...prev,
+          [appId]: {
+            id: null,
+            appId,
+            phase: "error",
+            message,
+            error: message,
+          },
+        }));
+        setAppUpdateNotice(message);
+      }
+    },
+    [services, connectionMode],
+  );
+
+  useEffect(() => {
+    const runningIds = Object.entries(appUpdateJobs)
+      .filter(([, job]) => job.phase === "running")
+      .map(([id]) => id);
+    if (runningIds.length === 0) return;
+
+    let cancelled = false;
+    const poll = async () => {
+      for (const appId of runningIds) {
+        try {
+          const res = await fetch(
+            `/api/status/app-update?id=${encodeURIComponent(appId)}`,
+          );
+          const json = (await res.json()) as { job?: AppUpdateJobState };
+          if (cancelled || !json.job) continue;
+          setAppUpdateJobs((prev) => ({ ...prev, [appId]: json.job! }));
+          if (json.job.phase === "done") {
+            setAppUpdateNotice(json.job.message || "Update started.");
+            void load();
+          } else if (json.job.phase === "error") {
+            setAppUpdateNotice(json.job.error || json.job.message || "Update failed.");
+          }
+        } catch {
+          // keep polling
+        }
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => void poll(), 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [appUpdateJobs, load]);
 
   const loadHubInfo = useCallback(async () => {
     if (serverUp === false) {
@@ -290,41 +479,159 @@ export function DashboardStatus({
   }, [ombiOpen, loadOmbiPending]);
 
   useEffect(() => {
-    if (!hubOpen && !queueOpen && !downloadsOpen && !ombiOpen && !plexOpen)
+    if (
+      !hubOpen &&
+      !companionOpen &&
+      !queueOpen &&
+      !downloadsOpen &&
+      !ombiOpen &&
+      !plexOpen
+    )
       return;
-    const onDoc = (event: MouseEvent) => {
+    const downOutside = {
+      hub: false,
+      companion: false,
+      queue: false,
+      downloads: false,
+      ombi: false,
+      plex: false,
+    };
+    const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
-      if (hubOpen) {
-        const el = hubWrapRef.current;
-        if (el && !el.contains(target)) setHubOpen(false);
+      if (hubOpen && hubWrapRef.current && !hubWrapRef.current.contains(target)) {
+        downOutside.hub = true;
       }
-      if (queueOpen) {
-        const el = queueWrapRef.current;
-        if (el && !el.contains(target)) setQueueOpen(false);
+      if (
+        companionOpen &&
+        companionWrapRef.current &&
+        !companionWrapRef.current.contains(target)
+      ) {
+        downOutside.companion = true;
       }
-      if (downloadsOpen) {
-        const el = downloadsWrapRef.current;
-        if (el && !el.contains(target)) setDownloadsOpen(false);
+      if (
+        queueOpen &&
+        queueWrapRef.current &&
+        !queueWrapRef.current.contains(target)
+      ) {
+        downOutside.queue = true;
       }
-      if (ombiOpen) {
-        const el = ombiWrapRef.current;
-        if (el && !el.contains(target)) setOmbiOpen(false);
+      if (
+        downloadsOpen &&
+        downloadsWrapRef.current &&
+        !downloadsWrapRef.current.contains(target)
+      ) {
+        downOutside.downloads = true;
       }
-      if (plexOpen) {
-        const el = plexWrapRef.current;
-        if (el && !el.contains(target)) setPlexOpen(false);
+      if (
+        ombiOpen &&
+        ombiWrapRef.current &&
+        !ombiWrapRef.current.contains(target)
+      ) {
+        downOutside.ombi = true;
       }
+      if (
+        plexOpen &&
+        plexWrapRef.current &&
+        !plexWrapRef.current.contains(target)
+      ) {
+        downOutside.plex = true;
+      }
+    };
+    const onPointerUp = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (
+        downOutside.hub &&
+        hubOpen &&
+        hubWrapRef.current &&
+        !hubWrapRef.current.contains(target)
+      ) {
+        setHubOpen(false);
+      }
+      if (
+        downOutside.companion &&
+        companionOpen &&
+        companionWrapRef.current &&
+        !companionWrapRef.current.contains(target)
+      ) {
+        setCompanionOpen(false);
+      }
+      if (
+        downOutside.queue &&
+        queueOpen &&
+        queueWrapRef.current &&
+        !queueWrapRef.current.contains(target)
+      ) {
+        setQueueOpen(false);
+      }
+      if (
+        downOutside.downloads &&
+        downloadsOpen &&
+        downloadsWrapRef.current &&
+        !downloadsWrapRef.current.contains(target)
+      ) {
+        setDownloadsOpen(false);
+      }
+      if (
+        downOutside.ombi &&
+        ombiOpen &&
+        ombiWrapRef.current &&
+        !ombiWrapRef.current.contains(target)
+      ) {
+        setOmbiOpen(false);
+      }
+      if (
+        downOutside.plex &&
+        plexOpen &&
+        plexWrapRef.current &&
+        !plexWrapRef.current.contains(target)
+      ) {
+        setPlexOpen(false);
+      }
+      downOutside.hub = false;
+      downOutside.companion = false;
+      downOutside.queue = false;
+      downOutside.downloads = false;
+      downOutside.ombi = false;
+      downOutside.plex = false;
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") closeAllPopovers();
     };
-    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("pointerup", onPointerUp);
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("pointerup", onPointerUp);
       document.removeEventListener("keydown", onKey);
     };
-  }, [hubOpen, queueOpen, downloadsOpen, ombiOpen, plexOpen, closeAllPopovers]);
+  }, [
+    hubOpen,
+    companionOpen,
+    queueOpen,
+    downloadsOpen,
+    ombiOpen,
+    plexOpen,
+    closeAllPopovers,
+  ]);
+
+  const companionStatus = useMemo(
+    () =>
+      buildCompanionPcStatus(
+        pcConfigs,
+        pcs,
+        serviceHealth,
+        watchServices,
+        services,
+        scanning,
+      ),
+    [pcConfigs, pcs, serviceHealth, watchServices, services, scanning],
+  );
+
+  const companionChip = useMemo(
+    () => companionChipMeta(companionStatus, scanning),
+    [companionStatus, scanning],
+  );
 
   const approveOmbi = async (item: OmbiPendingItem) => {
     const key = `${item.type}-${item.id}`;
@@ -399,15 +706,54 @@ export function DashboardStatus({
     })),
   );
 
+  const arrUpdateCount = chipVersions?.hub?.arrUpdateCount ?? 0;
+  const arrStatusRows = chipVersions?.arrs ?? [];
+  const arrUpdates = arrStatusRows.filter((entry) => entry.updateAvailable);
+  const companionAppVersions = chipVersions?.companion?.apps ?? [];
+  const companionAppUpdateCount =
+    chipVersions?.companion?.appUpdateCount ??
+    companionAppVersions.filter((entry) => entry.updateAvailable).length;
+  const companionAppUpdates = companionAppVersions.filter(
+    (entry) => entry.updateAvailable,
+  );
+
   const chips = [
     {
       id: "hub",
       label: "Hub",
-      value:
-        serverUp === true ? "ok" : serverUp === false ? "down" : "…",
-      tone:
-        serverUp === true ? "good" : serverUp === false ? "bad" : "muted",
+      value: (() => {
+        if (serverUp === false) return "down";
+        if (serverUp !== true) return "…";
+        if (arrUpdateCount > 0) {
+          return arrUpdateCount === 1 ? "upd" : `${arrUpdateCount} upd`;
+        }
+        return "ok";
+      })(),
+      tone: (() => {
+        if (serverUp === true && arrUpdateCount > 0) return "warn";
+        if (serverUp === true) return "good";
+        if (serverUp === false) return "bad";
+        return "muted";
+      })(),
     },
+    ...(companionStatus && companionChip
+      ? [
+          {
+            id: "companion",
+            label: companionStatus.pc.name || "Companion",
+            value:
+              companionAppUpdateCount > 0 && companionChip.tone !== "bad"
+                ? companionAppUpdateCount === 1
+                  ? "upd"
+                  : `${companionAppUpdateCount} upd`
+                : companionChip.value,
+            tone:
+              companionAppUpdateCount > 0 && companionChip.tone !== "bad"
+                ? "warn"
+                : companionChip.tone,
+          },
+        ]
+      : []),
     {
       id: "up",
       label: "Apps up",
@@ -561,7 +907,11 @@ export function DashboardStatus({
                   className={`dash-chip dash-chip-btn tone-${chip.tone}`}
                   aria-expanded={hubOpen}
                   aria-haspopup="dialog"
-                  title="Arrs Hub API connectivity — click for bind / LAN tip"
+                  title={
+                    arrUpdateCount > 0
+                      ? `Arrs Hub — ${arrUpdateCount} *arr update(s) available`
+                      : "Arrs Hub API connectivity — click for bind / LAN tip"
+                  }
                   onClick={() => {
                     if (hubOpen) {
                       setHubOpen(false);
@@ -574,6 +924,11 @@ export function DashboardStatus({
                 >
                   <span className="dash-chip-value">{chip.value}</span>
                   <span className="dash-chip-label">{chip.label}</span>
+                  <ChipProductVersion
+                    version={
+                      chipVersions?.hub?.version || hubInfo?.version || null
+                    }
+                  />
                 </button>
                 {hubOpen && (
                   <div
@@ -628,6 +983,406 @@ export function DashboardStatus({
                         Hub Mobile can connect on the LAN, then restart Hub.
                       </p>
                     )}
+                    {arrStatusRows.length > 0 ? (
+                      <>
+                        <p className="dash-chip-popover-title">
+                          Stack versions
+                        </p>
+                        <ul className="dash-queue-breakdown">
+                          {arrStatusRows.map((app) => {
+                            const job = appUpdateJobs[app.id];
+                            const updating = job?.phase === "running";
+                            const canClickUpdate =
+                              Boolean(app.updateAvailable) &&
+                              CLICK_UPDATE_APP_IDS.has(app.id) &&
+                              !updating;
+                            const value = updating
+                              ? "updating…"
+                              : job?.phase === "error"
+                                ? "err"
+                                : !app.configured
+                                  ? "need key"
+                                  : !app.ok
+                                    ? app.error
+                                      ? "err"
+                                      : "—"
+                                    : app.updateAvailable
+                                      ? app.version
+                                        ? `${app.version} → upd ${app.latestVersion || "?"}`
+                                        : `upd → ${app.latestVersion || "?"}`
+                                      : app.version || "—";
+                            const rowTitle = app.error
+                              ? app.error
+                              : canClickUpdate
+                                ? `Update ${app.label} in the background (Ctrl+click to open app)`
+                                : app.openUrl
+                                  ? `Open ${app.label}`
+                                  : undefined;
+                            const rowClass = [
+                              app.updateAvailable || updating
+                                ? "dash-queue-app-link dash-queue-app-update"
+                                : "dash-queue-app-link",
+                              updating ? "dash-queue-app-updating" : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" ");
+                            const staticClass = [
+                              app.updateAvailable
+                                ? "dash-queue-app-static dash-queue-app-update"
+                                : "dash-queue-app-static",
+                              updating ? "dash-queue-app-updating" : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" ");
+                            const row = (
+                              <>
+                                <span>{app.label}</span>
+                                <strong>{value}</strong>
+                              </>
+                            );
+                            const openApp = () => {
+                              if (app.openUrl) {
+                                window.open(
+                                  app.openUrl,
+                                  "_blank",
+                                  "noopener,noreferrer",
+                                );
+                              }
+                              setHubOpen(false);
+                            };
+                            return (
+                              <li key={app.id}>
+                                {canClickUpdate ? (
+                                  <button
+                                    type="button"
+                                    className={`${rowClass} dash-queue-app-btn`}
+                                    title={rowTitle}
+                                    disabled={updating}
+                                    onClick={(event) => {
+                                      if (event.ctrlKey || event.metaKey) {
+                                        openApp();
+                                        return;
+                                      }
+                                      void startStackAppUpdate(app.id);
+                                    }}
+                                    onAuxClick={(event) => {
+                                      if (event.button === 1) {
+                                        event.preventDefault();
+                                        openApp();
+                                      }
+                                    }}
+                                  >
+                                    {row}
+                                  </button>
+                                ) : app.openUrl ? (
+                                  <a
+                                    className={rowClass}
+                                    href={app.openUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    title={rowTitle || `Open ${app.label}`}
+                                    onClick={() => setHubOpen(false)}
+                                  >
+                                    {row}
+                                  </a>
+                                ) : (
+                                  <span
+                                    className={staticClass}
+                                    title={rowTitle}
+                                  >
+                                    {row}
+                                  </span>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                        {appUpdateNotice ? (
+                          <p className="dash-chip-popover-hint">{appUpdateNotice}</p>
+                        ) : null}
+                        {arrUpdates.length > 0 ? (
+                          <p className="dash-chip-popover-hint dash-chip-popover-hint-warn">
+                            Click a yellow *arr / Tautulli row to update in the
+                            background. Ctrl+click or middle-click opens the
+                            app.
+                          </p>
+                        ) : (
+                          <p className="dash-chip-popover-hint">
+                            Enabled *arr apps with a Home URL appear here. Hover
+                            &quot;need key&quot; / &quot;err&quot; for details.
+                            FileFlows shows the local build when found.
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <p className="dash-chip-popover-hint">
+                        Save *arr / Tautulli API keys in Settings → Apps &amp;
+                        monitoring to check versions here.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          }
+
+          if (chip.id === "companion" && companionStatus) {
+            const { pc, online, message, apps } = companionStatus;
+            return (
+              <div
+                key={chip.id}
+                className="dash-chip-wrap"
+                ref={companionWrapRef}
+              >
+                <button
+                  type="button"
+                  className={`dash-chip dash-chip-btn tone-${chip.tone}`}
+                  aria-expanded={companionOpen}
+                  aria-haspopup="dialog"
+                  title={`${pc.name} Companion PC — click for app status`}
+                  onClick={() => {
+                    if (companionOpen) {
+                      setCompanionOpen(false);
+                      return;
+                    }
+                    closeAllPopovers();
+                    setCompanionOpen(true);
+                  }}
+                >
+                  <span className="dash-chip-value">{chip.value}</span>
+                  <span className="dash-chip-label">{chip.label}</span>
+                  <ChipProductVersion
+                    version={chipVersions?.companion?.version || null}
+                  />
+                </button>
+                {companionOpen && (
+                  <div
+                    className="dash-chip-popover"
+                    role="dialog"
+                    aria-label={`${pc.name} companion status`}
+                  >
+                    <p className="dash-chip-popover-title">
+                      {pc.name}
+                      {pc.host ? ` · ${pc.host}` : ""}
+                    </p>
+                    <ul className="dash-queue-breakdown">
+                      <li>
+                        <span className="dash-queue-app-static">
+                          <span>Companion</span>
+                          <strong>
+                            {online === true
+                              ? "Online"
+                              : online === false
+                                ? "Offline"
+                                : "Checking…"}
+                            {chipVersions?.companion?.version
+                              ? ` · v${chipVersions.companion.version}`
+                              : ""}
+                          </strong>
+                        </span>
+                      </li>
+                      {pc.companionUrl ? (
+                        <li>
+                          <span className="dash-queue-app-static">
+                            <span>LAN API</span>
+                            <strong>{pc.companionUrl.replace(/^https?:\/\//, "")}</strong>
+                          </span>
+                        </li>
+                      ) : null}
+                    </ul>
+                    {message ? (
+                      <p className="dash-chip-popover-hint">{message}</p>
+                    ) : null}
+                    <p className="dash-chip-popover-title">Apps on this PC</p>
+                    {(() => {
+                      const byId = new Map(
+                        apps.map((app) => [app.id, { ...app }]),
+                      );
+                      for (const ver of companionAppVersions) {
+                        if (!byId.has(ver.id)) {
+                          byId.set(ver.id, {
+                            id: ver.id,
+                            label: ver.label || ver.id,
+                            up: null,
+                            openUrl: ver.openUrl || null,
+                            message: undefined,
+                          });
+                        }
+                      }
+                      const displayApps = [
+                        "qbittorrent",
+                        "sabnzbd",
+                        "fileflows-node",
+                        "fileflows",
+                        "surfshark",
+                      ]
+                        .map((id) => byId.get(id))
+                        .filter(
+                          (app): app is NonNullable<typeof app> =>
+                            Boolean(app),
+                        )
+                        .concat(
+                          [...byId.values()].filter(
+                            (app) =>
+                              ![
+                                "qbittorrent",
+                                "sabnzbd",
+                                "fileflows-node",
+                                "fileflows",
+                                "surfshark",
+                              ].includes(app.id),
+                          ),
+                        );
+
+                      if (displayApps.length === 0) {
+                        return (
+                          <p className="dash-chip-popover-empty">
+                            No companion apps wired yet. In Port Watch, set
+                            Restart on → {pc.name} for qBit, SAB, or FileFlows
+                            Node.
+                          </p>
+                        );
+                      }
+
+                      return (
+                        <ul className="dash-queue-breakdown">
+                          {displayApps.map((app) => {
+                            const verInfo = companionAppVersions.find(
+                              (entry) => entry.id === app.id,
+                            );
+                            const job = appUpdateJobs[app.id];
+                            const updating = job?.phase === "running";
+                            const health =
+                              app.up === null && verInfo?.version
+                                ? "installed"
+                                : companionAppHealthLabel(app.up);
+                            let value = health;
+                            if (updating) {
+                              value = "updating…";
+                            } else if (job?.phase === "error") {
+                              value = "err";
+                            } else if (verInfo?.updateAvailable) {
+                              value = `upd → ${verInfo.latestVersion || "?"}`;
+                            } else if (verInfo?.version) {
+                              value =
+                                app.up === null
+                                  ? `v${verInfo.version}`
+                                  : `${health} · v${verInfo.version}`;
+                            } else if (
+                              verInfo &&
+                              !verInfo.ok &&
+                              verInfo.configured
+                            ) {
+                              value = `${health} · ver?`;
+                            }
+                            const hasUpdate = Boolean(
+                              verInfo?.updateAvailable,
+                            );
+                            const canClickUpdate =
+                              hasUpdate &&
+                              COMPANION_CLICK_UPDATE_IDS.has(app.id) &&
+                              !updating;
+                            const rowClass = [
+                              hasUpdate || updating
+                                ? "dash-queue-app-link dash-queue-app-update"
+                                : "dash-queue-app-link",
+                              updating ? "dash-queue-app-updating" : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" ");
+                            const staticClass = [
+                              hasUpdate || updating
+                                ? "dash-queue-app-static dash-queue-app-update"
+                                : "dash-queue-app-static",
+                              updating ? "dash-queue-app-updating" : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" ");
+                            const canOpen =
+                              Boolean(app.openUrl) &&
+                              app.id !== "fileflows-node" &&
+                              app.id !== "surfshark";
+                            const row = (
+                              <>
+                                <span>{app.label}</span>
+                                <strong>{value}</strong>
+                              </>
+                            );
+                            const openApp = () => {
+                              if (app.openUrl) {
+                                window.open(
+                                  app.openUrl,
+                                  "_blank",
+                                  "noopener,noreferrer",
+                                );
+                              }
+                              setCompanionOpen(false);
+                            };
+                            return (
+                              <li key={app.id}>
+                                {canClickUpdate ? (
+                                  <button
+                                    type="button"
+                                    className={`${rowClass} dash-queue-app-btn`}
+                                    title={`Update ${app.label} in the background via Companion (Ctrl+click to open)`}
+                                    disabled={updating}
+                                    onClick={(event) => {
+                                      if (event.ctrlKey || event.metaKey) {
+                                        openApp();
+                                        return;
+                                      }
+                                      void startStackAppUpdate(app.id, pc.id);
+                                    }}
+                                  >
+                                    {row}
+                                  </button>
+                                ) : canOpen ? (
+                                  <a
+                                    className={rowClass}
+                                    href={app.openUrl!}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    title={
+                                      hasUpdate
+                                        ? `Update available for ${app.label}`
+                                        : app.message || `Open ${app.label}`
+                                    }
+                                    onClick={() => setCompanionOpen(false)}
+                                  >
+                                    {row}
+                                  </a>
+                                ) : (
+                                  <span
+                                    className={staticClass}
+                                    title={
+                                      job?.error || app.message || undefined
+                                    }
+                                  >
+                                    {row}
+                                  </span>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      );
+                    })()}
+                    {companionAppUpdates.length > 0 ? (
+                      <p className="dash-chip-popover-hint dash-chip-popover-hint-warn">
+                        {companionAppUpdates.some((a) =>
+                          COMPANION_CLICK_UPDATE_IDS.has(a.id),
+                        )
+                          ? "Yellow qBit/SAB rows: click to update in the background on this PC (winget)."
+                          : `${companionAppUpdates.map((a) => a.label).join(", ")} have updates — install on ${pc.name}.`}
+                      </p>
+                    ) : (
+                      <p className="dash-chip-popover-hint">
+                        Status from Port Watch. Hover an app for the last check
+                        detail (FileFlows Node uses Companion service/process
+                        probe — Discord alerts only after consecutive confirmed
+                        downs).
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
@@ -671,6 +1426,7 @@ export function DashboardStatus({
                   title="Active downloads — click for qBittorrent / SABnzbd; open an app to jump to its UI"
                   onClick={() => {
                     setHubOpen(false);
+                    setCompanionOpen(false);
                     setQueueOpen(false);
                     setOmbiOpen(false);
                     setPlexOpen(false);
@@ -751,6 +1507,7 @@ export function DashboardStatus({
                   title="*arr queue — click for per-app counts; open an app to jump to its Activity Queue"
                   onClick={() => {
                     setHubOpen(false);
+                    setCompanionOpen(false);
                     setDownloadsOpen(false);
                     setOmbiOpen(false);
                     setPlexOpen(false);

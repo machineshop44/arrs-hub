@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppSettings, ServiceConfig } from "../types";
 import { APP_VERSION_LABEL } from "../version";
 import { getServiceUrl } from "../types";
 import { PlexUpdateCard } from "./PlexUpdateCard";
+import {
+  AppsMonitoringSection,
+  type AppsMonitoringHandle,
+} from "./AppsMonitoringSection";
+import { useModalBackdropClose } from "../hooks/useModalBackdropClose";
 
 interface SettingsPanelProps {
   settings: AppSettings;
@@ -13,6 +18,8 @@ interface SettingsPanelProps {
   onReset: () => void;
   /** Optional: open Streams panel (closes Settings) */
   onOpenStreams?: () => void;
+  /** Scroll to section id on open (e.g. apps-monitoring from Port Watch) */
+  initialSection?: string | null;
   /** Downloader lite — service URLs + optional download creds only */
   liteMode?: boolean;
 }
@@ -25,8 +32,24 @@ export function SettingsPanel({
   onUpdateSubtitle,
   onReset,
   onOpenStreams,
+  initialSection = null,
   liteMode = false,
 }: SettingsPanelProps) {
+  const appsMonitorRef = useRef<AppsMonitoringHandle | null>(null);
+
+  const handleDone = useCallback(async () => {
+    try {
+      await appsMonitorRef.current?.flushCredentials();
+    } catch {
+      // still close
+    }
+    onClose();
+  }, [onClose]);
+
+  const backdrop = useModalBackdropClose(() => {
+    void handleDone();
+  });
+
   const [sonarrApiKey, setSonarrApiKey] = useState("");
   const [radarrApiKey, setRadarrApiKey] = useState("");
   const [sonarrKeySet, setSonarrKeySet] = useState(false);
@@ -54,19 +77,8 @@ export function SettingsPanel({
   const [qbPassSet, setQbPassSet] = useState(false);
   const [sabKey, setSabKey] = useState("");
   const [sabKeySet, setSabKeySet] = useState(false);
-  const [ombiKey, setOmbiKey] = useState("");
-  const [ombiKeySet, setOmbiKeySet] = useState(false);
   const [integrationsBusy, setIntegrationsBusy] = useState(false);
   const [integrationsMessage, setIntegrationsMessage] = useState<{
-    type: "ok" | "err";
-    text: string;
-  } | null>(null);
-
-  const [tautulliBaseUrl, setTautulliBaseUrl] = useState("");
-  const [tautulliApiKey, setTautulliApiKey] = useState("");
-  const [tautulliKeySet, setTautulliKeySet] = useState(false);
-  const [tautulliBusy, setTautulliBusy] = useState(false);
-  const [tautulliMessage, setTautulliMessage] = useState<{
     type: "ok" | "err";
     text: string;
   } | null>(null);
@@ -129,37 +141,29 @@ export function SettingsPanel({
       setQbPassSet(Boolean(json.settings?.qbittorrent?.passwordSet));
       setSabKey("");
       setSabKeySet(Boolean(json.settings?.sabnzbd?.apiKeySet));
-      setOmbiKey("");
-      setOmbiKeySet(Boolean(json.settings?.ombi?.apiKeySet));
     } catch {
       setApiServerUp(false);
     }
   }, []);
 
-  const loadTautulli = useCallback(async () => {
-    try {
-      const health = await fetch("/api/health");
-      setApiServerUp(health.ok);
-      if (!health.ok) return;
-      const res = await fetch("/api/tautulli/settings");
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Could not load Tautulli settings");
-      const saved = String(json.settings?.baseUrl || "").trim();
-      const hub = hubUrl("tautulli");
-      setTautulliBaseUrl(saved || hub || "http://localhost:8181");
-      setTautulliApiKey("");
-      setTautulliKeySet(Boolean(json.settings?.apiKeySet));
-    } catch {
-      setApiServerUp(false);
-    }
-  }, [settings.services]);
+  useEffect(() => {
+    if (!initialSection) return;
+    const timer = window.setTimeout(() => {
+      document.getElementById(initialSection)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [initialSection]);
 
   useEffect(() => {
-    void loadApiKeys();
     void loadDiscord();
-    void loadIntegrations();
-    void loadTautulli();
-  }, [loadApiKeys, loadDiscord, loadIntegrations, loadTautulli]);
+    if (liteMode) {
+      void loadApiKeys();
+      void loadIntegrations();
+    }
+  }, [loadApiKeys, loadDiscord, loadIntegrations, liteMode]);
 
   const saveApiKeys = async () => {
     setApiBusy(true);
@@ -207,17 +211,13 @@ export function SettingsPanel({
             baseUrl: hubUrl("sabnzbd"),
             apiKey: sabKey,
           },
-          ombi: {
-            baseUrl: hubUrl("ombi"),
-            apiKey: ombiKey,
-          },
         }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Save failed");
       setIntegrationsMessage({
         type: "ok",
-        text: "Download / Ombi credentials saved (dashboard status chips).",
+        text: "Download credentials saved.",
       });
       await loadIntegrations();
     } catch (err) {
@@ -227,38 +227,6 @@ export function SettingsPanel({
       });
     } finally {
       setIntegrationsBusy(false);
-    }
-  };
-
-  const saveTautulli = async () => {
-    setTautulliBusy(true);
-    setTautulliMessage(null);
-    try {
-      const res = await fetch("/api/tautulli/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          baseUrl:
-            tautulliBaseUrl.trim() ||
-            hubUrl("tautulli") ||
-            "http://localhost:8181",
-          apiKey: tautulliApiKey,
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Save failed");
-      setTautulliMessage({
-        type: "ok",
-        text: "Tautulli settings saved on this PC (same file Streams uses).",
-      });
-      await loadTautulli();
-    } catch (err) {
-      setTautulliMessage({
-        type: "err",
-        text: err instanceof Error ? err.message : String(err),
-      });
-    } finally {
-      setTautulliBusy(false);
     }
   };
 
@@ -326,7 +294,12 @@ export function SettingsPanel({
   };
 
   return (
-    <div className="settings-overlay" onClick={onClose} role="presentation">
+    <div
+      className="settings-overlay"
+      role="presentation"
+      onPointerDown={backdrop.onPointerDown}
+      onPointerUp={backdrop.onPointerUp}
+    >
       <div
         className="settings-panel"
         onClick={(e) => e.stopPropagation()}
@@ -336,7 +309,7 @@ export function SettingsPanel({
       >
         <header className="settings-header">
           <h2 id="settings-title">Settings</h2>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close settings">
+          <button type="button" className="icon-btn" onClick={() => void handleDone()} aria-label="Close settings">
             ✕
           </button>
         </header>
@@ -401,12 +374,22 @@ export function SettingsPanel({
             )}
           </section>
 
+          {!liteMode && (
+            <AppsMonitoringSection
+              ref={appsMonitorRef}
+              settings={settings}
+              onUpdateService={onUpdateService}
+              serverUp={apiServerUp}
+              onOpenStreams={onOpenStreams}
+            />
+          )}
+
+          {liteMode && (
           <section className="settings-group">
             <h3>Services</h3>
             <p className="settings-hint">
-              {liteMode
-                ? "Local URLs for qBittorrent and SABnzbd (defaults: localhost:8080 and :8085)."
-                : "Enter a Home address (local IP & port) and optional Remote address for each app. With Auto selected, the dashboard picks Home or Remote from your network — use Home/Remote in the header only if you need to override."}
+              Local URLs for qBittorrent and SABnzbd (defaults: localhost:8080
+              and :8085).
             </p>
             <div className="settings-services">
               {settings.services.map((service) => (
@@ -453,7 +436,9 @@ export function SettingsPanel({
                       placeholder="https://sonarr.yourdomain.com"
                       disabled={!service.enabled}
                       onChange={(e) =>
-                        onUpdateService(service.id, { remoteUrl: e.target.value })
+                        onUpdateService(service.id, {
+                          remoteUrl: e.target.value,
+                        })
                       }
                     />
                   </label>
@@ -461,10 +446,11 @@ export function SettingsPanel({
               ))}
             </div>
           </section>
+          )}
 
           {!liteMode && <PlexUpdateCard serverUp={apiServerUp} />}
 
-          {!liteMode && (
+          {liteMode && (
           <section className="settings-group">
             <h3>TRaSH Sync API keys</h3>
             <p className="settings-hint">
@@ -523,83 +509,12 @@ export function SettingsPanel({
           </section>
           )}
 
-          {!liteMode && (
+          {liteMode && (
           <section className="settings-group">
-            <h3>Tautulli</h3>
+            <h3>Download clients</h3>
             <p className="settings-hint">
-              Base URL and API key from{" "}
-              <strong>Tautulli → Settings → Web Interface → API</strong>.
-              Leave the key blank to keep the saved value. Also used by Streams
-              and the dashboard stream count.
-            </p>
-            {apiServerUp === false && (
-              <p className="settings-hint">
-                Hub API is offline — start the hub server to save Tautulli
-                settings.
-              </p>
-            )}
-            <label className="field">
-              <span>Tautulli base URL</span>
-              <input
-                type="text"
-                autoComplete="off"
-                placeholder="http://localhost:8181"
-                value={tautulliBaseUrl}
-                disabled={apiServerUp === false || tautulliBusy}
-                onChange={(e) => setTautulliBaseUrl(e.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>
-                Tautulli API key
-                {tautulliKeySet ? " (saved — leave blank to keep)" : ""}
-              </span>
-              <input
-                type="password"
-                autoComplete="off"
-                placeholder={
-                  tautulliKeySet ? "•••• saved ••••" : "Paste API key"
-                }
-                value={tautulliApiKey}
-                disabled={apiServerUp === false || tautulliBusy}
-                onChange={(e) => setTautulliApiKey(e.target.value)}
-              />
-            </label>
-            {tautulliMessage && (
-              <div
-                className={`sync-alert ${tautulliMessage.type === "ok" ? "sync-alert-ok" : "sync-alert-err"}`}
-              >
-                {tautulliMessage.text}
-              </div>
-            )}
-            <div className="watchdog-bar-actions">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={apiServerUp === false || tautulliBusy}
-                onClick={() => void saveTautulli()}
-              >
-                {tautulliBusy ? "Saving…" : "Save Tautulli settings"}
-              </button>
-              {onOpenStreams && (
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={onOpenStreams}
-                >
-                  Open Streams
-                </button>
-              )}
-            </div>
-          </section>
-          )}
-
-          <section className="settings-group">
-            <h3>{liteMode ? "Download clients" : "Downloads & Ombi"}</h3>
-            <p className="settings-hint">
-              {liteMode
-                ? "Optional credentials if your qBit or SAB web UI requires login for port checks."
-                : "Optional credentials for dashboard chips (active downloads and open Ombi requests). URLs come from each service's Home address above."}
+              Optional credentials if your qBit or SAB web UI requires login for
+              port checks.
             </p>
             <label className="field">
               <span>qBittorrent username</span>
@@ -639,22 +554,6 @@ export function SettingsPanel({
                 onChange={(e) => setSabKey(e.target.value)}
               />
             </label>
-            {!liteMode && (
-            <label className="field">
-              <span>
-                Ombi API key
-                {ombiKeySet ? " (saved — leave blank to keep)" : ""}
-              </span>
-              <input
-                type="password"
-                autoComplete="off"
-                placeholder={ombiKeySet ? "•••• saved ••••" : "Paste API key"}
-                value={ombiKey}
-                disabled={apiServerUp === false || integrationsBusy}
-                onChange={(e) => setOmbiKey(e.target.value)}
-              />
-            </label>
-            )}
             {integrationsMessage && (
               <div
                 className={`sync-alert ${integrationsMessage.type === "ok" ? "sync-alert-ok" : "sync-alert-err"}`}
@@ -668,9 +567,10 @@ export function SettingsPanel({
               disabled={apiServerUp === false || integrationsBusy}
               onClick={() => void saveIntegrations()}
             >
-              {integrationsBusy ? "Saving…" : liteMode ? "Save download creds" : "Save download / Ombi creds"}
+              {integrationsBusy ? "Saving…" : "Save download creds"}
             </button>
           </section>
+          )}
 
           {!liteMode && (
           <section className="settings-group">
@@ -769,7 +669,7 @@ export function SettingsPanel({
           <button type="button" className="btn btn-secondary" onClick={onReset}>
             Reset to defaults
           </button>
-          <button type="button" className="btn btn-primary" onClick={onClose}>
+          <button type="button" className="btn btn-primary" onClick={() => void handleDone()}>
             Done
           </button>
         </footer>

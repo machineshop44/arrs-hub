@@ -53,6 +53,27 @@ const pcState = new Map();
 /** @type {ReturnType<typeof setInterval> | null} */
 let timer = null;
 
+/** @type {ReturnType<typeof setTimeout> | null} */
+let firstCycleTimer = null;
+
+/** Wall clock when Hub watchdog first started (process lifetime). */
+let watchdogStartedAt = 0;
+
+const FIRST_CYCLE_SETTLE_MS = 10_000;
+
+function startupGraceRemainingMs(settings) {
+  const graceSec = Math.max(0, Number(settings?.startupGraceSeconds) || 0);
+  if (!watchdogStartedAt || graceSec <= 0) return 0;
+  return Math.max(0, graceSec * 1000 - (Date.now() - watchdogStartedAt));
+}
+
+function failThresholdFor(target, settings) {
+  const base = Math.max(1, Number(settings?.failThreshold) || 2);
+  // FileFlows Node is a flaky process probe (dotnet.dll) — need more misses.
+  if (target?.id === "fileflows-node") return Math.max(4, base);
+  return base;
+}
+
 function maskWebhook(url) {
   if (!url) return "";
   if (url.length <= 24) return "••••••••";
@@ -93,6 +114,10 @@ export function getWatchStatus() {
       enabled: settings.enabled,
       intervalSeconds: settings.intervalSeconds,
       failThreshold: settings.failThreshold,
+      startupGraceSeconds: Math.max(0, Number(settings.startupGraceSeconds) || 0),
+      startupGraceRemainingSeconds: Math.ceil(
+        startupGraceRemainingMs(settings) / 1000,
+      ),
       restartCooldownSeconds: settings.restartCooldownSeconds,
       autoRestart: settings.autoRestart,
       wolEnabled: settings.wolEnabled !== false,
@@ -362,20 +387,25 @@ async function probeViaCompanion(target, serviceCfg, settings) {
     },
   );
 
+  // Transport / auth / timeout — unknown (do not Discord "down" or auto-restart).
   if (!status.ok && status.running !== true) {
     return {
-      up: false,
+      up: null,
       latencyMs: status.latencyMs,
-      message: status.message || "Companion status check failed",
+      message: status.message || "Companion status check failed (unknown)",
     };
   }
+
+  const detailParts = [
+    status.message || (status.running ? "Running" : "Not running"),
+  ];
+  if (status.method) detailParts.push(`via ${status.method}`);
+  if (status.serviceState) detailParts.push(`service=${status.serviceState}`);
 
   return {
     up: Boolean(status.running),
     latencyMs: status.latencyMs,
-    message:
-      status.message ||
-      (status.running ? "Running on Companion PC" : "Not running"),
+    message: detailParts.join(" · "),
   };
 }
 
@@ -400,6 +430,8 @@ async function checkOne(target) {
 
   const companionProbe = wantsCompanionProbe(target, serviceCfg);
   const parsed = companionProbe ? null : hostPortFromUrl(target.url);
+  const graceLeftMs = startupGraceRemainingMs(settings);
+  const inStartupGrace = graceLeftMs > 0;
 
   let result;
   if (companionProbe) {
@@ -414,7 +446,36 @@ async function checkOne(target) {
     });
     return;
   } else {
-    result = await checkPort(parsed.host, parsed.port);
+    // Give LAN / *arr more time to answer while Hub itself is still starting.
+    result = await checkPort(
+      parsed.host,
+      parsed.port,
+      inStartupGrace ? 5000 : 2500,
+    );
+  }
+
+  // First minutes after Hub start: treat hard fails as "still verifying"
+  // so we don't Discord-down or relaunch ytarr/Radarr (extra Chrome windows).
+  if (inStartupGrace && result.up === false) {
+    const secs = Math.max(1, Math.ceil(graceLeftMs / 1000));
+    const prevSoft = state.get(target.id) ?? {
+      consecutiveFails: 0,
+      lastRestartAt: null,
+      lastRestartResult: null,
+      downAlertSent: false,
+      up: null,
+    };
+    state.set(target.id, {
+      ...prevSoft,
+      // Keep green if we already confirmed up; otherwise stay unknown (not red).
+      up: prevSoft.up === true ? true : null,
+      latencyMs: null,
+      lastChecked: new Date().toISOString(),
+      consecutiveFails: 0,
+      downAlertSent: false,
+      message: `Startup verify (${secs}s left) — not restarting yet`,
+    });
+    return;
   }
 
   const prev = state.get(target.id) ?? {
@@ -425,16 +486,66 @@ async function checkOne(target) {
     up: null,
   };
 
-  let consecutiveFails = result.up ? 0 : (prev.consecutiveFails || 0) + 1;
+  const threshold = failThresholdFor(target, settings);
+  const lastRestartAtPrev = prev.lastRestartAt ?? null;
+  const recentlyRestarted =
+    lastRestartAtPrev &&
+    Date.now() - Date.parse(lastRestartAtPrev) < 90_000;
+  // After we just launched FileFlows Node, process lookup can miss for a bit.
+  if (recentlyRestarted && result.up === false) {
+    result = {
+      up: null,
+      latencyMs: result.latencyMs,
+      message: `Settling after restart — ${result.message}`,
+    };
+  }
+
+  let consecutiveFails =
+    result.up === true
+      ? 0
+      : result.up === false
+        ? (prev.consecutiveFails || 0) + 1
+        : prev.consecutiveFails || 0;
   let lastRestartAt = prev.lastRestartAt ?? null;
   let lastRestartResult = prev.lastRestartResult ?? null;
   let downAlertSent = Boolean(prev.downAlertSent);
 
-  const wasDown = prev.up === false;
-  const recovered = result.up && wasDown;
+  const confirmedRecovered = result.up === true && downAlertSent;
 
-  if (result.up) {
+  if (result.up === true) {
     downAlertSent = false;
+  }
+
+  // Unknown probe (Companion timeout etc.) — keep last known status message, skip alerts.
+  if (result.up === null) {
+    state.set(target.id, {
+      ...prev,
+      up: prev.up === true || prev.up === false ? prev.up : null,
+      latencyMs: result.latencyMs,
+      lastChecked: new Date().toISOString(),
+      consecutiveFails,
+      lastRestartAt,
+      lastRestartResult,
+      downAlertSent,
+      message: result.message || prev.message || "Status unknown",
+    });
+    return;
+  }
+
+  // Don't flip to down / Discord recovered until misses actually hit the threshold.
+  if (result.up === false && consecutiveFails < threshold) {
+    state.set(target.id, {
+      ...prev,
+      up: prev.up === true ? true : prev.up,
+      latencyMs: result.latencyMs,
+      lastChecked: new Date().toISOString(),
+      consecutiveFails,
+      lastRestartAt,
+      lastRestartResult,
+      downAlertSent,
+      message: `Unconfirmed miss ${consecutiveFails}/${threshold} — ${result.message}`,
+    });
+    return;
   }
 
   const hasRestartTarget =
@@ -457,7 +568,7 @@ async function checkOne(target) {
   if (
     !result.up &&
     !downAlertSent &&
-    consecutiveFails >= settings.failThreshold &&
+    consecutiveFails >= threshold &&
     settings.discordNotifyDown !== false
   ) {
     downAlertSent = true;
@@ -468,7 +579,7 @@ async function checkOne(target) {
         companionProbe
           ? `Check: Companion service/process`
           : `Host: \`${locationLabel}\``,
-        `Failed checks: **${consecutiveFails}** (threshold ${settings.failThreshold})`,
+        `Failed checks: **${consecutiveFails}** (threshold ${threshold})`,
         `Detail: ${result.message}`,
         canRestart
           ? usesCompanion
@@ -485,7 +596,7 @@ async function checkOne(target) {
   const shouldRestart =
     !result.up &&
     canRestart &&
-    consecutiveFails >= settings.failThreshold;
+    consecutiveFails >= threshold;
 
   if (shouldRestart) {
     const last = lastRestartAt ? Date.parse(lastRestartAt) : 0;
@@ -522,7 +633,7 @@ async function checkOne(target) {
     }
   }
 
-  if (recovered && settings.discordNotifyRecovered !== false) {
+  if (confirmedRecovered && settings.discordNotifyRecovered !== false) {
     await notifyDiscord(settings, {
       title: `${target.name} is back up`,
       description: companionProbe
@@ -731,21 +842,41 @@ async function checkPcs() {
   }
 }
 
-export function restartWatchLoop() {
+/**
+ * @param {{ settleFirstCycle?: boolean, settleMs?: number }} [opts]
+ */
+export function restartWatchLoop(opts = {}) {
   if (timer) {
     clearInterval(timer);
     timer = null;
+  }
+  if (firstCycleTimer) {
+    clearTimeout(firstCycleTimer);
+    firstCycleTimer = null;
   }
   const settings = loadWatchdogSettings();
   if (!settings.enabled) return;
 
   const intervalMs = Math.max(10, settings.intervalSeconds) * 1000;
-  void runWatchCycle();
+  const settleMs = opts.settleFirstCycle
+    ? Math.max(0, Number(opts.settleMs) || FIRST_CYCLE_SETTLE_MS)
+    : 0;
+
+  if (settleMs > 0) {
+    firstCycleTimer = setTimeout(() => {
+      firstCycleTimer = null;
+      void runWatchCycle();
+    }, settleMs);
+  } else {
+    void runWatchCycle();
+  }
   timer = setInterval(() => {
     void runWatchCycle();
   }, intervalMs);
 }
 
 export function startWatchdog() {
-  restartWatchLoop();
+  if (!watchdogStartedAt) watchdogStartedAt = Date.now();
+  // Brief settle so *arr / ytarr ports are listening before the first probe.
+  restartWatchLoop({ settleFirstCycle: true, settleMs: FIRST_CYCLE_SETTLE_MS });
 }

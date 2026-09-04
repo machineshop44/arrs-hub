@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useModalBackdropClose } from "../hooks/useModalBackdropClose";
 
 export type ServiceWatchConfig = {
   monitor: boolean;
@@ -34,6 +35,9 @@ export type WatchdogSettings = {
   enabled: boolean;
   intervalSeconds: number;
   failThreshold: number;
+  /** Seconds after Hub start before Discord-down / auto-restart. */
+  startupGraceSeconds?: number;
+  startupGraceRemainingSeconds?: number;
   restartCooldownSeconds: number;
   autoRestart: boolean;
   wolEnabled: boolean;
@@ -78,6 +82,7 @@ export function WatchdogPanel({
   embedded = false,
   lite = false,
 }: WatchdogPanelProps) {
+  const backdrop = useModalBackdropClose(onClose);
   const [settings, setSettings] = useState<WatchdogSettings | null>(null);
   const [pcStatus, setPcStatus] = useState<Record<string, PcLiveStatus>>({});
   const [busy, setBusy] = useState(false);
@@ -144,6 +149,7 @@ export function WatchdogPanel({
           enabled: settings.enabled,
           intervalSeconds: settings.intervalSeconds,
           failThreshold: settings.failThreshold,
+          startupGraceSeconds: settings.startupGraceSeconds ?? 120,
           restartCooldownSeconds: settings.restartCooldownSeconds,
           autoRestart: settings.autoRestart,
           wolEnabled: settings.wolEnabled,
@@ -387,6 +393,25 @@ export function WatchdogPanel({
                           ? {
                               ...prev,
                               failThreshold: Number(e.target.value) || 2,
+                            }
+                          : prev,
+                      )
+                    }
+                  />
+                </label>
+                <label className="field">
+                  <span>Startup wait before restart (seconds)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={600}
+                    value={settings.startupGraceSeconds ?? 120}
+                    onChange={(e) =>
+                      setSettings((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              startupGraceSeconds: Number(e.target.value) || 0,
                             }
                           : prev,
                       )
@@ -800,7 +825,12 @@ export function WatchdogPanel({
   }
 
   return (
-    <div className="settings-overlay" onClick={onClose} role="presentation">
+    <div
+      className="settings-overlay"
+      role="presentation"
+      onPointerDown={backdrop.onPointerDown}
+      onPointerUp={backdrop.onPointerUp}
+    >
       {panelBody}
     </div>
   );

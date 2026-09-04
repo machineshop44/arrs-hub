@@ -8,7 +8,6 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { ServiceSection } from "./components/ServiceSection";
 import { TrashUpdateBanner } from "./components/TrashUpdateBanner";
 import { SyncPanel } from "./components/SyncPanel";
-import { WatchdogPanel } from "./components/WatchdogPanel";
 import { WorkoutsPanel } from "./components/WorkoutsPanel";
 import { StreamsPanel } from "./components/StreamsPanel";
 import { DashboardStatus } from "./components/DashboardStatus";
@@ -43,7 +42,7 @@ export default function App() {
   const trash = useTrashUpdates(trashEnabled);
   const watchdog = useServiceHealth(settings.services, activeMode);
 
-  const [showWatchdog, setShowWatchdog] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<string | null>(null);
   const [showWorkouts, setShowWorkouts] = useState(false);
   const [showStreams, setShowStreams] = useState(false);
 
@@ -135,14 +134,6 @@ export default function App() {
             <button
               type="button"
               className="btn btn-ghost"
-              title="Live Plex streams from Tautulli"
-              onClick={() => setShowStreams(true)}
-            >
-              📡 Streams
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
               title="Play warm-up + workout day on your Plex TV"
               onClick={() => setShowWorkouts(true)}
             >
@@ -151,8 +142,11 @@ export default function App() {
             <button
               type="button"
               className="btn btn-ghost"
-              title="Monitor Home ports and auto-restart Windows services if an app goes down"
-              onClick={() => setShowWatchdog(true)}
+              title="Apps, API keys, port watch & restart"
+              onClick={() => {
+                setSettingsSection("apps-monitoring");
+                setShowSettings(true);
+              }}
             >
               💓 Port Watch
             </button>
@@ -166,7 +160,10 @@ export default function App() {
             <button
               type="button"
               className="btn btn-ghost"
-              onClick={() => setShowSettings(true)}
+              onClick={() => {
+                setSettingsSection(null);
+                setShowSettings(true);
+              }}
             >
               ⚙️ Settings
             </button>
@@ -191,6 +188,10 @@ export default function App() {
           downCount={downCount}
           serverUp={watchdog.serverUp}
           scanning={watchdog.scanning}
+          pcConfigs={watchdog.pcConfigs}
+          pcs={watchdog.pcs}
+          serviceHealth={watchdog.health}
+          watchServices={watchdog.watchServices}
           onOpenStreams={() => setShowStreams(true)}
         />
 
@@ -322,13 +323,18 @@ export default function App() {
       {showSettings && (
         <SettingsPanel
           settings={settings}
-          onClose={() => setShowSettings(false)}
+          initialSection={settingsSection}
+          onClose={() => {
+            setShowSettings(false);
+            setSettingsSection(null);
+          }}
           onUpdateService={updateService}
           onUpdateTitle={updateTitle}
           onUpdateSubtitle={updateSubtitle}
           onReset={resetSettings}
           onOpenStreams={() => {
             setShowSettings(false);
+            setSettingsSection(null);
             setShowStreams(true);
           }}
         />
@@ -339,17 +345,6 @@ export default function App() {
           onClose={() => setShowSync(false)}
           connectionMode={activeMode}
           services={settings.services}
-        />
-      )}
-
-      {showWatchdog && (
-        <WatchdogPanel
-          onClose={() => setShowWatchdog(false)}
-          serviceNames={settings.services.map((service) => ({
-            id: service.id,
-            name: service.name,
-            enabled: service.enabled,
-          }))}
         />
       )}
 

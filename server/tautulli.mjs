@@ -196,7 +196,8 @@ function mapSession(session) {
   );
 
   return {
-    sessionKey: String(session.session_key ?? session.session_id ?? ""),
+    sessionKey: String(session.session_key ?? ""),
+    sessionId: String(session.session_id ?? ""),
     state: String(session.state || "playing").toLowerCase(),
     mediaType: String(session.media_type || ""),
     title: String(session.title || ""),
@@ -247,6 +248,31 @@ export async function getTautulliActivity() {
     lanBandwidth: asNumber(data?.lan_bandwidth, 0),
     wanBandwidth: asNumber(data?.wan_bandwidth, 0),
     sessions: sessions.map(mapSession),
+  };
+}
+
+/**
+ * Stop a live Plex stream via Tautulli (same as Tautulli “Stop stream”).
+ * Optional message is shown on the client like Plex’s terminate dialog.
+ * @param {{ sessionKey?: string, sessionId?: string, message?: string }} opts
+ */
+export async function terminateTautulliSession(opts = {}) {
+  const sessionKey = String(opts.sessionKey || "").trim();
+  const sessionId = String(opts.sessionId || "").trim();
+  const message = String(opts.message || "").trim();
+  if (!sessionKey && !sessionId) {
+    throw new Error("sessionKey or sessionId is required to stop a stream.");
+  }
+  await tautulliApi("terminate_session", {
+    session_key: sessionKey || undefined,
+    session_id: sessionId || undefined,
+    message: message || undefined,
+  });
+  return {
+    ok: true,
+    message: message
+      ? "Stream stopped and message sent to the player."
+      : "Stream stopped.",
   };
 }
 

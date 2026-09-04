@@ -2,7 +2,7 @@
 ; Built by scripts/build-inno-installers.mjs after electron-builder win-unpacked.
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.3.38"
+  #define MyAppVersion "1.3.48"
 #endif
 
 #define MyAppName "Arrs Hub"

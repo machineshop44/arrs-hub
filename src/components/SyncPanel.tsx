@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useModalBackdropClose } from "../hooks/useModalBackdropClose";
 import type { ConnectionMode, ServiceConfig } from "../types";
 import { getServiceUrl } from "../types";
 import { SyncProgressOverlay } from "./SyncProgressOverlay";
@@ -135,6 +136,10 @@ export function SyncPanel({ onClose, connectionMode, services }: SyncPanelProps)
   const [sonarrKeySet, setSonarrKeySet] = useState(false);
   const [radarrKeySet, setRadarrKeySet] = useState(false);
   const [progress, setProgress] = useState<ProgressState | null>(null);
+  const backdrop = useModalBackdropClose(() => {
+    if (progress) return;
+    onClose();
+  });
   const [includeQualityProfiles, setIncludeQualityProfiles] = useState(true);
   const [includeQualityDefinition, setIncludeQualityDefinition] =
     useState(true);
@@ -464,13 +469,9 @@ export function SyncPanel({ onClose, connectionMode, services }: SyncPanelProps)
   return (
     <div
       className="settings-overlay"
-      onClick={() => {
-        // Never dismiss while progress popup is open — Apply used to bubble
-        // here and close the whole sync flow.
-        if (progress) return;
-        onClose();
-      }}
       role="presentation"
+      onPointerDown={backdrop.onPointerDown}
+      onPointerUp={backdrop.onPointerUp}
     >
       <div
         className="settings-panel sync-panel"
@@ -519,7 +520,7 @@ export function SyncPanel({ onClose, connectionMode, services }: SyncPanelProps)
                       : !sonarrKeySet
                         ? "Sonarr API key is not set yet."
                         : "Radarr API key is not set yet."}{" "}
-                    Add them under Settings → TRaSH Sync API keys.
+                    Add them under Settings → Apps &amp; monitoring.
                   </p>
                 )}
                 <p className="sync-status-line">

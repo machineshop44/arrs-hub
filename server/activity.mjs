@@ -1,5 +1,6 @@
 import { loadSyncSettings } from "./config.mjs";
 import { loadIntegrationsSettings } from "./integrations.mjs";
+import { getArrApiKey } from "./arr-api-keys.mjs";
 import { getTautulliActivity, loadTautulliSettings } from "./tautulli.mjs";
 
 function normalizeBase(url) {
@@ -490,7 +491,7 @@ export async function getHubStatusSummary(opts = {}) {
     getArrQueue("sonarr", sonarrUrl, sync.sonarr.apiKey),
     getArrQueue("radarr", radarrUrl, sync.radarr.apiKey),
     lidarrUrl
-      ? getArrQueue("lidarr", lidarrUrl, "")
+      ? getArrQueue("lidarr", lidarrUrl, getArrApiKey("lidarr"))
       : Promise.resolve({
           ok: false,
           configured: false,

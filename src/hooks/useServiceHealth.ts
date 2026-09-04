@@ -19,12 +19,28 @@ export type PcHealth = {
   message?: string;
 };
 
+export type PcWatchSummary = {
+  id: string;
+  name: string;
+  host: string;
+  companionUrl?: string;
+};
+
+export type WatchServiceSummary = {
+  restartPcId?: string;
+  monitor?: boolean;
+};
+
 export function useServiceHealth(
   services: ServiceConfig[],
   activeMode: ConnectionMode,
 ) {
   const [health, setHealth] = useState<Record<string, ServiceHealth>>({});
   const [pcs, setPcs] = useState<Record<string, PcHealth>>({});
+  const [pcConfigs, setPcConfigs] = useState<PcWatchSummary[]>([]);
+  const [watchServices, setWatchServices] = useState<
+    Record<string, WatchServiceSummary>
+  >({});
   const [pcCount, setPcCount] = useState(0);
   const [watchEnabled, setWatchEnabled] = useState(true);
   const [autoRestart, setAutoRestart] = useState(true);
@@ -67,11 +83,39 @@ export function useServiceHealth(
     (json: {
       services?: Record<string, ServiceHealth>;
       pcs?: Record<string, PcHealth>;
-      settings?: { pcs?: unknown[]; enabled?: boolean; autoRestart?: boolean };
+      settings?: {
+        pcs?: unknown[];
+        services?: Record<string, WatchServiceSummary>;
+        enabled?: boolean;
+        autoRestart?: boolean;
+      };
     }) => {
       const nextHealth = json.services ?? {};
       setHealth(nextHealth);
       setPcs(json.pcs ?? {});
+      const settingsPcs = json.settings?.pcs;
+      if (Array.isArray(settingsPcs)) {
+        setPcConfigs(
+          settingsPcs
+            .map((raw) => {
+              const pc = raw as PcWatchSummary;
+              return {
+                id: String(pc.id || ""),
+                name: String(pc.name || "PC").trim() || "PC",
+                host: String(pc.host || "").trim(),
+                companionUrl: String(pc.companionUrl || "").trim(),
+              };
+            })
+            .filter((pc) => pc.companionUrl || pc.host),
+        );
+      } else {
+        setPcConfigs([]);
+      }
+      setWatchServices(
+        json.settings?.services && typeof json.settings.services === "object"
+          ? json.settings.services
+          : {},
+      );
       setPcCount(
         Array.isArray(json.settings?.pcs) ? json.settings.pcs.length : 0,
       );
@@ -134,6 +178,10 @@ export function useServiceHealth(
       setScanning(true);
       await refresh();
       if (cancelled) return;
+      // Hub already delays its first cycle; wait briefly so we don't race
+      // a forced check against cold *arr / ytarr listeners on login.
+      await new Promise((resolve) => setTimeout(resolve, 8000));
+      if (cancelled) return;
       try {
         await fetch("/api/watchdog/targets", {
           method: "PUT",
@@ -171,6 +219,8 @@ export function useServiceHealth(
   return {
     health,
     pcs,
+    pcConfigs,
+    watchServices,
     pcCount,
     watchEnabled,
     autoRestart,

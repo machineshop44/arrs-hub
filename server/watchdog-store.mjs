@@ -79,6 +79,7 @@ export function getDefaultExePaths() {
       process.env.APPDATA || path.join(userProfileDir(), "AppData", "Roaming"),
       "FileFlows",
       "Node",
+      "FileFlows.Node.exe",
     ),
     // Intentionally empty — leave for user:
     // plex, ombi, flaresolverr, overseerr, calibre, trash-guides
@@ -130,6 +131,8 @@ export function defaultWatchdogSettings() {
     enabled: true,
     intervalSeconds: 30,
     failThreshold: 2,
+    /** After Hub start: probe for UI, but no Discord-down / auto-restart yet. */
+    startupGraceSeconds: 120,
     restartCooldownSeconds: 120,
     autoRestart: true,
     discordWebhookUrl: "",

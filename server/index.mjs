@@ -48,6 +48,7 @@ import {
   getTautulliActivity,
   proxyTautulliImage,
   publicTautulliSettings,
+  terminateTautulliSession,
   updateTautulliSettings,
 } from "./tautulli.mjs";
 import {
@@ -59,6 +60,16 @@ import {
   getHubStatusSummary,
   getOmbiPendingRequests,
 } from "./activity.mjs";
+import { getChipAppVersions } from "./app-versions.mjs";
+import {
+  getAppUpdateJob,
+  startAppUpdate,
+  supportedAppUpdateIds,
+} from "./app-update.mjs";
+import {
+  maskedArrCredentialsForDisplay,
+  updateArrCredentials,
+} from "./arr-api-keys.mjs";
 import {
   getPlexUpdateJob,
   getPlexUpdateStatus,
@@ -172,6 +183,19 @@ app.put("/api/integrations/settings", (req, res) => {
   }
 });
 
+app.get("/api/arr/credentials", (_req, res) => {
+  res.json({ credentials: maskedArrCredentialsForDisplay() });
+});
+
+app.put("/api/arr/credentials", (req, res) => {
+  try {
+    const credentials = updateArrCredentials(req.body ?? {});
+    res.json({ ok: true, credentials });
+  } catch (err) {
+    res.status(400).json({ error: err.message || String(err) });
+  }
+});
+
 app.post("/api/status/summary", async (req, res) => {
   try {
     const summary = await getHubStatusSummary({
@@ -180,6 +204,46 @@ app.post("/api/status/summary", async (req, res) => {
     res.json(summary);
   } catch (err) {
     res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/status/chip-versions", async (req, res) => {
+  try {
+    const result = await getChipAppVersions({
+      urls: req.body?.urls ?? {},
+      hubVersion: packageJson.version,
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.get("/api/status/app-update", (req, res) => {
+  res.json({
+    ok: true,
+    supported: supportedAppUpdateIds(),
+    job: getAppUpdateJob(req.query?.id),
+  });
+});
+
+app.post("/api/status/app-update", (req, res) => {
+  try {
+    const job = startAppUpdate(req.body ?? {});
+    res.json({ ok: true, job });
+  } catch (err) {
+    const code = err?.code;
+    const status =
+      code === "JOB_IN_PROGRESS"
+        ? 409
+        : code === "UNSUPPORTED" || code === "BAD_REQUEST"
+          ? 400
+          : 500;
+    res.status(status).json({
+      error: err.message || String(err),
+      code: code || undefined,
+      job: getAppUpdateJob(req.body?.id),
+    });
   }
 });
 
@@ -484,6 +548,33 @@ app.get("/api/tautulli/activity", async (_req, res) => {
       error: err.message || String(err),
       code: err?.code || undefined,
       settings: publicTautulliSettings(),
+    });
+  }
+});
+
+app.post("/api/tautulli/terminate", async (req, res) => {
+  try {
+    const settings = publicTautulliSettings();
+    if (!settings.apiKeySet) {
+      res.status(400).json({
+        error:
+          "Tautulli API key not set. Add it in Settings → Apps & monitoring.",
+        code: "TAUTULLI_NOT_CONFIGURED",
+      });
+      return;
+    }
+    const body = req.body ?? {};
+    const result = await terminateTautulliSession({
+      sessionKey: body.sessionKey || body.session_key,
+      sessionId: body.sessionId || body.session_id,
+      message: body.message,
+    });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    const status = err?.code === "TAUTULLI_NOT_CONFIGURED" ? 400 : 500;
+    res.status(status).json({
+      error: err.message || String(err),
+      code: err?.code || undefined,
     });
   }
 });

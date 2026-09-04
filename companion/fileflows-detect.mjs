@@ -5,7 +5,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import {
+  buildFileFlowsLaunch,
+  findWindowsService,
+} from "../server/fileflows-launch.mjs";
 
 const SERVER_PORT = 19200;
 const NODE_API_PORTS = [19200, 5000, 5001];
@@ -36,32 +39,8 @@ function firstExisting(paths) {
   return "";
 }
 
-function queryWindowsService(name) {
-  if (process.platform !== "win32" || !name) return null;
-  try {
-    const result = spawnSync("sc.exe", ["query", name], {
-      windowsHide: true,
-      encoding: "utf8",
-      timeout: 5000,
-    });
-    const out = `${result.stdout || ""}\n${result.stderr || ""}`;
-    if (result.status !== 0 && !/STATE\s*:/i.test(out)) return null;
-    if (/FAILED\s+1060/i.test(out) || /does not exist/i.test(out)) return null;
-    const running = /RUNNING/i.test(out);
-    const stopped = /STOPPED/i.test(out);
-    if (!running && !stopped && !/STATE\s*:/i.test(out)) return null;
-    return { name, running, stopped };
-  } catch {
-    return null;
-  }
-}
-
 function findService(candidates) {
-  for (const name of candidates) {
-    const hit = queryWindowsService(name);
-    if (hit) return hit.name;
-  }
-  return "";
+  return findWindowsService(candidates);
 }
 
 function serverDllCandidates() {
@@ -119,14 +98,13 @@ export function detectFileFlowsInstalls() {
 
   if (serverDll || serverSvc) {
     const cwd = serverDll ? path.dirname(serverDll) : "";
+    const launch = buildFileFlowsLaunch("server", cwd);
     found.push({
       id: "fileflows",
       role: "server",
       port: SERVER_PORT,
-      windowsService: serverSvc || "FileFlows",
-      exePath: "",
-      exeArgs: serverDll ? "FileFlows.Server.dll" : "",
-      exeCwd: cwd,
+      windowsService: serverSvc || "",
+      ...launch,
     });
   }
 
@@ -135,19 +113,17 @@ export function detectFileFlowsInstalls() {
     const cwd = nodeDll ? path.dirname(nodeDll) : "";
     const port = readNodeApiPort(cwd) || NODE_API_PORTS[0];
     let windowsService = nodeSvc;
-    if (!windowsService) {
-      // Many installs use NSSM name "FileFlows" for the node when server is elsewhere.
-      if (!serverDll) windowsService = findService(["FileFlows"]) || "FileFlows";
-      else windowsService = "FileFlows Node";
+    if (!windowsService && !serverDll) {
+      // Node-only PC: NSSM is often named FileFlows or FileFlowsNode.
+      windowsService = findService(["FileFlows", "FileFlowsNode"]) || "";
     }
+    const launch = buildFileFlowsLaunch("node", cwd);
     found.push({
       id: "fileflows-node",
       role: "node",
       port,
       windowsService,
-      exePath: "",
-      exeArgs: nodeDll ? "FileFlows.Node.dll" : "",
-      exeCwd: cwd,
+      ...launch,
     });
   }
 

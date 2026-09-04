@@ -224,19 +224,32 @@ export function registerCompanionPeer(payload) {
       prevRestartPc === pcId ||
       isLikelyVirtualPc(prevPc?.host, prevPc?.mac);
 
+    const fromCompanion = {
+      windowsService: String(svc?.windowsService ?? "").trim(),
+      exePath: String(svc?.exePath || "").trim(),
+      exeArgs: String(svc?.exeArgs || "").trim(),
+      exeCwd: String(svc?.exeCwd || "").trim(),
+    };
+    const isFileFlows = id.startsWith("fileflows");
+
     services[id] = {
       ...base,
       monitor: true,
       autoRestart: true,
       restartPcId: shouldRewire ? pcId : prevRestartPc,
-      windowsService:
-        String(svc?.windowsService || "").trim() ||
-        base.windowsService ||
-        DEFAULT_WINDOWS_SERVICES[id] ||
-        "",
-      exePath: String(svc?.exePath || "").trim() || base.exePath || "",
-      exeArgs: String(svc?.exeArgs || "").trim() || base.exeArgs || "",
-      exeCwd: String(svc?.exeCwd || "").trim() || base.exeCwd || "",
+      windowsService: isFileFlows
+        ? fromCompanion.windowsService
+        : fromCompanion.windowsService ||
+          base.windowsService ||
+          DEFAULT_WINDOWS_SERVICES[id] ||
+          "",
+      exePath: fromCompanion.exePath || base.exePath || "",
+      exeArgs: isFileFlows
+        ? fromCompanion.exeArgs
+        : fromCompanion.exeArgs || base.exeArgs || "",
+      exeCwd: isFileFlows
+        ? fromCompanion.exeCwd
+        : fromCompanion.exeCwd || base.exeCwd || "",
     };
 
     // FileFlows Node has no stable public UI — do not steal the FileFlows tile URL.

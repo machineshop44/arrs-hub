@@ -1147,7 +1147,8 @@ input {
 }
 
 .dash-queue-app-link,
-.dash-queue-app-static {
+.dash-queue-app-static,
+.dash-queue-app-btn {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
@@ -1161,18 +1162,48 @@ input {
   color: inherit;
 }
 
-.dash-queue-app-link:hover {
+.dash-queue-app-link:hover,
+.dash-queue-app-btn:hover:not(:disabled) {
   background: color-mix(in srgb, var(--border) 55%, transparent);
   color: #93c5fd;
 }
 
-.dash-queue-app-link:focus-visible {
+.dash-queue-app-link:focus-visible,
+.dash-queue-app-btn:focus-visible {
   outline: 2px solid color-mix(in srgb, #93c5fd 70%, transparent);
   outline-offset: 1px;
 }
 
 .dash-queue-breakdown strong {
   font-variant-numeric: tabular-nums;
+}
+
+.dash-queue-app-update,
+.dash-queue-app-update strong {
+  color: #fbbf24;
+}
+
+.dash-queue-app-btn {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.dash-queue-app-btn:disabled {
+  cursor: wait;
+  opacity: 0.85;
+}
+
+.dash-queue-app-updating,
+.dash-queue-app-updating strong {
+  color: #fcd34d;
+}
+
+.dash-chip-popover-hint-warn {
+  color: #fbbf24;
 }
 
 .dash-chip-popover-empty,
@@ -1356,6 +1387,40 @@ input {
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+.dash-chip-meta {
+  font-size: 0.62rem;
+  line-height: 1.25;
+  color: color-mix(in srgb, var(--text-muted) 90%, #e2e8f0);
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-chip-versions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  margin-top: 0.2rem;
+  width: 100%;
+}
+
+.dash-chip-version-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.45rem;
+  font-size: 0.62rem;
+  line-height: 1.25;
+  color: var(--text-muted);
+}
+
+.dash-chip-version-line span:last-child {
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--text-muted) 85%, #cbd5e1);
+}
+
+.dash-chip-version-product {
+  font-weight: 600;
+  color: color-mix(in srgb, var(--text-muted) 90%, #e2e8f0);
 }
 
 .dash-chip.tone-good {
@@ -1609,6 +1674,54 @@ input {
   color: var(--text-muted);
 }
 
+.stream-actions {
+  margin-top: 0.55rem;
+}
+
+.stream-stop-btn {
+  font-size: 0.8rem;
+  padding: 0.3rem 0.7rem;
+}
+
+.stream-stop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.stream-stop-dialog {
+  width: min(420px, 100%);
+  background: var(--surface, #1a1f2a);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 12px;
+  padding: 1.1rem 1.15rem 1rem;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+
+.stream-stop-dialog h3 {
+  margin: 0 0 0.35rem;
+  font-size: 1.05rem;
+}
+
+.stream-stop-dialog .field {
+  margin-top: 0.65rem;
+}
+
+.stream-stop-dialog .toggle {
+  margin-top: 0.75rem;
+}
+
+.stream-stop-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
 .streams-empty {
   text-align: center;
   padding: 2.5rem 1rem;
@@ -1790,6 +1903,63 @@ input {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+}
+
+.apps-monitor-global {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.apps-monitor-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.app-config-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.85rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.app-config-card-header {
+  margin-bottom: 0.15rem;
+}
+
+.app-config-port-watch {
+  margin-top: 0.35rem;
+  padding-top: 0.35rem;
+  border-top: 1px dashed var(--border);
+}
+
+.app-config-port-watch summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.settings-subgroup {
+  margin-top: 1.25rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.settings-subgroup h4 {
+  margin: 0 0 0.5rem;
+}
+
+.apps-inline-link {
+  display: inline;
+  padding: 0 0.35rem;
+  min-height: unset;
+  font-size: inherit;
+  vertical-align: baseline;
 }
 
 .toggle {

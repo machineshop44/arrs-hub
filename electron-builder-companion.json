@@ -10,6 +10,8 @@
     "desktop-companion/**/*",
     "companion/**/*",
     "server/restart-windows.mjs",
+    "server/fileflows-launch.mjs",
+    "server/windows-file-version.mjs",
     "server/wol.mjs",
     "server/lan-utils.mjs",
     "package.json",
@@ -26,6 +28,8 @@
   "asarUnpack": [
     "companion/**/*",
     "server/restart-windows.mjs",
+    "server/fileflows-launch.mjs",
+    "server/windows-file-version.mjs",
     "server/wol.mjs",
     "server/lan-utils.mjs",
     "package.json",

@@ -18,6 +18,11 @@ import {
   runHubRegistration,
   startHubRegistrationLoop,
 } from "./hub-client.mjs";
+import {
+  getCompanionAppUpdateJob,
+  startCompanionAppUpdate,
+  supportedCompanionUpdateIds,
+} from "./app-update.mjs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.env.ARRS_COMPANION_ROOT
   ? path.resolve(process.env.ARRS_COMPANION_ROOT)
@@ -131,6 +136,48 @@ app.post("/api/service-status", requireAuth, async (req, res) => {
       ok: false,
       running: false,
       error: err instanceof Error ? err.message : String(err),
+    });
+  }
+});
+
+app.get("/api/local-app-versions", requireAuth, async (_req, res) => {
+  try {
+    const { getLocalAppVersions } = await import("./local-app-versions.mjs");
+    const result = await getLocalAppVersions();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      apps: [],
+    });
+  }
+});
+
+app.get("/api/app-update", requireAuth, (req, res) => {
+  res.json({
+    ok: true,
+    supported: supportedCompanionUpdateIds(),
+    job: getCompanionAppUpdateJob(req.query?.id),
+  });
+});
+
+app.post("/api/app-update", requireAuth, (req, res) => {
+  try {
+    const job = startCompanionAppUpdate(req.body ?? {});
+    res.json({ ok: true, job });
+  } catch (err) {
+    const code = err?.code;
+    const status =
+      code === "JOB_IN_PROGRESS"
+        ? 409
+        : code === "UNSUPPORTED" || code === "BAD_REQUEST"
+          ? 400
+          : 500;
+    res.status(status).json({
+      error: err instanceof Error ? err.message : String(err),
+      code: code || undefined,
+      job: getCompanionAppUpdateJob(req.body?.id),
     });
   }
 });

@@ -19,6 +19,13 @@ export function defaultIntegrationsSettings() {
       baseUrl: "http://localhost:3579",
       apiKey: "",
     },
+    arr: {
+      lidarr: { apiKey: "" },
+      readarr: { apiKey: "" },
+      prowlarr: { apiKey: "" },
+      bazarr: { apiKey: "" },
+      whisparr: { apiKey: "" },
+    },
   };
 }
 
@@ -45,6 +52,10 @@ export function loadIntegrationsSettings() {
   }
   const raw = JSON.parse(fs.readFileSync(INTEGRATIONS_PATH, "utf8"));
   const defaults = defaultIntegrationsSettings();
+  const arr = { ...defaults.arr, ...(raw.arr ?? {}) };
+  for (const id of Object.keys(defaults.arr)) {
+    arr[id] = { ...defaults.arr[id], ...(arr[id] ?? {}) };
+  }
   return {
     qbittorrent: {
       ...defaults.qbittorrent,
@@ -58,6 +69,7 @@ export function loadIntegrationsSettings() {
       ...defaults.ombi,
       ...(raw.ombi ?? {}),
     },
+    arr,
   };
 }
 
@@ -73,6 +85,18 @@ export function saveIntegrationsSettings(settings) {
 
 export function updateIntegrationsSettings(patch = {}) {
   const current = loadIntegrationsSettings();
+  const arr = { ...current.arr };
+  if (patch.arr && typeof patch.arr === "object") {
+    for (const [id, cfg] of Object.entries(patch.arr)) {
+      if (!arr[id]) arr[id] = { apiKey: "" };
+      if (cfg && typeof cfg === "object" && cfg.apiKey !== undefined) {
+        arr[id] = {
+          ...arr[id],
+          apiKey: pickSecret(cfg.apiKey, arr[id].apiKey || ""),
+        };
+      }
+    }
+  }
   const next = {
     qbittorrent: {
       baseUrl:
@@ -103,6 +127,7 @@ export function updateIntegrationsSettings(patch = {}) {
           : current.ombi.baseUrl,
       apiKey: pickSecret(patch.ombi?.apiKey, current.ombi.apiKey),
     },
+    arr,
   };
   return saveIntegrationsSettings(next);
 }
@@ -127,5 +152,14 @@ export function publicIntegrationsSettings(
       apiKey: settings.ombi.apiKey ? maskKey(settings.ombi.apiKey) : "",
       apiKeySet: Boolean(settings.ombi.apiKey),
     },
+    arr: Object.fromEntries(
+      Object.entries(settings.arr || {}).map(([id, cfg]) => [
+        id,
+        {
+          apiKey: cfg?.apiKey ? maskKey(cfg.apiKey) : "",
+          apiKeySet: Boolean(cfg?.apiKey),
+        },
+      ]),
+    ),
   };
 }

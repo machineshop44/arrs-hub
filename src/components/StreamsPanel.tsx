@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useModalBackdropClose } from "../hooks/useModalBackdropClose";
 
 type TautulliSettings = {
   baseUrl: string;
@@ -8,6 +9,7 @@ type TautulliSettings = {
 
 type StreamSession = {
   sessionKey: string;
+  sessionId: string;
   state: string;
   mediaType: string;
   title: string;
@@ -119,6 +121,7 @@ export function StreamsPanel({
   onClose,
   suggestedBaseUrl,
 }: StreamsPanelProps) {
+  const backdrop = useModalBackdropClose(onClose);
   const [settings, setSettings] = useState<TautulliSettings | null>(null);
   const [activity, setActivity] = useState<ActivityPayload | null>(null);
   const [serverUp, setServerUp] = useState<boolean | null>(null);
@@ -134,6 +137,13 @@ export function StreamsPanel({
     text: string;
   } | null>(null);
   const [showSetup, setShowSetup] = useState(false);
+  const [stopTarget, setStopTarget] = useState<StreamSession | null>(null);
+  const [stopMessage, setStopMessage] = useState(
+    "The server owner has ended the stream.",
+  );
+  const [sendStopMessage, setSendStopMessage] = useState(true);
+  const [stopBusy, setStopBusy] = useState(false);
+  const [stopError, setStopError] = useState<string | null>(null);
 
   const applySettings = useCallback((next: TautulliSettings) => {
     setSettings(next);
@@ -243,8 +253,57 @@ export function StreamsPanel({
     return parts.join(" · ");
   }, [activity]);
 
+  const openStopDialog = (session: StreamSession) => {
+    setStopTarget(session);
+    setStopMessage("The server owner has ended the stream.");
+    setSendStopMessage(true);
+    setStopError(null);
+  };
+
+  const closeStopDialog = () => {
+    if (stopBusy) return;
+    setStopTarget(null);
+    setStopError(null);
+  };
+
+  const confirmStopStream = async () => {
+    if (!stopTarget) return;
+    const sessionKey = String(stopTarget.sessionKey || "").trim();
+    const sessionId = String(stopTarget.sessionId || "").trim();
+    if (!sessionKey && !sessionId) {
+      setStopError("Missing session id — refresh and try again.");
+      return;
+    }
+    setStopBusy(true);
+    setStopError(null);
+    try {
+      const res = await fetch("/api/tautulli/terminate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionKey: sessionKey || undefined,
+          sessionId: sessionId || undefined,
+          message: sendStopMessage ? stopMessage.trim() : "",
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Could not stop stream");
+      setStopTarget(null);
+      await loadActivity({ quiet: true });
+    } catch (err) {
+      setStopError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setStopBusy(false);
+    }
+  };
+
   return (
-    <div className="settings-overlay" onClick={onClose} role="presentation">
+    <div
+      className="settings-overlay"
+      role="presentation"
+      onPointerDown={backdrop.onPointerDown}
+      onPointerUp={backdrop.onPointerUp}
+    >
       <div
         className="settings-panel streams-panel"
         onClick={(e) => e.stopPropagation()}
@@ -390,7 +449,11 @@ export function StreamsPanel({
 
                 return (
                   <article
-                    key={session.sessionKey || `${session.user}-${session.fullTitle}`}
+                    key={
+                      session.sessionKey ||
+                      session.sessionId ||
+                      `${session.user}-${session.fullTitle}`
+                    }
                     className="stream-card"
                   >
                     <div className="stream-poster">
@@ -467,6 +530,20 @@ export function StreamsPanel({
                             <span>Video: {session.videoDecision}</span>
                           )}
                       </div>
+
+                      <div className="stream-actions">
+                        <button
+                          type="button"
+                          className="btn btn-secondary stream-stop-btn"
+                          disabled={
+                            !session.sessionKey && !session.sessionId
+                          }
+                          title="Stop this Plex stream (via Tautulli)"
+                          onClick={() => openStopDialog(session)}
+                        >
+                          Stop stream
+                        </button>
+                      </div>
                     </div>
                   </article>
                 );
@@ -475,6 +552,77 @@ export function StreamsPanel({
           )}
         </div>
       </div>
+
+      {stopTarget && (
+        <div
+          className="stream-stop-overlay"
+          role="presentation"
+          onClick={closeStopDialog}
+        >
+          <div
+            className="stream-stop-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="stream-stop-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="stream-stop-title">Stop stream?</h3>
+            <p className="settings-hint">
+              End <strong>{stopTarget.user}</strong>
+              {stopTarget.player ? ` on ${stopTarget.player}` : ""}
+              {" — "}
+              {stopTarget.mediaType === "episode" && stopTarget.grandparentTitle
+                ? stopTarget.grandparentTitle
+                : stopTarget.fullTitle}
+              .
+            </p>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={sendStopMessage}
+                disabled={stopBusy}
+                onChange={(e) => setSendStopMessage(e.target.checked)}
+              />
+              <span className="toggle-label">
+                Send a message to the player (like Plex)
+              </span>
+            </label>
+            {sendStopMessage && (
+              <label className="field">
+                <span>Message</span>
+                <input
+                  type="text"
+                  value={stopMessage}
+                  disabled={stopBusy}
+                  onChange={(e) => setStopMessage(e.target.value)}
+                  placeholder="The server owner has ended the stream."
+                />
+              </label>
+            )}
+            {stopError && (
+              <div className="sync-alert sync-alert-err">{stopError}</div>
+            )}
+            <div className="stream-stop-actions">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={stopBusy}
+                onClick={closeStopDialog}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={stopBusy}
+                onClick={() => void confirmStopStream()}
+              >
+                {stopBusy ? "Stopping…" : "Stop stream"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

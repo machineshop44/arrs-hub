@@ -46,12 +46,58 @@ export async function checkCompanionHealth(baseUrl, apiKey) {
       latencyMs,
       message: data?.ok ? "Companion online" : "Companion unhealthy",
       product: data?.product,
+      version: data?.version ? String(data.version) : null,
     };
   } catch (err) {
     return {
       ok: false,
       online: false,
       latencyMs: Date.now() - started,
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * Ask Companion for local qBit / SAB / FileFlows Node file versions.
+ * @param {string} baseUrl
+ * @param {string} apiKey
+ */
+export async function requestCompanionLocalAppVersions(baseUrl, apiKey) {
+  const base = normalizeBaseUrl(baseUrl);
+  if (!base) {
+    return { ok: false, apps: [], message: "No companion URL configured" };
+  }
+  try {
+    const res = await fetch(`${base}/api/local-app-versions`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        ...(apiKey ? { "X-Arrs-Companion-Key": apiKey } : {}),
+      },
+      signal: AbortSignal.timeout(12000),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        ok: false,
+        apps: [],
+        message:
+          data?.error ||
+          data?.message ||
+          `Companion local-app-versions HTTP ${res.status}`,
+      };
+    }
+    return {
+      ok: data?.ok !== false,
+      apps: Array.isArray(data?.apps) ? data.apps : [],
+      checkedAt: data?.checkedAt || null,
+      message: data?.message || null,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      apps: [],
       message: err instanceof Error ? err.message : String(err),
     };
   }
@@ -207,6 +253,83 @@ export async function requestCompanionWol(baseUrl, apiKey, mac, host = "") {
   } catch (err) {
     return {
       ok: false,
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * Ask Companion to silently upgrade an app via winget (qBit / SAB).
+ * @param {string} baseUrl
+ * @param {string} apiKey
+ * @param {string} appId
+ */
+export async function requestCompanionAppUpdate(baseUrl, apiKey, appId) {
+  const base = normalizeBaseUrl(baseUrl);
+  if (!base) {
+    return { ok: false, message: "No companion URL configured" };
+  }
+  try {
+    const res = await fetch(`${base}/api/app-update`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Arrs-Companion-Key": apiKey,
+      },
+      body: JSON.stringify({ id: appId }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        ok: false,
+        message: data?.error || data?.message || `Companion update HTTP ${res.status}`,
+        code: data?.code,
+        job: data?.job || null,
+      };
+    }
+    return { ok: true, job: data?.job || null, message: data?.job?.message };
+  } catch (err) {
+    return {
+      ok: false,
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * @param {string} baseUrl
+ * @param {string} apiKey
+ * @param {string} [appId]
+ */
+export async function requestCompanionAppUpdateStatus(baseUrl, apiKey, appId) {
+  const base = normalizeBaseUrl(baseUrl);
+  if (!base) {
+    return { ok: false, job: null, message: "No companion URL configured" };
+  }
+  const qs = appId ? `?id=${encodeURIComponent(appId)}` : "";
+  try {
+    const res = await fetch(`${base}/api/app-update${qs}`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        ...(apiKey ? { "X-Arrs-Companion-Key": apiKey } : {}),
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        ok: false,
+        job: null,
+        message: data?.error || `Companion update status HTTP ${res.status}`,
+      };
+    }
+    return { ok: true, job: data?.job || null, supported: data?.supported };
+  } catch (err) {
+    return {
+      ok: false,
+      job: null,
       message: err instanceof Error ? err.message : String(err),
     };
   }

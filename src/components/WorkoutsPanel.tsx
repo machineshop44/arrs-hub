@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useModalBackdropClose } from "../hooks/useModalBackdropClose";
 
 type WorkoutSettings = {
   plexBaseUrl: string;
@@ -306,6 +307,7 @@ export function WorkoutsPanel({
   onClose,
   suggestedPlexUrl,
 }: WorkoutsPanelProps) {
+  const backdrop = useModalBackdropClose(onClose);
   const [settings, setSettings] = useState<WorkoutSettings | null>(null);
   const [libraries, setLibraries] = useState<Library[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
@@ -654,7 +656,12 @@ export function WorkoutsPanel({
   };
 
   return (
-    <div className="settings-overlay" onClick={onClose} role="presentation">
+    <div
+      className="settings-overlay"
+      role="presentation"
+      onPointerDown={backdrop.onPointerDown}
+      onPointerUp={backdrop.onPointerUp}
+    >
       <div
         className="settings-panel sync-panel workouts-panel"
         onClick={(e) => e.stopPropagation()}
