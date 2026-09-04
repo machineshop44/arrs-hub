@@ -7,6 +7,7 @@ import {
   AppsMonitoringSection,
   type AppsMonitoringHandle,
 } from "./AppsMonitoringSection";
+import { PhotoDumpSettingsSection } from "./PhotoDumpSettingsSection";
 import { useModalBackdropClose } from "../hooks/useModalBackdropClose";
 
 interface SettingsPanelProps {
@@ -383,6 +384,8 @@ export function SettingsPanel({
               onOpenStreams={onOpenStreams}
             />
           )}
+
+          {!liteMode && <PhotoDumpSettingsSection serverUp={apiServerUp} />}
 
           {liteMode && (
           <section className="settings-group">

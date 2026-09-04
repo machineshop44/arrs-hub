@@ -67,6 +67,15 @@ import {
   supportedAppUpdateIds,
 } from "./app-update.mjs";
 import {
+  createPhotoDumpFolder,
+  listPhotoDumpFolders,
+  loadPhotoDumpSettings,
+  publicPhotoDumpSettings,
+  savePhotoDumpUploadStream,
+  updatePhotoDumpSettings,
+  verifyPhotoDumpApiKey,
+} from "./photo-dump.mjs";
+import {
   maskedArrCredentialsForDisplay,
   updateArrCredentials,
 } from "./arr-api-keys.mjs";
@@ -168,6 +177,114 @@ app.get("/api/version", (_req, res) => {
     bind: HOST,
     port: PORT,
   });
+});
+
+function readPhotoDumpKey(req) {
+  const header = req.headers["x-arrs-hub-key"];
+  if (typeof header === "string" && header.trim()) return header.trim();
+  const alt = req.headers["x-arrs-photo-dump-key"];
+  if (typeof alt === "string" && alt.trim()) return alt.trim();
+  const q = req.query?.key;
+  if (typeof q === "string" && q.trim()) return q.trim();
+  return "";
+}
+
+function requirePhotoDumpAuth(req, res) {
+  if (!verifyPhotoDumpApiKey(readPhotoDumpKey(req))) {
+    res.status(401).json({ error: "Invalid or missing photo dump API key." });
+    return false;
+  }
+  return true;
+}
+
+app.get("/api/photo-dump/settings", (_req, res) => {
+  res.json({ settings: publicPhotoDumpSettings() });
+});
+
+app.put("/api/photo-dump/settings", (req, res) => {
+  try {
+    const body = req.body ?? {};
+    const settings = updatePhotoDumpSettings(body, {
+      rotateKey: body.rotateKey === true,
+    });
+    res.json({
+      ok: true,
+      settings: publicPhotoDumpSettings(settings),
+      /** Only returned when a new key was just generated. */
+      apiKeyPlain:
+        body.rotateKey === true ||
+        (typeof body.apiKey === "string" &&
+          body.apiKey.trim() &&
+          !body.apiKey.includes("…") &&
+          !body.apiKey.includes("•"))
+          ? settings.apiKey
+          : undefined,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message || String(err) });
+  }
+});
+
+app.get("/api/photo-dump/folders", (req, res) => {
+  try {
+    if (!requirePhotoDumpAuth(req, res)) return;
+    const folder =
+      typeof req.query.path === "string" ? req.query.path : "";
+    res.json({ ok: true, ...listPhotoDumpFolders(folder) });
+  } catch (err) {
+    res.status(400).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/photo-dump/folders", (req, res) => {
+  try {
+    if (!requirePhotoDumpAuth(req, res)) return;
+    const pathRel =
+      req.body?.path || req.body?.folder || req.body?.name || "";
+    const created = createPhotoDumpFolder(String(pathRel));
+    res.json({ ok: true, ...created });
+  } catch (err) {
+    res.status(400).json({ error: err.message || String(err) });
+  }
+});
+
+/**
+ * Raw octet-stream upload from Mobile.
+ * Headers: X-Arrs-Hub-Key, X-File-Name, X-Relative-Folder?, X-Content-SHA256, X-Expected-Size?
+ */
+app.post("/api/photo-dump/upload", async (req, res) => {
+  try {
+    if (!requirePhotoDumpAuth(req, res)) return;
+    const settings = loadPhotoDumpSettings();
+    if (settings.enabled === false) {
+      res.status(403).json({ error: "Photo dump is disabled on the Hub." });
+      return;
+    }
+    const originalName =
+      typeof req.headers["x-file-name"] === "string"
+        ? decodeURIComponent(req.headers["x-file-name"])
+        : "upload.bin";
+    const relativeFolder =
+      typeof req.headers["x-relative-folder"] === "string"
+        ? decodeURIComponent(req.headers["x-relative-folder"])
+        : "";
+    const expectedSha256 =
+      typeof req.headers["x-content-sha256"] === "string"
+        ? req.headers["x-content-sha256"]
+        : "";
+    const expectedSizeRaw = req.headers["x-expected-size"] || req.headers["content-length"];
+    const expectedSize = expectedSizeRaw ? Number(expectedSizeRaw) : undefined;
+
+    const result = await savePhotoDumpUploadStream(req, {
+      relativeFolder,
+      originalName,
+      expectedSize: Number.isFinite(expectedSize) ? expectedSize : undefined,
+      expectedSha256,
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message || String(err) });
+  }
 });
 
 app.get("/api/integrations/settings", (_req, res) => {
