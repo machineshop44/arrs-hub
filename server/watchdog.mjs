@@ -15,7 +15,10 @@ import {
   requestCompanionRestart,
   requestCompanionServiceStatus,
 } from "./companion-client.mjs";
-import { restartServiceOrExe } from "./restart-windows.mjs";
+import {
+  checkLocalServiceStatus,
+  restartServiceOrExe,
+} from "./restart-windows.mjs";
 
 /**
  * @typedef {object} WatchTarget
@@ -288,9 +291,108 @@ function checkPort(host, port, timeoutMs = 2500) {
 
     socket.setTimeout(timeoutMs);
     socket.on("connect", () => finish(true, "Port open"));
-    socket.on("timeout", () => finish(false, "Timed out"));
-    socket.on("error", (err) => finish(false, err.message || "Connection failed"));
+    socket.on("timeout", () =>
+      finish(
+        false,
+        "Timed out — no TCP response (firewall, hung app, or host busy)",
+      ),
+    );
+    socket.on("error", (err) => finish(false, humanizeSocketError(err)));
   });
+}
+
+/** Map Node net errors to plain-language Port Watch detail. */
+function humanizeSocketError(err) {
+  const code = String(err?.code || "").toUpperCase();
+  const raw = String(err?.message || "").trim() || "Connection failed";
+  switch (code) {
+    case "ECONNREFUSED":
+      return "Connection refused — nothing accepting on that port (app closed, crashed, or not listening yet)";
+    case "ETIMEDOUT":
+      return "Timed out — no TCP response (firewall, hung app, or host busy)";
+    case "EHOSTUNREACH":
+      return "Host unreachable — PC offline, wrong IP, or no route";
+    case "ENETUNREACH":
+      return "Network unreachable — VPN/routing issue or PC offline";
+    case "ENOTFOUND":
+      return "Host name not found — DNS/hostname misconfigured";
+    case "ECONNRESET":
+      return "Connection reset — app closed the socket during connect";
+    case "ECONNABORTED":
+      return "Connection aborted";
+    default:
+      return raw;
+  }
+}
+
+/**
+ * Best-effort "why" for Discord: port probe + process/service state.
+ * @returns {Promise<string>}
+ */
+async function explainDownReason({
+  result,
+  companionProbe,
+  serviceCfg,
+  settings,
+}) {
+  const probeMsg = String(result?.message || "Check failed").trim();
+  if (companionProbe) {
+    if (/not running/i.test(probeMsg) || result?.up === false) {
+      return `Process/service is not running (closed, crashed, or stopped). ${probeMsg}`;
+    }
+    return probeMsg;
+  }
+
+  const usesCompanion = Boolean(String(serviceCfg?.restartPcId || "").trim());
+  const hasLocalTarget =
+    Boolean(String(serviceCfg?.windowsService || "").trim()) ||
+    Boolean(String(serviceCfg?.exePath || "").trim());
+
+  if (!hasLocalTarget) {
+    return probeMsg;
+  }
+
+  try {
+    let status;
+    if (usesCompanion) {
+      const pc = (settings.pcs || []).find(
+        (item) => item.id === String(serviceCfg.restartPcId || "").trim(),
+      );
+      if (!pc || !String(pc.companionUrl || "").trim()) {
+        return probeMsg;
+      }
+      if (pcState.get(pc.id)?.online === false) {
+        return `${probeMsg}\nReason: Downloader/Companion PC is offline — app likely unreachable rather than confirmed closed.`;
+      }
+      status = await requestCompanionServiceStatus(
+        pc.companionUrl,
+        pc.companionApiKey,
+        serviceCfg,
+      );
+    } else {
+      status = await checkLocalServiceStatus(serviceCfg);
+    }
+
+    if (!status?.ok && status?.running !== true && status?.running !== false) {
+      return probeMsg;
+    }
+
+    if (status.running === false) {
+      const svc =
+        status.serviceState != null
+          ? ` (Windows service: ${status.serviceState})`
+          : "";
+      return `${probeMsg}\nReason: Process/service is not running${svc} — likely closed, crashed, or stopped.`;
+    }
+
+    if (status.running === true) {
+      return `${probeMsg}\nReason: Process is still running (${status.message || "running"}) but the port is not accepting connections — hung, still starting, or wrong port.`;
+    }
+  } catch {
+    // keep probe-only detail
+  }
+
+  return probeMsg;
 }
 
 async function restartForService(serviceCfg, settings) {
@@ -572,6 +674,12 @@ async function checkOne(target) {
     settings.discordNotifyDown !== false
   ) {
     downAlertSent = true;
+    const detailWithReason = await explainDownReason({
+      result,
+      companionProbe,
+      serviceCfg,
+      settings,
+    });
     await notifyDiscord(settings, {
       title: `${target.name} is down`,
       description: [
@@ -580,7 +688,7 @@ async function checkOne(target) {
           ? `Check: Companion service/process`
           : `Host: \`${locationLabel}\``,
         `Failed checks: **${consecutiveFails}** (threshold ${threshold})`,
-        `Detail: ${result.message}`,
+        `Detail: ${detailWithReason}`,
         canRestart
           ? usesCompanion
             ? "Arrs Hub will ask the Companion app on that PC to restart."
@@ -777,6 +885,8 @@ async function checkPcs() {
           `Host: \`${pc.host}\``,
           `MAC: \`${pc.mac || "not set"}\``,
           `Failed checks: **${consecutiveFails}**`,
+          `Detail: ${message || "Host did not respond to ping/Companion health"}`,
+          `Reason: PC looks offline (sleep, power loss, network drop, or VPN).`,
           settings.wolEnabled !== false && pc.wakeOnLan && normalizeMac(pc.mac)
             ? "Sending Wake-on-LAN (LAN only)."
             : "Wake-on-LAN not configured/enabled for this PC.",
