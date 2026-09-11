@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import {
   DEFAULT_WINDOWS_SERVICES,
   loadWatchdogSettings,
@@ -64,6 +65,28 @@ function companionUrlHost(companionUrl) {
   } catch {
     return "";
   }
+}
+
+function keysMatch(a, b) {
+  const left = String(a || "").trim();
+  const right = String(b || "").trim();
+  if (!left || !right) return false;
+  const ha = crypto.createHash("sha256").update(left, "utf8").digest();
+  const hb = crypto.createHash("sha256").update(right, "utf8").digest();
+  try {
+    return crypto.timingSafeEqual(ha, hb);
+  } catch {
+    return false;
+  }
+}
+
+/** Reject path injection / relative poison into restart config. */
+function isSafeWindowsPath(raw) {
+  const s = String(raw || "").trim();
+  if (!s || s.length > 512) return false;
+  if (/[\r\n\0<>"|]/.test(s)) return false;
+  if (!/^[a-zA-Z]:[\\/]/.test(s) && !s.startsWith("\\\\")) return false;
+  return true;
 }
 
 function findExistingPcIndex(pcs, payload, companionUrl) {
@@ -134,6 +157,31 @@ function pickPcName(existing, payloadName) {
 }
 
 /**
+ * Assert this registration is allowed to update an already-paired Companion.
+ * Locked after first pair: same companionId + matching API key required.
+ */
+function assertCompanionPairAllowed(existing, payload) {
+  if (!existing) return;
+
+  const companionId = String(payload?.companionId || "").trim();
+  const apiKey = String(payload?.apiKey || "").trim();
+  const prevId = String(existing.companionId || "").trim();
+  const prevKey = String(existing.companionApiKey || "").trim();
+
+  if (prevKey && !keysMatch(apiKey, prevKey)) {
+    throw new Error(
+      "Companion already paired with a different API key. Clear pairing in Hub Settings (localhost), then re-register.",
+    );
+  }
+
+  if (prevId && companionId && prevId !== companionId) {
+    throw new Error(
+      "Companion already paired to a different install. Clear pairing in Hub Settings (localhost) to re-pair.",
+    );
+  }
+}
+
+/**
  * Companion tray app registers itself so Port Watch can restart qBit/SAB remotely.
  * @param {object} payload
  */
@@ -171,6 +219,9 @@ export function registerCompanionPeer(payload) {
   const companionUrl = `http://${host}:${port}`;
   const existingIdx = findExistingPcIndex(pcs, payload, companionUrl);
   const existing = existingIdx >= 0 ? pcs[existingIdx] : null;
+
+  assertCompanionPairAllowed(existing, payload);
+
   const pcId =
     existing?.id ||
     `companion-${companionId.replace(/^companion-/, "").slice(0, 24)}`;
@@ -180,8 +231,8 @@ export function registerCompanionPeer(payload) {
     name: pickPcName(existing, payload?.name),
     host,
     mac,
-    monitor: true,
-    wakeOnLan: true,
+    monitor: existing?.monitor !== false,
+    wakeOnLan: existing?.wakeOnLan !== false,
     companionUrl,
     companionApiKey: apiKey,
     companionId,
@@ -189,7 +240,13 @@ export function registerCompanionPeer(payload) {
   };
 
   if (existingIdx >= 0) {
-    pcs[existingIdx] = { ...existing, ...nextPc, companionApiKey: apiKey };
+    pcs[existingIdx] = {
+      ...existing,
+      ...nextPc,
+      monitor: existing.monitor !== false,
+      wakeOnLan: existing.wakeOnLan !== false,
+      companionApiKey: apiKey,
+    };
   } else {
     pcs.push(nextPc);
   }
@@ -214,8 +271,7 @@ export function registerCompanionPeer(payload) {
       restartPcId: "",
     };
 
-    const svcPort =
-      Number(svc?.port) || DEFAULT_SERVICE_PORTS[id] || 0;
+    const svcPort = Number(svc?.port) || DEFAULT_SERVICE_PORTS[id] || 0;
     const role = String(svc?.role || "").toLowerCase();
     const prevRestartPc = base.restartPcId || "";
     const prevPc = pcs.find((item) => item.id === prevRestartPc);
@@ -224,18 +280,22 @@ export function registerCompanionPeer(payload) {
       prevRestartPc === pcId ||
       isLikelyVirtualPc(prevPc?.host, prevPc?.mac);
 
+    const rawExe = String(svc?.exePath || "").trim();
+    const rawArgs = String(svc?.exeArgs || "").trim();
+    const rawCwd = String(svc?.exeCwd || "").trim();
     const fromCompanion = {
       windowsService: String(svc?.windowsService ?? "").trim(),
-      exePath: String(svc?.exePath || "").trim(),
-      exeArgs: String(svc?.exeArgs || "").trim(),
-      exeCwd: String(svc?.exeCwd || "").trim(),
+      exePath: isSafeWindowsPath(rawExe) ? rawExe : "",
+      exeArgs: rawArgs.length <= 512 && !/[\r\n\0]/.test(rawArgs) ? rawArgs : "",
+      exeCwd: isSafeWindowsPath(rawCwd) ? rawCwd : "",
     };
     const isFileFlows = id.startsWith("fileflows");
 
+    // Preserve user monitor/autoRestart — never force-on every 60s register.
     services[id] = {
       ...base,
-      monitor: true,
-      autoRestart: true,
+      monitor: base.monitor !== false,
+      autoRestart: base.autoRestart !== false,
       restartPcId: shouldRewire ? pcId : prevRestartPc,
       windowsService: isFileFlows
         ? fromCompanion.windowsService
@@ -243,7 +303,10 @@ export function registerCompanionPeer(payload) {
           base.windowsService ||
           DEFAULT_WINDOWS_SERVICES[id] ||
           "",
-      exePath: fromCompanion.exePath || base.exePath || "",
+      exePath:
+        fromCompanion.exePath ||
+        (isSafeWindowsPath(base.exePath) ? base.exePath : "") ||
+        "",
       exeArgs: isFileFlows
         ? fromCompanion.exeArgs
         : fromCompanion.exeArgs || base.exeArgs || "",
@@ -303,6 +366,50 @@ export function registerCompanionPeer(payload) {
       ? `Updated ${nextPc.name} — ${restartBits}`
       : `Registered ${nextPc.name} — ${restartBits}`,
     urlHints,
+  };
+}
+
+/**
+ * Localhost admin: drop Companion pairing so a reinstall can register again.
+ * @param {string} [pcId]
+ */
+export function clearCompanionPairing(pcId) {
+  const settings = loadWatchdogSettings();
+  const pcs = Array.isArray(settings.pcs) ? [...settings.pcs] : [];
+  const targetId = String(pcId || "").trim();
+  const nextPcs = targetId
+    ? pcs.filter((pc) => pc.id !== targetId)
+    : pcs.filter((pc) => !String(pc.companionUrl || "").trim());
+
+  const removed = pcs.length - nextPcs.length;
+  if (removed === 0 && targetId) {
+    throw new Error(`No paired Companion PC found with id "${targetId}".`);
+  }
+
+  const services = { ...settings.services };
+  for (const [id, cfg] of Object.entries(services)) {
+    if (!cfg) continue;
+    const restartPc = String(cfg.restartPcId || "").trim();
+    if (!restartPc) continue;
+    const stillThere = nextPcs.some((pc) => pc.id === restartPc);
+    if (!stillThere) {
+      services[id] = { ...cfg, restartPcId: "" };
+    }
+  }
+
+  saveWatchdogSettings({
+    ...settings,
+    pcs: nextPcs,
+    services,
+  });
+  restartWatchLoop();
+  return {
+    ok: true,
+    removed,
+    message:
+      removed > 0
+        ? `Cleared ${removed} Companion pairing(s). Companion can register again.`
+        : "No Companion pairings to clear.",
   };
 }
 

@@ -25,6 +25,7 @@ import {
   wakePcNow,
 } from "./watchdog.mjs";
 import {
+  clearCompanionPairing,
   getCompanionUrlHints,
   registerCompanionPeer,
 } from "./companion-register.mjs";
@@ -80,6 +81,13 @@ import {
   updatePhotoDumpSettings,
   verifyPhotoDumpApiKey,
 } from "./photo-dump.mjs";
+import {
+  loadHubAuthSettings,
+  publicHubAuthSettings,
+  requireHubAuth,
+  updateHubAuthSettings,
+  isLocalHubRequest,
+} from "./hub-auth.mjs";
 import {
   maskedArrCredentialsForDisplay,
   updateArrCredentials,
@@ -161,6 +169,7 @@ app.use(express.json({ limit: "1mb" }));
 
 app.get("/api/health", (_req, res) => {
   const lanReachable = HOST !== "127.0.0.1" && HOST !== "::1" && HOST !== "localhost";
+  const auth = loadHubAuthSettings();
   res.json({
     ok: true,
     version: packageJson.version,
@@ -171,6 +180,10 @@ app.get("/api/health", (_req, res) => {
     port: PORT,
     lanReachable,
     desktop: desktopMode,
+    auth: {
+      hubTokenRequired: auth.requireTokenForRemote !== false,
+      hubTokenSet: Boolean(String(auth.apiToken || "").trim()),
+    },
   });
 });
 
@@ -184,22 +197,77 @@ app.get("/api/version", (_req, res) => {
   });
 });
 
-function clientRemoteIp(req) {
-  // Do not trust X-Forwarded-* for auth — port-forward clients can spoof it.
-  const raw = req.socket?.remoteAddress || req.connection?.remoteAddress || "";
-  return String(raw).replace(/^::ffff:/i, "");
-}
+/**
+ * Public / special-auth API paths (everything else under /api needs Hub token
+ * or localhost). Photo-dump uses X-Arrs-Hub-Key; companion-register is locked
+ * after first pair inside registerCompanionPeer.
+ */
+app.use((req, res, next) => {
+  if (!req.path.startsWith("/api")) {
+    next();
+    return;
+  }
+  if (req.path === "/api/health" || req.path === "/api/version") {
+    next();
+    return;
+  }
+  if (req.path.startsWith("/api/photo-dump")) {
+    next();
+    return;
+  }
+  if (
+    req.path === "/api/watchdog/companion-register" &&
+    req.method === "POST"
+  ) {
+    next();
+    return;
+  }
+  requireHubAuth(req, res, next);
+});
 
-function isLocalHubRequest(req) {
-  const ip = clientRemoteIp(req);
-  return (
-    ip === "127.0.0.1" ||
-    ip === "::1" ||
-    ip === "localhost" ||
-    ip === "" ||
-    ip === "::ffff:127.0.0.1"
-  );
-}
+app.get("/api/hub-auth/settings", (req, res) => {
+  if (!isLocalHubRequest(req)) {
+    res.status(403).json({
+      error: "Hub API token settings are only available on the Hub PC (localhost).",
+    });
+    return;
+  }
+  try {
+    const settings = loadHubAuthSettings();
+    res.json({
+      settings: {
+        ...publicHubAuthSettings(settings),
+        apiToken: settings.apiToken || "",
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.put("/api/hub-auth/settings", (req, res) => {
+  if (!isLocalHubRequest(req)) {
+    res.status(403).json({
+      error: "Hub API token settings can only be changed from the Hub PC (localhost).",
+    });
+    return;
+  }
+  try {
+    const body = req.body ?? {};
+    const settings = updateHubAuthSettings(body, {
+      rotateToken: body.rotateToken === true,
+    });
+    res.json({
+      ok: true,
+      settings: {
+        ...publicHubAuthSettings(settings),
+        apiToken: settings.apiToken || "",
+      },
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message || String(err) });
+  }
+});
 
 function rejectPhotoDumpBody(req) {
   try {
@@ -617,6 +685,22 @@ app.post("/api/watchdog/wol", async (req, res) => {
 app.post("/api/watchdog/companion-register", (req, res) => {
   try {
     const result = registerCompanionPeer(req.body ?? {});
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message || String(err) });
+  }
+});
+
+/** Localhost: clear Companion pairing so a reinstall can register again. */
+app.post("/api/watchdog/companion-clear", (req, res) => {
+  if (!isLocalHubRequest(req)) {
+    res.status(403).json({
+      error: "Companion pairing can only be cleared from the Hub PC (localhost).",
+    });
+    return;
+  }
+  try {
+    const result = clearCompanionPairing(req.body?.pcId);
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message || String(err) });

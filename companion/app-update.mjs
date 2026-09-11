@@ -55,9 +55,9 @@ function runWingetUpgrade(packageId) {
       "--accept-source-agreements",
       "--disable-interactivity",
     ];
-    const child = spawn("winget", args, {
+    const child = spawn("winget.exe", args, {
       windowsHide: true,
-      shell: true,
+      shell: false,
     });
     let stdout = "";
     let stderr = "";

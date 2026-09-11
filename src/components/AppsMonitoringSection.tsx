@@ -1015,6 +1015,47 @@ export const AppsMonitoringSection = forwardRef<
                       >
                         {wakingId === pc.id ? "Waking…" : "Wake now"}
                       </button>
+                      {pc.companionUrl?.trim() ? (
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          title="Unlock so a reinstalled Companion can register again"
+                          onClick={() => {
+                            void (async () => {
+                              try {
+                                const res = await fetch(
+                                  "/api/watchdog/companion-clear",
+                                  {
+                                    method: "POST",
+                                    headers: {
+                                      "Content-Type": "application/json",
+                                    },
+                                    body: JSON.stringify({ pcId: pc.id }),
+                                  },
+                                );
+                                const json = await res.json().catch(() => ({}));
+                                if (!res.ok) {
+                                  throw new Error(
+                                    json.error || "Could not clear pairing",
+                                  );
+                                }
+                                removePc(pc.id);
+                                await load();
+                              } catch (err) {
+                                setMessage({
+                                  type: "err",
+                                  text:
+                                    err instanceof Error
+                                      ? err.message
+                                      : String(err),
+                                });
+                              }
+                            })();
+                          }}
+                        >
+                          Clear pairing
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="btn btn-ghost"

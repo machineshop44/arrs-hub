@@ -8,6 +8,7 @@ import {
   type AppsMonitoringHandle,
 } from "./AppsMonitoringSection";
 import { PhotoDumpSettingsSection } from "./PhotoDumpSettingsSection";
+import { HubAuthSettingsSection } from "./HubAuthSettingsSection";
 import { useModalBackdropClose } from "../hooks/useModalBackdropClose";
 
 interface SettingsPanelProps {
@@ -390,6 +391,8 @@ export function SettingsPanel({
               onOpenStreams={onOpenStreams}
             />
           )}
+
+          {!liteMode && <HubAuthSettingsSection serverUp={apiServerUp} />}
 
           {!liteMode && <PhotoDumpSettingsSection serverUp={apiServerUp} />}
 

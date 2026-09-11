@@ -91,7 +91,7 @@ function pickSecret(incoming, current) {
   return trimmed;
 }
 
-export function setWatchTargets(nextTargets) {
+function applyWatchTargets(nextTargets, { persist = true } = {}) {
   targets = Array.isArray(nextTargets) ? nextTargets : [];
   for (const target of targets) {
     if (!state.has(target.id)) {
@@ -108,6 +108,28 @@ export function setWatchTargets(nextTargets) {
       });
     }
   }
+  if (persist) {
+    try {
+      const settings = loadWatchdogSettings();
+      saveWatchdogSettings({
+        ...settings,
+        targets: targets.map((t) => ({
+          id: String(t.id || ""),
+          name: String(t.name || ""),
+          url: String(t.url || ""),
+          mode: t.mode === "remote" ? "remote" : "home",
+          allowRestart: Boolean(t.allowRestart),
+          probe: t.probe === "companion" ? "companion" : "tcp",
+        })),
+      });
+    } catch (err) {
+      console.error("Failed to persist Port Watch targets:", err?.message || err);
+    }
+  }
+}
+
+export function setWatchTargets(nextTargets) {
+  applyWatchTargets(nextTargets, { persist: true });
 }
 
 export function getWatchStatus() {
@@ -334,6 +356,7 @@ async function explainDownReason({
   companionProbe,
   serviceCfg,
   settings,
+  serviceId,
 }) {
   const probeMsg = String(result?.message || "Check failed").trim();
   if (companionProbe) {
@@ -367,10 +390,13 @@ async function explainDownReason({
       status = await requestCompanionServiceStatus(
         pc.companionUrl,
         pc.companionApiKey,
-        serviceCfg,
+        { ...serviceCfg, id: serviceId || serviceCfg.id },
       );
     } else {
-      status = await checkLocalServiceStatus(serviceCfg);
+      status = await checkLocalServiceStatus({
+        ...serviceCfg,
+        id: serviceId || serviceCfg.id,
+      });
     }
 
     if (!status?.ok && status?.running !== true && status?.running !== false) {
@@ -481,6 +507,7 @@ async function probeViaCompanion(target, serviceCfg, settings) {
     pc.companionUrl,
     pc.companionApiKey,
     {
+      id: target.id,
       windowsService: serviceCfg.windowsService,
       exePath: serviceCfg.exePath,
       exeArgs: serviceCfg.exeArgs,
@@ -679,6 +706,7 @@ async function checkOne(target) {
       companionProbe,
       serviceCfg,
       settings,
+      serviceId: target.id,
     });
     await notifyDiscord(settings, {
       title: `${target.name} is down`,
@@ -987,6 +1015,14 @@ export function restartWatchLoop(opts = {}) {
 
 export function startWatchdog() {
   if (!watchdogStartedAt) watchdogStartedAt = Date.now();
+  try {
+    const settings = loadWatchdogSettings();
+    if (Array.isArray(settings.targets) && settings.targets.length > 0) {
+      applyWatchTargets(settings.targets, { persist: false });
+    }
+  } catch (err) {
+    console.error("Failed to restore Port Watch targets:", err?.message || err);
+  }
   // Brief settle so *arr / ytarr ports are listening before the first probe.
   restartWatchLoop({ settleFirstCycle: true, settleMs: FIRST_CYCLE_SETTLE_MS });
 }

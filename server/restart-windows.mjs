@@ -16,25 +16,33 @@ function splitExeArgs(raw) {
   );
 }
 
-export function startWindowsService(serviceName) {
-  return new Promise((resolve) => {
-    if (!serviceName?.trim()) {
-      resolve({ ok: false, message: "No Windows service name configured" });
-      return;
-    }
+/** Only allow safe fragments inside PowerShell scripts (then base64-encode). */
+function sanitizePsLiteral(value, max = 180) {
+  return String(value || "")
+    .replace(/[^a-zA-Z0-9._\\/ :()-]/g, "")
+    .slice(0, max);
+}
 
+function runPowerShell(command, timeoutMs = 8000) {
+  return new Promise((resolve) => {
+    const encoded = Buffer.from(String(command || ""), "utf16le").toString(
+      "base64",
+    );
     const child = spawn(
       "powershell.exe",
-      [
-        "-NoProfile",
-        "-Command",
-        `try { Start-Service -Name '${serviceName.replace(/'/g, "''")}' -ErrorAction Stop; 'STARTED' } catch { $_.Exception.Message }`,
-      ],
+      ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
       { windowsHide: true },
     );
-
     let stdout = "";
     let stderr = "";
+    const timer = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {
+        // ignore
+      }
+      resolve({ code: -1, stdout, stderr: stderr || "timeout" });
+    }, timeoutMs);
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString();
     });
@@ -42,16 +50,58 @@ export function startWindowsService(serviceName) {
       stderr += chunk.toString();
     });
     child.on("close", (code) => {
-      const output = (stdout || stderr).trim();
-      if (code === 0 && output.includes("STARTED")) {
+      clearTimeout(timer);
+      resolve({ code: code ?? 1, stdout, stderr });
+    });
+  });
+}
+
+/**
+ * Prefer Restart-Service when running; Start-Service when stopped.
+ * Hung services often look "Running" — Restart-Service is the real recovery.
+ */
+export function startWindowsService(serviceName) {
+  return new Promise((resolve) => {
+    const name = String(serviceName || "").trim();
+    if (!name) {
+      resolve({ ok: false, message: "No Windows service name configured" });
+      return;
+    }
+    const safe = sanitizePsLiteral(name, 120).replace(/'/g, "");
+    if (!safe) {
+      resolve({ ok: false, message: "Invalid Windows service name" });
+      return;
+    }
+
+    const ps = `
+$ErrorActionPreference = 'Stop'
+try {
+  $s = Get-Service -Name '${safe}' -ErrorAction Stop
+  if ($s.Status -eq 'Running') {
+    Restart-Service -Name '${safe}' -Force -ErrorAction Stop
+    Write-Output 'RESTARTED'
+  } else {
+    Start-Service -Name '${safe}' -ErrorAction Stop
+    Write-Output 'STARTED'
+  }
+} catch {
+  Write-Output ('FAIL=' + $_.Exception.Message)
+}
+`;
+    runPowerShell(ps, 45000).then((result) => {
+      const output = `${result.stdout || ""}\n${result.stderr || ""}`.trim();
+      if (/RESTARTED|STARTED/.test(output) && !/^FAIL=/.test(output)) {
+        const action = /RESTARTED/.test(output) ? "Restarted" : "Started";
         resolve({
           ok: true,
-          message: `Started Windows service "${serviceName}"`,
+          message: `${action} Windows service "${name}"`,
         });
       } else {
         resolve({
           ok: false,
-          message: output || `Could not start service "${serviceName}"`,
+          message:
+            output.replace(/^FAIL=/, "").trim() ||
+            `Could not restart service "${name}"`,
         });
       }
     });
@@ -118,6 +168,89 @@ export function normalizeLaunchConfig(serviceCfg) {
   return { exePath, exeArgs, exeCwd };
 }
 
+/**
+ * Kill hung processes matching role/hints before launching a fresh exe.
+ */
+async function killMatchingProcesses(serviceCfg, launch) {
+  const role =
+    fileFlowsRoleFromPath(
+      `${launch.exePath || ""} ${launch.exeArgs || ""} ${launch.exeCwd || ""}`,
+    ) ||
+    (String(serviceCfg?.id || "").includes("node") ? "node" : "") ||
+    (String(serviceCfg?.windowsService || "").toLowerCase().includes("node")
+      ? "node"
+      : "");
+
+  const names = [];
+  if (role === "node") {
+    names.push("FileFlows.Node");
+  } else if (role === "server") {
+    names.push("FileFlows.Server");
+  }
+
+  const exeBase = launch.exePath
+    ? path.basename(launch.exePath).replace(/\.exe$/i, "")
+    : "";
+  if (exeBase && !/^dotnet$/i.test(exeBase)) {
+    names.push(sanitizePsLiteral(exeBase, 80));
+  }
+
+  const unique = [...new Set(names.filter(Boolean))];
+  if (unique.length === 0) {
+    return { ok: true, message: "No process kill targets" };
+  }
+
+  const nameList = unique.map((n) => `'${sanitizePsLiteral(n, 80)}'`).join(",");
+  const hintBlob = sanitizePsLiteral(
+    [
+      launch.exePath,
+      launch.exeArgs,
+      launch.exeCwd,
+      ...(Array.isArray(serviceCfg.processHints) ? serviceCfg.processHints : []),
+    ]
+      .map((x) => String(x || "").toLowerCase())
+      .join(" "),
+    400,
+  );
+
+  const ps = `
+$ErrorActionPreference = 'SilentlyContinue'
+$names = @(${nameList})
+$killed = 0
+foreach ($n in $names) {
+  Get-Process -Name $n -ErrorAction SilentlyContinue | ForEach-Object {
+    try { Stop-Process -Id $_.Id -Force -ErrorAction Stop; $killed++ } catch {}
+  }
+}
+# Hung FileFlows often sits in dotnet — match command line for role only.
+$hint = '${hintBlob}'.ToLowerInvariant()
+if ($hint -match 'fileflows\\.node' -or $hint -match '\\\\node') {
+  Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" -ErrorAction SilentlyContinue | ForEach-Object {
+    $cmd = ([string]$_.CommandLine).ToLowerInvariant()
+    if ($cmd.Contains('fileflows.node') -and -not $cmd.Contains('fileflows.server')) {
+      try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop; $killed++ } catch {}
+    }
+  }
+} elseif ($hint -match 'fileflows\\.server' -or $hint -match '\\\\server') {
+  Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" -ErrorAction SilentlyContinue | ForEach-Object {
+    $cmd = ([string]$_.CommandLine).ToLowerInvariant()
+    if ($cmd.Contains('fileflows.server') -and -not $cmd.Contains('fileflows.node')) {
+      try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop; $killed++ } catch {}
+    }
+  }
+}
+Write-Output ("KILLED=" + $killed)
+`;
+  const result = await runPowerShell(ps, 15000);
+  const out = `${result.stdout || ""}`.trim();
+  const match = out.match(/KILLED=(\d+)/i);
+  const count = match ? Number(match[1]) : 0;
+  return {
+    ok: true,
+    message: count > 0 ? `Stopped ${count} process(es)` : "No matching process to stop",
+  };
+}
+
 export function startExeProcess(exePath, exeArgs, exeCwd) {
   return new Promise((resolve) => {
     const file = String(exePath || "").trim();
@@ -166,8 +299,8 @@ export function startExeProcess(exePath, exeArgs, exeCwd) {
 }
 
 /**
- * Prefer Windows service; if that fails or no service name, try optional exe.
- * @param {{ windowsService?: string, exePath?: string, exeArgs?: string, exeCwd?: string }} serviceCfg
+ * Prefer Windows service restart; if that fails or no service name, kill then start exe.
+ * @param {{ windowsService?: string, exePath?: string, exeArgs?: string, exeCwd?: string, id?: string, processHints?: string[] }} serviceCfg
  */
 export async function restartServiceOrExe(serviceCfg) {
   const launch = normalizeLaunchConfig(serviceCfg);
@@ -178,6 +311,7 @@ export async function restartServiceOrExe(serviceCfg) {
     const serviceResult = await startWindowsService(serviceName);
     if (serviceResult.ok) return serviceResult;
     if (exePath) {
+      const kill = await killMatchingProcesses(serviceCfg, launch);
       const exeResult = await startExeProcess(
         launch.exePath,
         launch.exeArgs,
@@ -185,50 +319,29 @@ export async function restartServiceOrExe(serviceCfg) {
       );
       return {
         ok: exeResult.ok,
-        message: `${serviceResult.message}; exe fallback: ${exeResult.message}`,
+        message: `${serviceResult.message}; ${kill.message}; exe fallback: ${exeResult.message}`,
       };
     }
     return serviceResult;
   }
 
   if (exePath) {
-    return startExeProcess(launch.exePath, launch.exeArgs, launch.exeCwd);
+    const kill = await killMatchingProcesses(serviceCfg, launch);
+    const exeResult = await startExeProcess(
+      launch.exePath,
+      launch.exeArgs,
+      launch.exeCwd,
+    );
+    return {
+      ok: exeResult.ok,
+      message: `${kill.message}; ${exeResult.message}`,
+    };
   }
 
   return {
     ok: false,
     message: "No Windows service name or exe path configured",
   };
-}
-
-function runPowerShell(command, timeoutMs = 8000) {
-  return new Promise((resolve) => {
-    const child = spawn(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-Command", command],
-      { windowsHide: true },
-    );
-    let stdout = "";
-    let stderr = "";
-    const timer = setTimeout(() => {
-      try {
-        child.kill();
-      } catch {
-        // ignore
-      }
-      resolve({ code: -1, stdout, stderr: stderr || "timeout" });
-    }, timeoutMs);
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code: code ?? 1, stdout, stderr });
-    });
-  });
 }
 
 /**
@@ -241,6 +354,7 @@ function runPowerShell(command, timeoutMs = 8000) {
  *   exeArgs?: string,
  *   exeCwd?: string,
  *   processHints?: string[],
+ *   id?: string,
  * }} serviceCfg
  * @returns {Promise<{
  *   ok: boolean,
@@ -258,6 +372,14 @@ export async function checkLocalServiceStatus(serviceCfg) {
   const exePath = String(launch.exePath || "").trim();
   const exeArgs = String(launch.exeArgs || "").trim();
   const exeCwd = String(launch.exeCwd || "").trim();
+  const role =
+    fileFlowsRoleFromPath(`${exePath} ${exeArgs} ${exeCwd}`) ||
+    (String(serviceCfg.id || "").includes("node")
+      ? "node"
+      : String(serviceCfg.id || "") === "fileflows"
+        ? "server"
+        : "");
+
   const hints = Array.isArray(serviceCfg.processHints)
     ? serviceCfg.processHints.map((h) => String(h || "").trim()).filter(Boolean)
     : [];
@@ -266,17 +388,24 @@ export async function checkLocalServiceStatus(serviceCfg) {
   if (exeCwd) hints.push(path.basename(exeCwd));
   if (exePath) {
     hints.push(path.basename(exePath));
-    if (/fileflows\.(node|server)/i.test(exePath + exeArgs + exeCwd)) {
-      hints.push("FileFlows.Node", "FileFlows.Server", "fileflows.node.dll");
-    }
-    // Directory installs (FileFlows Node folder) - match common process names
-    if (!path.extname(exePath)) {
-      hints.push("FileFlows.Node", "FileFlows.Server", "fileflows.node.dll");
+  }
+
+  // Role-strict FileFlows hints — Node must never match Server and vice versa.
+  if (role === "node") {
+    hints.push("FileFlows.Node", "fileflows.node.dll");
+  } else if (role === "server") {
+    hints.push("FileFlows.Server", "fileflows.server.dll");
+  } else if (/fileflows/i.test(`${exePath}${exeArgs}${exeCwd}`)) {
+    // Ambiguous path: prefer Node folder naming only when present
+    if (/node/i.test(`${exePath}${exeCwd}`)) {
+      hints.push("FileFlows.Node", "fileflows.node.dll");
+    } else if (/server/i.test(`${exePath}${exeCwd}`)) {
+      hints.push("FileFlows.Server", "fileflows.server.dll");
     }
   }
 
   if (serviceName && windowsServiceExists(serviceName)) {
-    const safe = serviceName.replace(/'/g, "''");
+    const safe = sanitizePsLiteral(serviceName, 120).replace(/'/g, "");
     const ps = `
 $ErrorActionPreference = 'Stop'
 try {
@@ -303,8 +432,6 @@ try {
           message: `Service "${serviceName}" is Running`,
         };
       }
-      // Service exists but stopped/paused — still check process (dotnet FileFlows.Node
-      // often runs without the Windows service being Running).
       if (hints.length === 0) {
         return {
           ok: true,
@@ -325,13 +452,16 @@ try {
         message: `Service "${serviceName}" not found`,
       };
     }
-    // Service missing or not running — fall through to process check.
   }
 
-  const uniqueHints = [...new Set(hints.map((h) => h.toLowerCase()))].slice(
-    0,
-    8,
-  );
+  const uniqueHints = [
+    ...new Set(
+      hints
+        .map((h) => sanitizePsLiteral(h.toLowerCase(), 120))
+        .filter(Boolean),
+    ),
+  ].slice(0, 8);
+
   if (uniqueHints.length === 0) {
     return {
       ok: false,
@@ -343,26 +473,38 @@ try {
     };
   }
 
+  const processNames = new Set(["dotnet.exe"]);
+  if (role === "node") {
+    processNames.add("fileflows.node.exe");
+  } else if (role === "server") {
+    processNames.add("fileflows.server.exe");
+  } else {
+    processNames.add("fileflows.node.exe");
+    processNames.add("fileflows.server.exe");
+    processNames.add("fileflows.exe");
+  }
   const exeBase = exePath ? path.basename(exePath).toLowerCase() : "";
-  const processNames = new Set([
-    "dotnet.exe",
-    "fileflows.node.exe",
-    "fileflows.server.exe",
-    "fileflows.exe",
-  ]);
   if (exeBase.endsWith(".exe")) processNames.add(exeBase);
+
   const nameFilter = [...processNames]
-    .map((n) => `Name='${n.replace(/'/g, "''")}'`)
+    .map((n) => `Name='${sanitizePsLiteral(n, 80)}'`)
     .join(" OR ");
 
-  const hintList = uniqueHints
-    .map((h) => `'${h.replace(/'/g, "''")}'`)
-    .join(",");
+  const hintList = uniqueHints.map((h) => `'${h}'`).join(",");
+  const namedProbe =
+    role === "node"
+      ? "Get-Process -Name 'FileFlows.Node' -ErrorAction SilentlyContinue"
+      : role === "server"
+        ? "Get-Process -Name 'FileFlows.Server' -ErrorAction SilentlyContinue"
+        : "Get-Process -Name 'FileFlows.Node','FileFlows.Server','FileFlows' -ErrorAction SilentlyContinue";
+
+  const forbidServer = role === "node";
+  const forbidNode = role === "server";
+
   const psProc = `
 $hints = @(${hintList})
 try {
-  $named = Get-Process -Name 'FileFlows.Node','FileFlows.Server','FileFlows' -ErrorAction SilentlyContinue |
-    Select-Object -First 1
+  $named = ${namedProbe} | Select-Object -First 1
   if ($named) {
     Write-Output ("RUNNING=" + $named.ProcessName + ".exe pid=" + $named.Id)
     exit 0
@@ -376,6 +518,8 @@ $hit = $false
 $detail = ''
 foreach ($p in $procs) {
   $blob = (($p.Name + ' ' + $p.CommandLine) + '').ToLowerInvariant()
+  ${forbidServer ? "if ($blob.Contains('fileflows.server')) { continue }" : ""}
+  ${forbidNode ? "if ($blob.Contains('fileflows.node')) { continue }" : ""}
   foreach ($h in $hints) {
     if ($h -eq 'dotnet.exe') { continue }
     if ($blob.Contains($h)) {
@@ -426,4 +570,3 @@ if ($hit) { Write-Output ("RUNNING=" + $detail) } else { Write-Output 'STOPPED' 
     message: "No matching process running",
   };
 }
-

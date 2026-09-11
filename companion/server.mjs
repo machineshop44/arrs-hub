@@ -55,10 +55,19 @@ function requireAuth(req, res, next) {
 const app = express();
 app.use(express.json({ limit: "256kb" }));
 
-app.get("/api/health", (_req, res) => {
+app.get("/api/health", (req, res) => {
   const settings = loadCompanionSettings();
+  const key = readApiKey(req);
+  if (!verifyCompanionApiKey(key, settings.apiKey)) {
+    res.status(401).json({
+      ok: false,
+      error: "Invalid or missing companion API key (X-Arrs-Companion-Key).",
+    });
+    return;
+  }
   res.json({
     ok: true,
+    authenticated: true,
     product: "Arrs Hub Companion",
     version: process.env.ARRS_COMPANION_VERSION || "1.0.0",
     name: settings.name,
@@ -106,6 +115,7 @@ app.post("/api/restart", requireAuth, async (req, res) => {
   try {
     const body = req.body ?? {};
     const result = await restartServiceOrExe({
+      id: body.id,
       windowsService: body.windowsService,
       exePath: body.exePath,
       exeArgs: body.exeArgs,
@@ -124,6 +134,7 @@ app.post("/api/service-status", requireAuth, async (req, res) => {
   try {
     const body = req.body ?? {};
     const result = await checkLocalServiceStatus({
+      id: body.id,
       windowsService: body.windowsService,
       exePath: body.exePath,
       exeArgs: body.exeArgs,

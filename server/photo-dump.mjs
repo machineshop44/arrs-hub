@@ -395,6 +395,24 @@ function assertUploadQuota(apiKey, expectedSize) {
   entry.count += 1;
   entry.dayBytes += size;
   uploadQuotaByKey.set(keyHash, entry);
+  return { keyHash, reservedBytes: size };
+}
+
+/** Refund reserved quota when an upload fails after assertUploadQuota. */
+function refundUploadQuota(apiKey, reservedBytes) {
+  const keyHash = crypto
+    .createHash("sha256")
+    .update(String(apiKey || ""), "utf8")
+    .digest("hex")
+    .slice(0, 16);
+  const entry = uploadQuotaByKey.get(keyHash);
+  if (!entry) return;
+  entry.count = Math.max(0, (entry.count || 0) - 1);
+  entry.dayBytes = Math.max(
+    0,
+    (entry.dayBytes || 0) - Math.max(0, Number(reservedBytes) || 0),
+  );
+  uploadQuotaByKey.set(keyHash, entry);
 }
 
 /**
@@ -600,7 +618,10 @@ export async function savePhotoDumpUploadStream(stream, opts) {
   ) {
     throw new Error(`File exceeds max size (${max} bytes).`);
   }
-  assertUploadQuota(opts.apiKey || settings.apiKey, opts.expectedSize || 0);
+  const quota = assertUploadQuota(
+    opts.apiKey || settings.apiKey,
+    opts.expectedSize || 0,
+  );
   assertEnoughFreeSpace(folderAbs, Number(opts.expectedSize) || 0);
 
   const tmp = path.join(
@@ -610,6 +631,11 @@ export async function savePhotoDumpUploadStream(stream, opts) {
   const hash = crypto.createHash("sha256");
   let size = 0;
   let settled = false;
+  const refund = () =>
+    refundUploadQuota(
+      opts.apiKey || settings.apiKey,
+      quota.reservedBytes || size || 0,
+    );
 
   const ws = fs.createWriteStream(tmp);
   const fail = (err) => {
@@ -702,6 +728,7 @@ export async function savePhotoDumpUploadStream(stream, opts) {
     // Content already on disk from a prior upload — drop temp and skip write.
     const existing = findPhotoDumpBySha(settings.rootPath, sha256);
     if (existing) {
+      refund();
       try {
         if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
       } catch {
@@ -745,6 +772,7 @@ export async function savePhotoDumpUploadStream(stream, opts) {
       path: relPath,
     };
   } catch (err) {
+    refund();
     try {
       if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
     } catch {

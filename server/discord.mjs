@@ -3,9 +3,31 @@
  * @param {string} webhookUrl
  * @param {{ title: string, description?: string, color?: number }} payload
  */
+
+const DISCORD_WEBHOOK_HOSTS = new Set([
+  "discord.com",
+  "discordapp.com",
+  "canary.discord.com",
+  "ptb.discord.com",
+]);
+
+function isAllowedDiscordWebhookUrl(raw) {
+  const url = typeof raw === "string" ? raw.trim() : "";
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return false;
+    const host = parsed.hostname.toLowerCase();
+    if (!DISCORD_WEBHOOK_HOSTS.has(host)) return false;
+    return /^\/api\/webhooks\/\d+\/[\w-]+/i.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
 export async function sendDiscordWebhook(webhookUrl, payload) {
   const url = typeof webhookUrl === "string" ? webhookUrl.trim() : "";
-  if (!url || !url.startsWith("https://discord.com/api/webhooks/")) {
+  if (!isAllowedDiscordWebhookUrl(url)) {
     return { ok: false, message: "Invalid Discord webhook URL" };
   }
 

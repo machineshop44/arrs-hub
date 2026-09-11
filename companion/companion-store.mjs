@@ -105,8 +105,12 @@ export function publicCompanionSettings(settings) {
 export function verifyCompanionApiKey(provided, expected) {
   const a = String(provided || "").trim();
   const b = String(expected || "").trim();
-  if (!b) return false;
-  if (!a) return false;
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  if (!b || !a) return false;
+  const ha = crypto.createHash("sha256").update(a, "utf8").digest();
+  const hb = crypto.createHash("sha256").update(b, "utf8").digest();
+  try {
+    return crypto.timingSafeEqual(ha, hb);
+  } catch {
+    return false;
+  }
 }

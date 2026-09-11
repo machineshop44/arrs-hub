@@ -145,6 +145,8 @@ export function defaultWatchdogSettings() {
     /** @type {{ id: string, name: string, host: string, mac: string, monitor: boolean, wakeOnLan: boolean }[]} */
     pcs: [],
     companionUrlHints: {},
+    /** Last Port Watch targets from the Hub UI (survive closed browser). */
+    targets: [],
     /** @type {Record<string, { monitor: boolean, autoRestart: boolean, windowsService: string, exePath: string, exeArgs: string, exeCwd: string }>} */
     services: Object.fromEntries(
       Object.entries(DEFAULT_WINDOWS_SERVICES).map(([id, windowsService]) => [
@@ -200,6 +202,7 @@ export function loadWatchdogSettings() {
       raw.companionUrlHints && typeof raw.companionUrlHints === "object"
         ? raw.companionUrlHints
         : defaults.companionUrlHints,
+    targets: Array.isArray(raw.targets) ? raw.targets : defaults.targets,
   };
 }
 

@@ -122,6 +122,7 @@ export async function requestCompanionRestart(baseUrl, apiKey, serviceCfg) {
         "X-Arrs-Companion-Key": apiKey,
       },
       body: JSON.stringify({
+        id: serviceCfg.id || "",
         windowsService: serviceCfg.windowsService || "",
         exePath: serviceCfg.exePath || "",
         exeArgs: serviceCfg.exeArgs || "",
@@ -175,6 +176,7 @@ export async function requestCompanionServiceStatus(baseUrl, apiKey, serviceCfg)
         "X-Arrs-Companion-Key": apiKey,
       },
       body: JSON.stringify({
+        id: serviceCfg.id || "",
         windowsService: serviceCfg.windowsService || "",
         exePath: serviceCfg.exePath || "",
         exeArgs: serviceCfg.exeArgs || "",
