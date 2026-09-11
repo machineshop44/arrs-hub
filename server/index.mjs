@@ -69,8 +69,10 @@ import {
 import {
   createPhotoDumpFolder,
   encodePhotoDumpPairPayload,
+  findPhotoDumpBySha,
   listPhotoDumpFolders,
   loadPhotoDumpSettings,
+  photoDumpDuplicateResult,
   photoDumpPairHostHint,
   publicPhotoDumpSettings,
   publicPhotoDumpStatus,
@@ -405,11 +407,21 @@ app.post("/api/photo-dump/upload", async (req, res) => {
     );
     const expectedSha256 =
       typeof req.headers["x-content-sha256"] === "string"
-        ? req.headers["x-content-sha256"]
+        ? String(req.headers["x-content-sha256"]).trim().toLowerCase()
         : "";
     const expectedSizeRaw =
       req.headers["x-expected-size"] || req.headers["content-length"];
     const expectedSize = expectedSizeRaw ? Number(expectedSizeRaw) : undefined;
+
+    // Skip transfer when this exact content is already under the dump root.
+    if (expectedSha256) {
+      const hit = findPhotoDumpBySha(settings.rootPath, expectedSha256);
+      if (hit) {
+        rejectPhotoDumpBody(req);
+        res.json(photoDumpDuplicateResult(hit));
+        return;
+      }
+    }
 
     const result = await savePhotoDumpUploadStream(req, {
       relativeFolder,

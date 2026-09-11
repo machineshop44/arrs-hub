@@ -409,7 +409,13 @@ export function listPhotoDumpFolders(relativeFolder = "") {
   );
   const entries = fs.readdirSync(absolute, { withFileTypes: true });
   const folders = entries
-    .filter((e) => e.isDirectory() && !isWindowsReservedBase(e.name))
+    .filter(
+      (e) =>
+        e.isDirectory() &&
+        !isWindowsReservedBase(e.name) &&
+        e.name !== SHA_INDEX_NAME &&
+        !e.name.startsWith(".arrs-hub-"),
+    )
     .map((e) => e.name)
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   return {
@@ -429,6 +435,140 @@ export function createPhotoDumpFolder(relativeFolder) {
   const { absolute, relative } = resolveWritableFolder(settings.rootPath, rel);
   return {
     path: relative.replace(/\\/g, "/"),
+  };
+}
+
+const SHA_INDEX_NAME = ".arrs-hub-sha-index.json";
+
+function shaIndexPath(rootPath) {
+  return path.join(assertAbsoluteRootPath(rootPath), SHA_INDEX_NAME);
+}
+
+function loadShaIndex(rootPath) {
+  const file = shaIndexPath(rootPath);
+  try {
+    if (!fs.existsSync(file)) {
+      return { version: 1, entries: {} };
+    }
+    const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+    const entries =
+      raw && typeof raw.entries === "object" && raw.entries
+        ? raw.entries
+        : {};
+    return { version: 1, entries };
+  } catch {
+    return { version: 1, entries: {} };
+  }
+}
+
+function saveShaIndex(rootPath, index) {
+  const root = assertAbsoluteRootPath(rootPath);
+  ensureRootExists(root);
+  const file = shaIndexPath(root);
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(
+    tmp,
+    `${JSON.stringify({ version: 1, entries: index.entries || {} }, null, 2)}\n`,
+    "utf8",
+  );
+  fs.renameSync(tmp, file);
+}
+
+/**
+ * Look up an existing verified file by SHA-256 under the dump root.
+ * @returns {{ path: string, fileName: string, folder: string, size: number, sha256: string } | null}
+ */
+export function findPhotoDumpBySha(rootPath, sha256) {
+  const sha = String(sha256 || "")
+    .trim()
+    .toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(sha)) return null;
+
+  const root = assertAbsoluteRootPath(rootPath);
+  ensureRootExists(root);
+  const index = loadShaIndex(root);
+  const entry = index.entries[sha];
+  if (!entry || typeof entry.path !== "string" || !entry.path.trim()) {
+    return null;
+  }
+
+  const relPath = String(entry.path || "")
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .trim();
+  if (!relPath || relPath.split("/").some((p) => p === ".." || p === ".")) {
+    return null;
+  }
+
+  const absolute = path.resolve(root, relPath.split("/").join(path.sep));
+  const rootWithSep = root.endsWith(path.sep) ? root : root + path.sep;
+  if (absolute !== root && !absolute.startsWith(rootWithSep)) {
+    return null;
+  }
+
+  try {
+    if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) {
+      delete index.entries[sha];
+      saveShaIndex(root, index);
+      return null;
+    }
+    const st = fs.statSync(absolute);
+    if (
+      entry.size != null &&
+      Number(entry.size) > 0 &&
+      Number(entry.size) !== st.size
+    ) {
+      delete index.entries[sha];
+      saveShaIndex(root, index);
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  const fileName = path.basename(absolute);
+  const folder = path.dirname(relPath).replace(/\\/g, "/");
+  return {
+    path: relPath,
+    fileName,
+    folder: folder === "." ? "" : folder,
+    size: Number(entry.size) || fs.statSync(absolute).size,
+    sha256: sha,
+  };
+}
+
+export function recordPhotoDumpSha(rootPath, sha256, relativePath, size) {
+  const sha = String(sha256 || "")
+    .trim()
+    .toLowerCase();
+  const rel = String(relativePath || "")
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .trim();
+  if (!/^[a-f0-9]{64}$/.test(sha) || !rel) return;
+  const root = assertAbsoluteRootPath(rootPath);
+  const index = loadShaIndex(root);
+  index.entries[sha] = {
+    path: rel,
+    size: Number(size) || 0,
+    addedAt: new Date().toISOString(),
+  };
+  saveShaIndex(root, index);
+}
+
+/**
+ * Build a duplicate-skip response (no new bytes written).
+ */
+export function photoDumpDuplicateResult(hit) {
+  return {
+    ok: true,
+    verified: true,
+    duplicate: true,
+    folder: hit.folder || "",
+    fileName: hit.fileName,
+    size: hit.size,
+    sha256: hit.sha256,
+    path: hit.path,
   };
 }
 
@@ -559,6 +699,17 @@ export async function savePhotoDumpUploadStream(stream, opts) {
       throw new Error("SHA-256 mismatch — file not saved. Phone copy kept.");
     }
 
+    // Content already on disk from a prior upload — drop temp and skip write.
+    const existing = findPhotoDumpBySha(settings.rootPath, sha256);
+    if (existing) {
+      try {
+        if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+      } catch {
+        // ignore
+      }
+      return photoDumpDuplicateResult(existing);
+    }
+
     const written = fs.statSync(tmp).size;
     if (written !== size) {
       throw new Error(`Write size mismatch: ${written} vs ${size}.`);
@@ -578,15 +729,20 @@ export async function savePhotoDumpUploadStream(stream, opts) {
     }
 
     const { fileName } = finalizeUniqueDest(tmp, folderAbs, opts.originalName);
+    const relPath = path.join(relative, fileName).replace(/\\/g, "/");
+    if (clientProvidedSha || sha256) {
+      recordPhotoDumpSha(settings.rootPath, sha256, relPath, size);
+    }
 
     return {
       ok: true,
       verified: clientProvidedSha,
+      duplicate: false,
       folder: relative.replace(/\\/g, "/"),
       fileName,
       size,
       sha256,
-      path: path.join(relative, fileName).replace(/\\/g, "/"),
+      path: relPath,
     };
   } catch (err) {
     try {
