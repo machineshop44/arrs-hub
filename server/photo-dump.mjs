@@ -8,7 +8,11 @@ import os from "node:os";
 import path from "node:path";
 import { finished } from "node:stream/promises";
 import { DATA_DIR, ensureDataDirs } from "./config.mjs";
-import { pickPrimaryLanIpv4 } from "./lan-utils.mjs";
+import {
+  detectPublicIpv4,
+  isPrivateIpv4,
+  pickPrimaryLanIpv4,
+} from "./lan-utils.mjs";
 
 export const PHOTO_DUMP_SETTINGS_PATH = path.join(
   DATA_DIR,
@@ -121,6 +125,10 @@ export function defaultPhotoDumpSettings() {
     rootPath: "N:\\PhoneDump",
     apiKey: "",
     maxFileBytes: DEFAULT_MAX_BYTES,
+    /** Saved Hub base URL baked into Mobile setup QR (LAN or WAN). */
+    pairUrl: "",
+    /** Prefer detected public/WAN IP in QR when pairUrl is empty. */
+    preferPublicPairUrl: true,
   };
 }
 
@@ -157,6 +165,8 @@ export function loadPhotoDumpSettings() {
         Number(raw.maxFileBytes) || defaults.maxFileBytes,
       ),
       enabled: raw.enabled !== false,
+      pairUrl: typeof raw.pairUrl === "string" ? raw.pairUrl.trim() : "",
+      preferPublicPairUrl: raw.preferPublicPairUrl !== false,
     };
   } catch {
     return defaultPhotoDumpSettings();
@@ -212,6 +222,14 @@ export function updatePhotoDumpSettings(patch = {}, opts = {}) {
       patch.maxFileBytes !== undefined
         ? Math.max(1_000_000, Number(patch.maxFileBytes) || current.maxFileBytes)
         : current.maxFileBytes,
+    pairUrl:
+      patch.pairUrl !== undefined
+        ? String(patch.pairUrl || "").trim().replace(/\/+$/, "")
+        : current.pairUrl || "",
+    preferPublicPairUrl:
+      patch.preferPublicPairUrl !== undefined
+        ? Boolean(patch.preferPublicPairUrl)
+        : current.preferPublicPairUrl !== false,
   };
   return savePhotoDumpSettings(next);
 }
@@ -617,15 +635,38 @@ export function encodePhotoDumpPairJson({ url, key }) {
   });
 }
 
-/** Hostname hint for Mobile QR (LAN preferred). */
-export function photoDumpPairHostHint(port) {
+/** Hostname hints for Mobile QR (WAN preferred for away use; LAN also returned). */
+export async function photoDumpPairHostHint(port, opts = {}) {
+  const settings = loadPhotoDumpSettings();
   const lanIp = pickPrimaryLanIpv4();
+  const publicIp = await detectPublicIpv4({ timeoutMs: 2000 });
   const p = Number(port) || 3000;
+  const lanUrl = lanIp ? `http://${lanIp}:${p}` : "";
+  const publicUrl = publicIp ? `http://${publicIp}:${p}` : "";
+  const savedPair = String(opts.pairUrl ?? settings.pairUrl ?? "")
+    .trim()
+    .replace(/\/+$/, "");
+  const preferPublic =
+    opts.preferPublicPairUrl !== undefined
+      ? Boolean(opts.preferPublicPairUrl)
+      : settings.preferPublicPairUrl !== false;
+
+  let preferredUrl = savedPair;
+  if (!preferredUrl) {
+    preferredUrl = preferPublic
+      ? publicUrl || lanUrl
+      : lanUrl || publicUrl;
+  }
+
   return {
     lanIp: lanIp || "",
+    publicIp: publicIp || "",
     port: p,
-    /** Empty when no usable LAN IP — UI should ask the user to type the Hub URL. */
-    lanUrl: lanIp ? `http://${lanIp}:${p}` : "",
+    lanUrl,
+    publicUrl,
+    preferredUrl,
+    preferPublicPairUrl: preferPublic,
+    savedPairUrl: savedPair,
     hostname: os.hostname(),
   };
 }

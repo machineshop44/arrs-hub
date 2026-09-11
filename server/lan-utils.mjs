@@ -138,3 +138,58 @@ export function pickPrimaryLanIpv4() {
   // Last resort: physical NIC even if public/CGNAT (user can edit QR URL).
   return physical[0]?.address || all[0]?.address || "";
 }
+
+let cachedPublicIp = { ip: "", at: 0 };
+const PUBLIC_IP_TTL_MS = 5 * 60 * 1000;
+const PUBLIC_IP_URLS = [
+  "https://api.ipify.org",
+  "https://icanhazip.com",
+  "https://ifconfig.me/ip",
+];
+
+function looksLikeIpv4(ip) {
+  const parts = String(ip || "")
+    .trim()
+    .split(".")
+    .map(Number);
+  return (
+    parts.length === 4 && parts.every((n) => Number.isFinite(n) && n >= 0 && n <= 255)
+  );
+}
+
+/**
+ * Best-effort public IPv4 for away/WAN Mobile QR (cached ~5 min).
+ * @param {{ timeoutMs?: number }} [opts]
+ */
+export async function detectPublicIpv4(opts = {}) {
+  const timeoutMs = Math.max(500, Number(opts.timeoutMs) || 2000);
+  const now = Date.now();
+  if (cachedPublicIp.ip && now - cachedPublicIp.at < PUBLIC_IP_TTL_MS) {
+    return cachedPublicIp.ip;
+  }
+  for (const url of PUBLIC_IP_URLS) {
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        headers: { "User-Agent": "ArrsHub/1.0" },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!res.ok) continue;
+      const ip = String(await res.text())
+        .trim()
+        .replace(/\s+/g, "");
+      if (
+        looksLikeIpv4(ip) &&
+        !isPrivateIpv4(ip) &&
+        !ip.startsWith("127.") &&
+        !isLikelyVirtualIp(ip)
+      ) {
+        cachedPublicIp = { ip, at: now };
+        return ip;
+      }
+    } catch {
+      // try next
+    }
+  }
+  return cachedPublicIp.ip || "";
+}

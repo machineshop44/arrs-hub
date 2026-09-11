@@ -61,8 +61,13 @@ export function PhotoDumpSettingsSection({
       const res = await fetch("/api/photo-dump/pair-hint");
       const json = await res.json();
       if (!res.ok) return;
-      if (typeof json.lanUrl === "string" && json.lanUrl) {
-        setPairUrl((prev) => prev || json.lanUrl);
+      const preferred =
+        (typeof json.preferredUrl === "string" && json.preferredUrl) ||
+        (typeof json.publicUrl === "string" && json.publicUrl) ||
+        (typeof json.lanUrl === "string" && json.lanUrl) ||
+        "";
+      if (preferred) {
+        setPairUrl((prev) => prev || preferred);
       }
     } catch {
       // ignore — user can type URL
@@ -278,7 +283,7 @@ export function PhotoDumpSettingsSection({
           type="text"
           value={pairUrl}
           disabled={serverUp === false || busy}
-          placeholder="http://192.168.x.x:3000"
+          placeholder="http://your.public.ip:3000"
           onChange={(e) => {
             const next = e.target.value;
             setPairUrl(next);
@@ -287,8 +292,9 @@ export function PhotoDumpSettingsSection({
         />
       </label>
       <p className="settings-hint">
-        Use the LAN URL at home, or your public IP / DDNS (with port forward) when
-        away — same host Mobile uses for Hub status.
+        Defaults to your <strong>public/WAN</strong> IP when detected (port-forward
+        3000). Mobile auto-switches to LAN when you&apos;re on home Wi‑Fi — keep
+        this QR URL as the away address, not a 10.x / 192.168.x LAN IP.
       </p>
 
       <p className="settings-hint">

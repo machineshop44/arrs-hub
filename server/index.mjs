@@ -268,21 +268,28 @@ app.get("/api/photo-dump/settings", (req, res) => {
   }
 });
 
-/** Local-only: LAN URL hint for Mobile setup QR. */
-app.get("/api/photo-dump/pair-hint", (req, res) => {
+/** Local-only: LAN + WAN URL hints for Mobile setup QR. */
+app.get("/api/photo-dump/pair-hint", async (req, res) => {
   if (!requireLocalPhotoDumpAdmin(req, res)) return;
-  res.json({ ok: true, ...photoDumpPairHostHint(PORT) });
+  try {
+    res.json({ ok: true, ...(await photoDumpPairHostHint(PORT)) });
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
 });
 
-app.put("/api/photo-dump/settings", (req, res) => {
+app.put("/api/photo-dump/settings", async (req, res) => {
   if (!requireLocalPhotoDumpAdmin(req, res)) return;
   try {
     const body = req.body ?? {};
-    const pairHint = photoDumpPairHostHint(PORT);
+    const pairHint = await photoDumpPairHostHint(PORT, {
+      pairUrl: body.pairUrl,
+      preferPublicPairUrl: body.preferPublicPairUrl,
+    });
     const pairUrlRaw =
       typeof body.pairUrl === "string" && body.pairUrl.trim()
         ? String(body.pairUrl).trim().replace(/\/+$/, "")
-        : pairHint.lanUrl;
+        : pairHint.preferredUrl || pairHint.publicUrl || pairHint.lanUrl;
     const willRotate =
       body.rotateKey === true ||
       (typeof body.apiKey === "string" &&
@@ -298,9 +305,15 @@ app.put("/api/photo-dump/settings", (req, res) => {
       });
     }
 
-    const settings = updatePhotoDumpSettings(body, {
-      rotateKey: body.rotateKey === true,
-    });
+    const settings = updatePhotoDumpSettings(
+      {
+        ...body,
+        pairUrl: pairUrlRaw || body.pairUrl,
+      },
+      {
+        rotateKey: body.rotateKey === true,
+      },
+    );
     const apiKeyPlain = willRotate ? settings.apiKey : undefined;
     if (apiKeyPlain && pairUrlRaw) {
       pairPayload = encodePhotoDumpPairPayload({
