@@ -368,10 +368,12 @@ app.put("/api/photo-dump/settings", async (req, res) => {
         !body.apiKey.includes("•"));
     // Validate pair URL before rotating so we never mint a key we cannot return.
     let pairPayload;
+    const hubToken = String(loadHubAuthSettings().apiToken || "").trim();
     if (willRotate && pairUrlRaw) {
       pairPayload = encodePhotoDumpPairPayload({
         url: pairUrlRaw,
         key: "pending",
+        token: hubToken,
       });
     }
 
@@ -389,6 +391,7 @@ app.put("/api/photo-dump/settings", async (req, res) => {
       pairPayload = encodePhotoDumpPairPayload({
         url: pairUrlRaw,
         key: apiKeyPlain,
+        token: hubToken,
       });
     } else {
       pairPayload = undefined;

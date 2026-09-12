@@ -126,7 +126,7 @@ export function PhotoDumpSettingsSection({
     };
   }, [pairPayload]);
 
-  const rebuildPairPayload = (key: string, url: string) => {
+  const rebuildPairPayload = async (key: string, url: string) => {
     const base = url.trim().replace(/\/+$/, "");
     const k = key.trim();
     if (!base || !k || !looksHttpUrl(base)) {
@@ -136,6 +136,17 @@ export function PhotoDumpSettingsSection({
     const params = new URLSearchParams();
     params.set("url", base);
     params.set("key", k);
+    try {
+      const res = await fetch("/api/hub-auth/settings");
+      const json = await res.json();
+      const token =
+        res.ok && typeof json.settings?.apiToken === "string"
+          ? String(json.settings.apiToken).trim()
+          : "";
+      if (token) params.set("token", token);
+    } catch {
+      // Photo dump still pairs without Hub token
+    }
     setPairPayload(`arrs-hub-photo-dump://v1?${params.toString()}`);
   };
 
@@ -180,7 +191,7 @@ export function PhotoDumpSettingsSection({
         if (typeof json.pairPayload === "string" && json.pairPayload) {
           setPairPayload(json.pairPayload);
         } else {
-          rebuildPairPayload(
+          void rebuildPairPayload(
             json.apiKeyPlain,
             pairUrl || json.pairHint?.lanUrl || "",
           );
@@ -189,7 +200,7 @@ export function PhotoDumpSettingsSection({
       setMessage({
         type: "ok",
         text: opts?.rotateKey
-          ? "New photo dump API key generated — scan the QR in Arrs Hub Mobile (or copy the key)."
+          ? "New photo dump API key generated — scan the QR in Arrs Hub Mobile (sets photo key + Hub API token)."
           : "Photo dump settings saved.",
       });
       await load();
@@ -287,7 +298,7 @@ export function PhotoDumpSettingsSection({
           onChange={(e) => {
             const next = e.target.value;
             setPairUrl(next);
-            if (plainKey) rebuildPairPayload(plainKey, next);
+            if (plainKey) void rebuildPairPayload(plainKey, next);
           }}
         />
       </label>
@@ -343,7 +354,7 @@ export function PhotoDumpSettingsSection({
                 }}
               />
               <p className="settings-hint" style={{ marginTop: "0.5rem" }}>
-                Mobile: Photo Dump → Scan setup QR
+                Mobile: Photo Dump → Scan setup QR (photo key + Hub API token)
               </p>
             </div>
           ) : (

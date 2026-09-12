@@ -63,7 +63,7 @@ export function HubAuthSettingsSection({
       setMessage({
         type: "ok",
         text: patch.rotateToken
-          ? "New Hub API token generated. Update Mobile if you use remote Hub APIs."
+          ? "New Hub API token generated. Re-generate the Photo dump setup QR so Mobile picks up the new token."
           : "Hub API token settings saved.",
       });
     } catch (err) {

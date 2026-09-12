@@ -801,22 +801,27 @@ function assertHttpPairUrl(raw) {
 }
 
 /** Setup QR / paste payload for Mobile (Market Advisor companion style). */
-export function encodePhotoDumpPairPayload({ url, key }) {
+export function encodePhotoDumpPairPayload({ url, key, token }) {
   const base = assertHttpPairUrl(url);
   const apiKey = String(key || "").trim();
   if (!apiKey) throw new Error("API key is required for the setup QR.");
   const params = new URLSearchParams();
   params.set("url", base);
   params.set("key", apiKey);
+  const hubToken = String(token || "").trim();
+  if (hubToken) params.set("token", hubToken);
   return `arrs-hub-photo-dump://v1?${params.toString()}`;
 }
 
-export function encodePhotoDumpPairJson({ url, key }) {
-  return JSON.stringify({
+export function encodePhotoDumpPairJson({ url, key, token }) {
+  const payload = {
     v: 1,
     url: assertHttpPairUrl(url),
     key: String(key || "").trim(),
-  });
+  };
+  const hubToken = String(token || "").trim();
+  if (hubToken) payload.token = hubToken;
+  return JSON.stringify(payload);
 }
 
 /** Hostname hints for Mobile QR (WAN preferred for away use; LAN also returned). */
