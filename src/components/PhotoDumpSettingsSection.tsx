@@ -245,10 +245,21 @@ export function PhotoDumpSettingsSection({
   return (
     <section className="settings-group" id="photo-dump">
       <h3>Mobile setup QR</h3>
+      <div className="sync-alert sync-alert-ok" style={{ marginBottom: "0.85rem" }}>
+        <strong>One QR for both Mobile secrets</strong>
+        <p className="settings-hint" style={{ marginTop: "0.35rem", marginBottom: 0 }}>
+          Scan this QR in Arrs Hub Mobile to set{" "}
+          <strong>(1) Photo dump key</strong> (<code>X-Arrs-Hub-Key</code>) and{" "}
+          <strong>(2) Hub API token</strong> (<code>X-Arrs-Hub-Token</code>) at
+          once. There is <strong>no separate QR</strong> under “Hub API token” —
+          that section is copy/regenerate only. If the QR is missing, click{" "}
+          <strong>Generate API key</strong> once, then it stays visible here.
+        </p>
+      </div>
       <p className="settings-hint">
-        One QR for Arrs Hub Mobile: Hub URL + photo dump key (
-        <code>X-Arrs-Hub-Key</code>) + Hub API token (
-        <code>X-Arrs-Hub-Token</code>). Scan under Photo Dump → Scan setup QR.
+        Receive photos/videos from Arrs Hub Mobile into a folder on this PC
+        (e.g. <code>N:\PhoneDump</code>). Same Hub URL / port-forward as Mobile
+        status.
       </p>
 
       {serverUp === false && (

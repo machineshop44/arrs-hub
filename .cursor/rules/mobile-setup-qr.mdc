@@ -1,0 +1,24 @@
+---
+description: Mobile setup QR must stay obvious in Hub Settings
+globs: src/components/PhotoDumpSettingsSection.tsx,src/components/HubAuthSettingsSection.tsx,server/photo-dump.mjs,server/hub-auth.mjs
+alwaysApply: false
+---
+
+# Mobile setup QR (Hub Settings)
+
+Arrs Hub Mobile pairs with **one QR** that includes:
+
+1. Hub base URL  
+2. Photo dump key (`X-Arrs-Hub-Key`)  
+3. Hub API token (`X-Arrs-Hub-Token`) — optional in the wire format, include whenever set  
+
+URI: `arrs-hub-photo-dump://v1?url=…&key=…&token=…`
+
+## UX rules when changing auth / photo dump
+
+- Keep a **visible QR** under Settings → Photo dump / Mobile setup (not only after “Generate key”).
+- Put a short callout: this QR covers **both** secrets; Hub API token section has **no** separate QR.
+- Localhost `GET /api/photo-dump/setup-qr` builds the payload without rotating secrets.
+- Regenerating the Hub token → user must **Refresh QR** (say so in the Hub token UI).
+- Do not require `token` for photo-dump upload routes; do not merge the two secrets server-side.
+---

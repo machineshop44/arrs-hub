@@ -373,12 +373,18 @@ export async function checkLocalServiceStatus(serviceCfg) {
   const exeArgs = String(launch.exeArgs || "").trim();
   const exeCwd = String(launch.exeCwd || "").trim();
   const role =
-    fileFlowsRoleFromPath(`${exePath} ${exeArgs} ${exeCwd}`) ||
-    (String(serviceCfg.id || "").includes("node")
+    String(serviceCfg.id || "") === "fileflows-node"
       ? "node"
       : String(serviceCfg.id || "") === "fileflows"
         ? "server"
-        : "");
+        : fileFlowsRoleFromPath(`${exePath} ${exeArgs} ${exeCwd}`) ||
+          (String(serviceCfg.id || "").includes("node")
+            ? "node"
+            : String(serviceCfg.windowsService || "")
+                  .toLowerCase()
+                  .includes("node")
+              ? "node"
+              : "");
 
   const hints = Array.isArray(serviceCfg.processHints)
     ? serviceCfg.processHints.map((h) => String(h || "").trim()).filter(Boolean)

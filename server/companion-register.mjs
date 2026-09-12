@@ -292,11 +292,14 @@ export function registerCompanionPeer(payload) {
     const isFileFlows = id.startsWith("fileflows");
 
     // Preserve user monitor/autoRestart — never force-on every 60s register.
+    // FileFlows Node has no TCP probe — keep monitoring on so Hub can ask Companion.
+    const keepMonitor =
+      id === "fileflows-node" ? true : base.monitor !== false;
     services[id] = {
       ...base,
-      monitor: base.monitor !== false,
+      monitor: keepMonitor,
       autoRestart: base.autoRestart !== false,
-      restartPcId: shouldRewire ? pcId : prevRestartPc,
+      restartPcId: shouldRewire ? pcId : prevRestartPc || (id === "fileflows-node" ? pcId : prevRestartPc),
       windowsService: isFileFlows
         ? fromCompanion.windowsService
         : fromCompanion.windowsService ||

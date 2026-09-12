@@ -469,8 +469,15 @@ async function notifyDiscord(settings, payload) {
 }
 
 async function probeViaCompanion(target, serviceCfg, settings) {
-  const pcId = String(serviceCfg.restartPcId || "").trim();
-  const pc = (settings.pcs || []).find((item) => item.id === pcId);
+  let pcId = String(serviceCfg.restartPcId || "").trim();
+  let pc = (settings.pcs || []).find((item) => item.id === pcId);
+  // FileFlows Node often needs Companion even if Restart-on was never set.
+  if (!pc || !String(pc.companionUrl || "").trim()) {
+    pc = (settings.pcs || []).find((item) =>
+      String(item.companionUrl || "").trim(),
+    );
+    pcId = pc?.id || "";
+  }
   if (!pcId || !pc) {
     return {
       up: false,
@@ -495,12 +502,29 @@ async function probeViaCompanion(target, serviceCfg, settings) {
     };
   }
 
+  // Host ping can look "online" while Companion API key is wrong — verify API first.
+  if (!String(pc.companionApiKey || "").trim()) {
+    return {
+      up: false,
+      latencyMs: null,
+      message: `Companion API key missing on "${pc.name || "PC"}" — Clear pairing / re-register Companion.`,
+    };
+  }
+  const health = await checkCompanionHealth(pc.companionUrl, pc.companionApiKey);
+  if (!health.online) {
+    return {
+      up: false,
+      latencyMs: health.latencyMs,
+      message: `Companion API unreachable (${health.message}). Is Companion 1.3.60+ installed with a matching API key?`,
+    };
+  }
+
   const hints = [];
   if (target.id === "fileflows-node") {
-    hints.push("FileFlows.Node", "fileflows.node");
+    hints.push("FileFlows.Node", "fileflows.node", "fileflows.node.dll");
   }
   if (target.id === "fileflows") {
-    hints.push("FileFlows.Server", "fileflows.server");
+    hints.push("FileFlows.Server", "fileflows.server", "fileflows.server.dll");
   }
 
   const status = await requestCompanionServiceStatus(
@@ -516,12 +540,16 @@ async function probeViaCompanion(target, serviceCfg, settings) {
     },
   );
 
-  // Transport / auth / timeout — unknown (do not Discord "down" or auto-restart).
+  // Auth failures are actionable "down"; transport timeouts stay unknown.
   if (!status.ok && status.running !== true) {
+    const msg = String(status.message || "Companion status check failed");
+    const authFail = /401|api key|unauthorized|invalid companion/i.test(msg);
     return {
-      up: null,
+      up: authFail ? false : null,
       latencyMs: status.latencyMs,
-      message: status.message || "Companion status check failed (unknown)",
+      message: authFail
+        ? `Companion rejected API key — re-register Companion or paste key in Port Watch. ${msg}`
+        : msg,
     };
   }
 
