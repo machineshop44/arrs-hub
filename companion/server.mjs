@@ -42,6 +42,13 @@ function readApiKey(req) {
   return "";
 }
 
+/** Fail-closed: only loopback (tray readiness probe). */
+function isLocalCompanionRequest(req) {
+  const raw = req.socket?.remoteAddress || req.connection?.remoteAddress || "";
+  const ip = String(raw).replace(/^::ffff:/i, "");
+  return ip === "127.0.0.1" || ip === "::1";
+}
+
 function requireAuth(req, res, next) {
   const settings = loadCompanionSettings();
   const key = readApiKey(req);
@@ -55,19 +62,27 @@ function requireAuth(req, res, next) {
 const app = express();
 app.use(express.json({ limit: "256kb" }));
 
+/**
+ * Localhost (tray boot): ok without key.
+ * LAN/WAN: require X-Arrs-Companion-Key (Hub always sends it).
+ */
 app.get("/api/health", (req, res) => {
   const settings = loadCompanionSettings();
   const key = readApiKey(req);
-  if (!verifyCompanionApiKey(key, settings.apiKey)) {
+  const keyOk = verifyCompanionApiKey(key, settings.apiKey);
+  const local = isLocalCompanionRequest(req);
+
+  if (!keyOk && !local) {
     res.status(401).json({
       ok: false,
       error: "Invalid or missing companion API key (X-Arrs-Companion-Key).",
     });
     return;
   }
+
   res.json({
     ok: true,
-    authenticated: true,
+    authenticated: keyOk,
     product: "Arrs Hub Companion",
     version: process.env.ARRS_COMPANION_VERSION || "1.0.0",
     name: settings.name,

@@ -40,9 +40,20 @@ export async function checkCompanionHealth(baseUrl, apiKey) {
       };
     }
     const data = await res.json();
+    const authenticated = data?.authenticated === true;
+    // When Hub sends a key, require proof — reject open localhost-style replies from WAN spoof.
+    if (apiKey && !authenticated) {
+      return {
+        ok: false,
+        online: false,
+        latencyMs,
+        message: "Companion health did not accept API key",
+      };
+    }
     return {
       ok: true,
       online: Boolean(data?.ok),
+      authenticated,
       latencyMs,
       message: data?.ok ? "Companion online" : "Companion unhealthy",
       product: data?.product,
