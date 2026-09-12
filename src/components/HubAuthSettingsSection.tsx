@@ -63,7 +63,7 @@ export function HubAuthSettingsSection({
       setMessage({
         type: "ok",
         text: patch.rotateToken
-          ? "New Hub API token generated. Re-generate the Photo dump setup QR so Mobile picks up the new token."
+          ? "New Hub API token generated. Click Refresh QR under Mobile setup QR so the scan picks it up."
           : "Hub API token settings saved.",
       });
     } catch (err) {
@@ -94,6 +94,8 @@ export function HubAuthSettingsSection({
         Remote callers (phone / WAN on port 3000) must send{" "}
         <code>X-Arrs-Hub-Token</code> for Hub APIs. Localhost UI stays open.
         Photo dump keeps its own key (<code>X-Arrs-Hub-Key</code>).
+        Both secrets are in the <strong>Mobile setup QR</strong> under Photo dump
+        — scan that QR; you do not need a separate token QR.
       </p>
       {serverUp === false && (
         <p className="settings-error">

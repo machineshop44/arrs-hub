@@ -348,6 +348,59 @@ app.get("/api/photo-dump/pair-hint", async (req, res) => {
   }
 });
 
+/**
+ * Local-only: full Mobile setup payload (photo key + Hub token) for QR.
+ * Does not rotate secrets — always available once a photo dump key exists.
+ */
+app.get("/api/photo-dump/setup-qr", async (req, res) => {
+  if (!requireLocalPhotoDumpAdmin(req, res)) return;
+  try {
+    const settings = loadPhotoDumpSettings();
+    const photoKey = String(settings.apiKey || "").trim();
+    if (!photoKey) {
+      res.status(400).json({
+        error: "Generate a photo dump API key first, then the setup QR will appear.",
+      });
+      return;
+    }
+    const pairHint = await photoDumpPairHostHint(PORT, {
+      pairUrl:
+        typeof req.query.pairUrl === "string" ? req.query.pairUrl : settings.pairUrl,
+    });
+    const pairUrlRaw =
+      (typeof req.query.pairUrl === "string" && req.query.pairUrl.trim()
+        ? String(req.query.pairUrl).trim().replace(/\/+$/, "")
+        : "") ||
+      String(settings.pairUrl || "").trim() ||
+      pairHint.preferredUrl ||
+      pairHint.publicUrl ||
+      pairHint.lanUrl ||
+      "";
+    if (!pairUrlRaw) {
+      res.status(400).json({
+        error: "Set a Hub URL for Mobile QR (WAN preferred) first.",
+      });
+      return;
+    }
+    const hubToken = String(loadHubAuthSettings().apiToken || "").trim();
+    const pairPayload = encodePhotoDumpPairPayload({
+      url: pairUrlRaw,
+      key: photoKey,
+      token: hubToken,
+    });
+    res.json({
+      ok: true,
+      pairUrl: pairUrlRaw,
+      pairPayload,
+      photoKeySet: true,
+      hubTokenSet: Boolean(hubToken),
+      pairHint,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message || String(err) });
+  }
+});
+
 app.put("/api/photo-dump/settings", async (req, res) => {
   if (!requireLocalPhotoDumpAdmin(req, res)) return;
   try {

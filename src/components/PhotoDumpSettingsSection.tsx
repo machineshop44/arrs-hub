@@ -18,7 +18,6 @@ function looksAbsoluteWindowsPath(value: string) {
   const v = value.trim();
   if (!v) return false;
   if (v.includes("..")) return false;
-  // N:\… or \\server\share\…
   return /^[a-zA-Z]:[\\/]/.test(v) || /^\\\\[^\\\/]+[\\/]/.test(v);
 }
 
@@ -49,6 +48,7 @@ export function PhotoDumpSettingsSection({
   const [plainKey, setPlainKey] = useState<string | null>(null);
   const [pairPayload, setPairPayload] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [hubTokenInQr, setHubTokenInQr] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{
     type: "ok" | "err";
@@ -70,9 +70,36 @@ export function PhotoDumpSettingsSection({
         setPairUrl((prev) => prev || preferred);
       }
     } catch {
-      // ignore — user can type URL
+      // ignore
     }
   }, [serverUp]);
+
+  const refreshSetupQr = useCallback(
+    async (urlOverride?: string) => {
+      if (serverUp === false) return;
+      const url = (urlOverride ?? pairUrl).trim();
+      try {
+        const qs = url ? `?pairUrl=${encodeURIComponent(url)}` : "";
+        const res = await fetch(`/api/photo-dump/setup-qr${qs}`);
+        const json = await res.json();
+        if (!res.ok) {
+          setPairPayload(null);
+          setHubTokenInQr(false);
+          return;
+        }
+        if (typeof json.pairUrl === "string" && json.pairUrl) {
+          setPairUrl((prev) => prev.trim() || json.pairUrl);
+        }
+        setPairPayload(
+          typeof json.pairPayload === "string" ? json.pairPayload : null,
+        );
+        setHubTokenInQr(Boolean(json.hubTokenSet));
+      } catch {
+        setPairPayload(null);
+      }
+    },
+    [serverUp, pairUrl],
+  );
 
   const load = useCallback(async () => {
     if (serverUp === false) return;
@@ -101,6 +128,18 @@ export function PhotoDumpSettingsSection({
     void loadPairHint();
   }, [load, loadPairHint]);
 
+  // Show QR whenever a photo key exists and we have (or get) a Hub URL.
+  useEffect(() => {
+    if (serverUp === false || !settings?.apiKeySet) {
+      setPairPayload(null);
+      return;
+    }
+    const t = setTimeout(() => {
+      void refreshSetupQr();
+    }, 200);
+    return () => clearTimeout(t);
+  }, [serverUp, settings?.apiKeySet, pairUrl, refreshSetupQr]);
+
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
@@ -112,7 +151,7 @@ export function PhotoDumpSettingsSection({
         const url = await QRCode.toDataURL(pairPayload, {
           errorCorrectionLevel: "M",
           margin: 2,
-          width: 220,
+          width: 240,
           color: { dark: "#111111", light: "#ffffff" },
         });
         if (!cancelled) setQrDataUrl(url);
@@ -125,30 +164,6 @@ export function PhotoDumpSettingsSection({
       cancelled = true;
     };
   }, [pairPayload]);
-
-  const rebuildPairPayload = async (key: string, url: string) => {
-    const base = url.trim().replace(/\/+$/, "");
-    const k = key.trim();
-    if (!base || !k || !looksHttpUrl(base)) {
-      setPairPayload(null);
-      return;
-    }
-    const params = new URLSearchParams();
-    params.set("url", base);
-    params.set("key", k);
-    try {
-      const res = await fetch("/api/hub-auth/settings");
-      const json = await res.json();
-      const token =
-        res.ok && typeof json.settings?.apiToken === "string"
-          ? String(json.settings.apiToken).trim()
-          : "";
-      if (token) params.set("token", token);
-    } catch {
-      // Photo dump still pairs without Hub token
-    }
-    setPairPayload(`arrs-hub-photo-dump://v1?${params.toString()}`);
-  };
 
   const save = async (opts?: { rotateKey?: boolean }) => {
     setBusy(true);
@@ -183,24 +198,24 @@ export function PhotoDumpSettingsSection({
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Save failed");
       setSettings(json.settings as PhotoDumpSettings);
-      if (typeof json.pairHint?.lanUrl === "string" && !pairUrl.trim()) {
+      if (typeof json.pairHint?.preferredUrl === "string" && !pairUrl.trim()) {
+        setPairUrl(json.pairHint.preferredUrl);
+      } else if (typeof json.pairHint?.lanUrl === "string" && !pairUrl.trim()) {
         setPairUrl(json.pairHint.lanUrl);
       }
       if (typeof json.apiKeyPlain === "string" && json.apiKeyPlain) {
         setPlainKey(json.apiKeyPlain);
-        if (typeof json.pairPayload === "string" && json.pairPayload) {
-          setPairPayload(json.pairPayload);
-        } else {
-          void rebuildPairPayload(
-            json.apiKeyPlain,
-            pairUrl || json.pairHint?.lanUrl || "",
-          );
-        }
+      }
+      if (typeof json.pairPayload === "string" && json.pairPayload) {
+        setPairPayload(json.pairPayload);
+        setHubTokenInQr(true);
+      } else {
+        await refreshSetupQr(pairUrl);
       }
       setMessage({
         type: "ok",
         text: opts?.rotateKey
-          ? "New photo dump API key generated — scan the QR in Arrs Hub Mobile (sets photo key + Hub API token)."
+          ? "New photo dump key generated — QR below includes photo key + Hub API token."
           : "Photo dump settings saved.",
       });
       await load();
@@ -227,26 +242,18 @@ export function PhotoDumpSettingsSection({
     }
   };
 
-  const clearShownKey = () => {
-    setPlainKey(null);
-    setPairPayload(null);
-    setQrDataUrl(null);
-  };
-
   return (
     <section className="settings-group" id="photo-dump">
-      <h3>Photo dump</h3>
+      <h3>Mobile setup QR</h3>
       <p className="settings-hint">
-        Receive photos/videos from Arrs Hub Mobile into a folder on this PC
-        (e.g. <code>N:\PhoneDump</code>). Mobile can browse and create folders
-        under this root only. Requires a port-forwarded Hub (same as Mobile
-        status / WOL) and the API key below. Settings can only be saved from
-        this PC.
+        One QR for Arrs Hub Mobile: Hub URL + photo dump key (
+        <code>X-Arrs-Hub-Key</code>) + Hub API token (
+        <code>X-Arrs-Hub-Token</code>). Scan under Photo Dump → Scan setup QR.
       </p>
 
       {serverUp === false && (
         <p className="settings-hint">
-          Hub API is offline — start Arrs Hub to save photo dump settings.
+          Hub API is offline — start Arrs Hub to manage photo dump / Mobile QR.
         </p>
       )}
 
@@ -295,31 +302,73 @@ export function PhotoDumpSettingsSection({
           value={pairUrl}
           disabled={serverUp === false || busy}
           placeholder="http://your.public.ip:3000"
-          onChange={(e) => {
-            const next = e.target.value;
-            setPairUrl(next);
-            if (plainKey) void rebuildPairPayload(plainKey, next);
-          }}
+          onChange={(e) => setPairUrl(e.target.value)}
+          onBlur={() => void refreshSetupQr()}
         />
       </label>
       <p className="settings-hint">
-        Defaults to your <strong>public/WAN</strong> IP when detected (port-forward
-        3000). Mobile auto-switches to LAN when you&apos;re on home Wi‑Fi — keep
-        this QR URL as the away address, not a 10.x / 192.168.x LAN IP.
+        Prefer your <strong>public/WAN</strong> IP (port-forward 3000). Mobile
+        auto-switches to LAN on home Wi‑Fi.
       </p>
 
       <p className="settings-hint">
-        API key{" "}
+        Photo dump API key{" "}
         {settings?.apiKeySet
           ? "(saved — generate a new one if needed)"
-          : "(not set yet)"}
+          : "(not set yet — click Generate API key)"}
         {settings?.apiKey ? `: ${settings.apiKey}` : ""}
       </p>
 
+      <div
+        className="sync-alert sync-alert-ok"
+        style={{ marginTop: "0.75rem", textAlign: "center" }}
+      >
+        <strong>Scan with Arrs Hub Mobile</strong>
+        <p className="settings-hint" style={{ marginTop: "0.35rem" }}>
+          {hubTokenInQr
+            ? "Includes photo dump key + Hub API token."
+            : settings?.apiKeySet
+              ? "Includes photo dump key (Hub API token missing — open Hub API token settings)."
+              : "Generate a photo dump API key to show the QR."}
+        </p>
+        {qrDataUrl ? (
+          <img
+            src={qrDataUrl}
+            alt="Mobile setup QR — photo key and Hub API token"
+            width={240}
+            height={240}
+            style={{
+              background: "#fff",
+              borderRadius: 8,
+              padding: 8,
+              marginTop: "0.5rem",
+            }}
+          />
+        ) : (
+          <p className="settings-hint" style={{ marginTop: "0.5rem" }}>
+            {settings?.apiKeySet
+              ? "Set a valid Hub URL above, then the QR appears here."
+              : "No QR yet — generate a photo dump API key first."}
+          </p>
+        )}
+        <div
+          className="watchdog-bar-actions"
+          style={{ marginTop: "0.75rem", justifyContent: "center" }}
+        >
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={serverUp === false || busy || !settings?.apiKeySet}
+            onClick={() => void refreshSetupQr()}
+          >
+            Refresh QR
+          </button>
+        </div>
+      </div>
+
       {plainKey && (
-        <div className="sync-alert sync-alert-ok">
-          <strong>Scan or copy into Mobile now</strong> — the plain key is only
-          shown once:
+        <div className="sync-alert sync-alert-ok" style={{ marginTop: "0.75rem" }}>
+          <strong>New photo dump key</strong> (shown once — also in the QR above):
           <br />
           <code style={{ userSelect: "all", wordBreak: "break-all" }}>
             {plainKey}
@@ -335,33 +384,11 @@ export function PhotoDumpSettingsSection({
             <button
               type="button"
               className="btn btn-secondary"
-              onClick={clearShownKey}
+              onClick={() => setPlainKey(null)}
             >
               Hide key
             </button>
           </div>
-          {qrDataUrl ? (
-            <div style={{ marginTop: "0.85rem", textAlign: "center" }}>
-              <img
-                src={qrDataUrl}
-                alt="Photo dump setup QR code"
-                width={220}
-                height={220}
-                style={{
-                  background: "#fff",
-                  borderRadius: 8,
-                  padding: 8,
-                }}
-              />
-              <p className="settings-hint" style={{ marginTop: "0.5rem" }}>
-                Mobile: Photo Dump → Scan setup QR (photo key + Hub API token)
-              </p>
-            </div>
-          ) : (
-            <p className="settings-hint" style={{ marginTop: "0.5rem" }}>
-              Set a Hub URL above to show the setup QR.
-            </p>
-          )}
         </div>
       )}
 
