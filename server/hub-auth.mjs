@@ -129,7 +129,14 @@ export function readHubApiToken(req) {
   if (typeof auth === "string" && /^Bearer\s+/i.test(auth)) {
     return auth.replace(/^Bearer\s+/i, "").trim();
   }
-  return "";
+  // Query param for media players (VLC / libVLC) that cannot set custom headers.
+  // Prefer hubToken; accept token as a fallback for older Mobile builds.
+  const q = req.query || {};
+  const fromQuery =
+    (typeof q.hubToken === "string" && q.hubToken.trim()) ||
+    (typeof q.token === "string" && q.token.trim()) ||
+    "";
+  return fromQuery;
 }
 
 /**
