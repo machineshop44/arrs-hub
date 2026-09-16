@@ -6,6 +6,8 @@ export type PcWatchSummary = {
   id: string;
   name: string;
   host: string;
+  mac?: string;
+  wakeOnLan?: boolean;
   companionUrl?: string;
 };
 

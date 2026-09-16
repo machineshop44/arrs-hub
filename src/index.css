@@ -1293,6 +1293,40 @@ input {
   gap: 0.55rem 0.75rem;
 }
 
+.dash-companion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.65rem;
+  margin: 0.55rem 0 0.15rem;
+}
+
+.dash-companion-wake {
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.32rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, #fbbf24 50%, var(--border));
+  background: color-mix(in srgb, #f59e0b 18%, var(--bg-card));
+  color: #fde68a;
+  cursor: pointer;
+}
+
+.dash-companion-wake:hover:not(:disabled) {
+  background: color-mix(in srgb, #f59e0b 28%, var(--bg-card));
+}
+
+.dash-companion-wake:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.dash-companion-wake-hint {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
 .dash-ombi-approve {
   font: inherit;
   font-size: 0.75rem;

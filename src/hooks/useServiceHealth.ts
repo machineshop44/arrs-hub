@@ -17,12 +17,17 @@ export type PcHealth = {
   online: boolean | null;
   lastChecked?: string | null;
   message?: string;
+  lastWakeAt?: string | null;
+  lastWakeResult?: string | null;
+  method?: string | null;
 };
 
 export type PcWatchSummary = {
   id: string;
   name: string;
   host: string;
+  mac?: string;
+  wakeOnLan?: boolean;
   companionUrl?: string;
 };
 
@@ -98,11 +103,16 @@ export function useServiceHealth(
         setPcConfigs(
           settingsPcs
             .map((raw) => {
-              const pc = raw as PcWatchSummary;
+              const pc = raw as PcWatchSummary & {
+                mac?: string;
+                wakeOnLan?: boolean;
+              };
               return {
                 id: String(pc.id || ""),
                 name: String(pc.name || "PC").trim() || "PC",
                 host: String(pc.host || "").trim(),
+                mac: String(pc.mac || "").trim(),
+                wakeOnLan: pc.wakeOnLan !== false,
                 companionUrl: String(pc.companionUrl || "").trim(),
               };
             })

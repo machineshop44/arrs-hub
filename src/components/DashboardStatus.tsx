@@ -238,6 +238,8 @@ export function DashboardStatus({
     Record<string, AppUpdateJobState>
   >({});
   const [appUpdateNotice, setAppUpdateNotice] = useState<string | null>(null);
+  const [companionWaking, setCompanionWaking] = useState(false);
+  const [companionWakeMsg, setCompanionWakeMsg] = useState<string | null>(null);
   const hubWrapRef = useRef<HTMLDivElement>(null);
   const companionWrapRef = useRef<HTMLDivElement>(null);
   const queueWrapRef = useRef<HTMLDivElement>(null);
@@ -252,6 +254,32 @@ export function DashboardStatus({
     setDownloadsOpen(false);
     setOmbiOpen(false);
     setPlexOpen(false);
+    setCompanionWakeMsg(null);
+  }, []);
+
+  const wakeCompanionPc = useCallback(async (pcId: string) => {
+    setCompanionWaking(true);
+    setCompanionWakeMsg(null);
+    try {
+      const res = await fetch("/api/watchdog/wol", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pcId }),
+      });
+      const json = (await res.json()) as {
+        error?: string;
+        message?: string;
+        pc?: string;
+      };
+      if (!res.ok) throw new Error(json.error || "Wake failed");
+      setCompanionWakeMsg(
+        json.message || `Wake packet sent for ${json.pc || "PC"}.`,
+      );
+    } catch (err) {
+      setCompanionWakeMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCompanionWaking(false);
+    }
   }, []);
 
   const {
@@ -1128,6 +1156,14 @@ export function DashboardStatus({
 
           if (chip.id === "companion" && companionStatus) {
             const { pc, online, message, apps } = companionStatus;
+            const livePc = pcs[pc.id];
+            const hasMac = Boolean(String(pc.mac || "").trim());
+            const lastWakeHint =
+              companionWakeMsg ||
+              livePc?.lastWakeResult ||
+              (livePc?.lastWakeAt
+                ? `Last wake ${new Date(livePc.lastWakeAt).toLocaleString()}`
+                : null);
             return (
               <div
                 key={chip.id}
@@ -1139,13 +1175,15 @@ export function DashboardStatus({
                   className={`dash-chip dash-chip-btn tone-${chip.tone}`}
                   aria-expanded={companionOpen}
                   aria-haspopup="dialog"
-                  title={`${pc.name} Companion PC — click for app status`}
+                  title={`${pc.name} Companion PC — click for apps + Turn on`}
                   onClick={() => {
                     if (companionOpen) {
                       setCompanionOpen(false);
+                      setCompanionWakeMsg(null);
                       return;
                     }
                     closeAllPopovers();
+                    setCompanionWakeMsg(null);
                     setCompanionOpen(true);
                   }}
                 >
@@ -1168,13 +1206,29 @@ export function DashboardStatus({
                     <ul className="dash-queue-breakdown">
                       <li>
                         <span className="dash-queue-app-static">
-                          <span>Companion</span>
+                          <span>PC</span>
                           <strong>
                             {online === true
                               ? "Online"
                               : online === false
                                 ? "Offline"
                                 : "Checking…"}
+                            {livePc?.method ? ` · ${livePc.method}` : ""}
+                          </strong>
+                        </span>
+                      </li>
+                      <li>
+                        <span className="dash-queue-app-static">
+                          <span>Companion</span>
+                          <strong>
+                            {online === true &&
+                            /companion/i.test(String(message || ""))
+                              ? "API ok"
+                              : online === true
+                                ? "Host up"
+                                : online === false
+                                  ? "Unreachable"
+                                  : "Checking…"}
                             {chipVersions?.companion?.version
                               ? ` · v${chipVersions.companion.version}`
                               : ""}
@@ -1185,11 +1239,48 @@ export function DashboardStatus({
                         <li>
                           <span className="dash-queue-app-static">
                             <span>LAN API</span>
-                            <strong>{pc.companionUrl.replace(/^https?:\/\//, "")}</strong>
+                            <strong>
+                              {pc.companionUrl.replace(/^https?:\/\//, "")}
+                            </strong>
                           </span>
                         </li>
                       ) : null}
                     </ul>
+                    <div className="dash-companion-actions">
+                      <button
+                        type="button"
+                        className="dash-companion-wake"
+                        disabled={companionWaking || !hasMac}
+                        title={
+                          hasMac
+                            ? `Send Wake-on-LAN magic packet to ${pc.name}`
+                            : "Set this PC’s MAC address under Apps monitoring → PC power"
+                        }
+                        onClick={() => void wakeCompanionPc(pc.id)}
+                      >
+                        {companionWaking
+                          ? "Sending…"
+                          : online === false
+                            ? "Turn on"
+                            : "Wake / Turn on"}
+                      </button>
+                      {!hasMac ? (
+                        <span className="dash-companion-wake-hint">
+                          MAC required
+                        </span>
+                      ) : null}
+                    </div>
+                    {lastWakeHint ? (
+                      <p
+                        className={
+                          /fail|error|required|mac/i.test(lastWakeHint)
+                            ? "dash-chip-popover-error"
+                            : "dash-chip-popover-hint"
+                        }
+                      >
+                        {lastWakeHint}
+                      </p>
+                    ) : null}
                     {message ? (
                       <p className="dash-chip-popover-hint">{message}</p>
                     ) : null}
@@ -1377,10 +1468,9 @@ export function DashboardStatus({
                       </p>
                     ) : (
                       <p className="dash-chip-popover-hint">
-                        Status from Port Watch. Hover an app for the last check
-                        detail (FileFlows Node uses Companion service/process
-                        probe — Discord alerts only after consecutive confirmed
-                        downs).
+                        Yellow chip = an app here is down/unknown or has an
+                        update — not necessarily that the PC is off. Use Turn on
+                        to send Wake-on-LAN.
                       </p>
                     )}
                   </div>
