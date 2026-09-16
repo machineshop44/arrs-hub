@@ -269,12 +269,8 @@ app.put("/api/hub-auth/settings", (req, res) => {
   }
 });
 
-function rejectPhotoDumpBody(req) {
-  try {
-    req.destroy?.();
-  } catch {
-    // ignore
-  }
+/** Drain unread upload body without destroying the socket (so we can still reply). */
+function drainPhotoDumpBody(req) {
   try {
     req.resume?.();
   } catch {
@@ -293,8 +289,8 @@ function readPhotoDumpKey(req) {
 
 function requirePhotoDumpAuth(req, res) {
   if (!verifyPhotoDumpApiKey(readPhotoDumpKey(req))) {
-    rejectPhotoDumpBody(req);
     res.status(401).json({ error: "Invalid or missing photo dump API key." });
+    drainPhotoDumpBody(req);
     return false;
   }
   return true;
@@ -302,11 +298,11 @@ function requirePhotoDumpAuth(req, res) {
 
 function requireLocalPhotoDumpAdmin(req, res) {
   if (!isLocalHubRequest(req)) {
-    rejectPhotoDumpBody(req);
     res.status(403).json({
       error:
         "Photo dump settings can only be changed from the Hub PC (localhost).",
     });
+    drainPhotoDumpBody(req);
     return false;
   }
   return true;
@@ -494,8 +490,8 @@ app.post("/api/photo-dump/upload", async (req, res) => {
     if (!requirePhotoDumpAuth(req, res)) return;
     const settings = loadPhotoDumpSettings();
     if (settings.enabled === false) {
-      rejectPhotoDumpBody(req);
       res.status(403).json({ error: "Photo dump is disabled on the Hub." });
+      drainPhotoDumpBody(req);
       return;
     }
 
@@ -507,18 +503,18 @@ app.post("/api/photo-dump/upload", async (req, res) => {
       contentType &&
       contentType !== "application/octet-stream"
     ) {
-      rejectPhotoDumpBody(req);
       res.status(415).json({
         error: "Upload Content-Type must be application/octet-stream.",
       });
+      drainPhotoDumpBody(req);
       return;
     }
 
     const max = settings.maxFileBytes || 2 * 1024 * 1024 * 1024;
     const contentLength = Number(req.headers["content-length"]);
     if (Number.isFinite(contentLength) && contentLength > max) {
-      rejectPhotoDumpBody(req);
       res.status(413).json({ error: `File exceeds max size (${max} bytes).` });
+      drainPhotoDumpBody(req);
       return;
     }
 
@@ -538,11 +534,12 @@ app.post("/api/photo-dump/upload", async (req, res) => {
     const expectedSize = expectedSizeRaw ? Number(expectedSizeRaw) : undefined;
 
     // Skip transfer when this exact content is already under the dump root.
+    // Reply first, then drain — never destroy the socket or Mobile sees HTTP 0.
     if (expectedSha256) {
       const hit = findPhotoDumpBySha(settings.rootPath, expectedSha256);
       if (hit) {
-        rejectPhotoDumpBody(req);
         res.json(photoDumpDuplicateResult(hit));
+        drainPhotoDumpBody(req);
         return;
       }
     }
@@ -556,10 +553,10 @@ app.post("/api/photo-dump/upload", async (req, res) => {
     });
     res.json(result);
   } catch (err) {
-    rejectPhotoDumpBody(req);
     if (!res.headersSent) {
       res.status(400).json({ error: err.message || String(err) });
     }
+    drainPhotoDumpBody(req);
   }
 });
 
