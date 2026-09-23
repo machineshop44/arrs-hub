@@ -22,6 +22,7 @@ const requiredCompanionFiles = [
   "server/restart-windows.mjs",
   "server/wol.mjs",
   "server/lan-utils.mjs",
+  "server/surfshark-status.mjs",
   "package.json",
   "build/icon.ico",
 ];

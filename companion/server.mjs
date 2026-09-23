@@ -166,6 +166,20 @@ app.post("/api/service-status", requireAuth, async (req, res) => {
   }
 });
 
+app.get("/api/surfshark-status", requireAuth, async (_req, res) => {
+  try {
+    const { getSurfsharkStatus } = await import("../server/surfshark-status.mjs");
+    const result = await getSurfsharkStatus();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      running: false,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+});
+
 app.get("/api/local-app-versions", requireAuth, async (_req, res) => {
   try {
     const { getLocalAppVersions } = await import("./local-app-versions.mjs");

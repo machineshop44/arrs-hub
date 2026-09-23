@@ -155,6 +155,16 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
     color: "#059669",
   },
   {
+    id: "surfshark",
+    name: "Surfshark",
+    description: "VPN on the download PC (app running + tunnel connected)",
+    category: "automation",
+    defaultUrl: "companion://local",
+    defaultRemoteUrl: "companion://local",
+    icon: SERVICE_ICONS.surfshark,
+    color: "#1eccb0",
+  },
+  {
     id: "plex",
     name: "Plex",
     description: "Media server and streaming",

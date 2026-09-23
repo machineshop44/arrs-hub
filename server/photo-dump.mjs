@@ -22,7 +22,8 @@ export const PHOTO_DUMP_SETTINGS_PATH = path.join(
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2 GiB
 const MIN_FREE_BYTES = 256 * 1024 * 1024; // refuse upload if less free space
 const RATE_WINDOW_MS = 60_000;
-const RATE_MAX_UPLOADS = 60;
+/** Allow phone full-dumps (~900 files); still blocks runaway scripts. */
+const RATE_MAX_UPLOADS = 600;
 const DAILY_BYTE_QUOTA = 40 * 1024 * 1024 * 1024; // 40 GiB / key / day
 
 const WIN_RESERVED = new Set([

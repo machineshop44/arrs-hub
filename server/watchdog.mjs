@@ -37,6 +37,7 @@ function wantsCompanionProbe(target, serviceCfg) {
   const url = String(target?.url || "").trim().toLowerCase();
   if (url.startsWith("companion:")) return true;
   if (String(target?.id || "") === "fileflows-node") return true;
+  if (String(target?.id || "") === "surfshark") return true;
   // No TCP URL but Companion restart PC is set - ask Companion.
   if (!hostPortFromUrl(target?.url) && String(serviceCfg?.restartPcId || "").trim()) {
     return true;
@@ -526,6 +527,9 @@ async function probeViaCompanion(target, serviceCfg, settings) {
   if (target.id === "fileflows") {
     hints.push("FileFlows.Server", "fileflows.server", "fileflows.server.dll");
   }
+  if (target.id === "surfshark") {
+    hints.push("Surfshark", "Surfshark.exe");
+  }
 
   const status = await requestCompanionServiceStatus(
     pc.companionUrl,
@@ -840,17 +844,22 @@ export async function runWatchCycle() {
   const snapshot = [...targets];
   const checked = new Set(snapshot.map((t) => t.id));
 
-  // Also probe companion-only services (e.g. FileFlows Node) if not in UI targets yet.
+  // Also probe companion-only services (e.g. FileFlows Node / Surfshark) if not in UI targets yet.
   for (const [id, cfg] of Object.entries(settings.services || {})) {
     if (checked.has(id)) continue;
     if (!cfg?.monitor || !String(cfg.restartPcId || "").trim()) continue;
-    if (id !== "fileflows-node") continue;
+    if (id !== "fileflows-node" && id !== "surfshark") continue;
     snapshot.push({
       id,
-      name: id === "fileflows-node" ? "FileFlows Node" : "FileFlows",
+      name:
+        id === "fileflows-node"
+          ? "FileFlows Node"
+          : id === "surfshark"
+            ? "Surfshark"
+            : id,
       url: COMPANION_PROBE_URL,
       mode: "home",
-      allowRestart: true,
+      allowRestart: id !== "surfshark",
       probe: "companion",
     });
     checked.add(id);

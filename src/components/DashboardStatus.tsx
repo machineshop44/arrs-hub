@@ -1346,7 +1346,11 @@ export function DashboardStatus({
                             const health =
                               app.up === null && verInfo?.version
                                 ? "installed"
-                                : companionAppHealthLabel(app.up);
+                                : companionAppHealthLabel(
+                                    app.up,
+                                    app.id,
+                                    app.message,
+                                  );
                             let value = health;
                             if (updating) {
                               value = "updating…";

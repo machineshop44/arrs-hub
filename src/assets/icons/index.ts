@@ -16,6 +16,7 @@ import plex from "./plex.svg";
 import trashGuides from "./trash-guides.svg";
 import bazarr from "./bazarr.svg";
 import whisparr from "./whisparr.svg";
+import surfshark from "./surfshark.svg";
 
 /** Bundled official / brand icons keyed by service id. */
 export const SERVICE_ICONS: Record<string, string> = {
@@ -33,6 +34,7 @@ export const SERVICE_ICONS: Record<string, string> = {
   overseerr,
   tautulli,
   fileflows,
+  surfshark,
   plex,
   "trash-guides": trashGuides,
   bazarr,

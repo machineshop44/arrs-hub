@@ -64,6 +64,7 @@ export function useServiceHealth(
           const url = getServiceUrl(service, activeMode);
           const companionProbe =
             service.id === "fileflows-node" ||
+            service.id === "surfshark" ||
             String(service.homeUrl || "")
               .trim()
               .toLowerCase()

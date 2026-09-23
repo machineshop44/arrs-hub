@@ -367,6 +367,25 @@ export async function restartServiceOrExe(serviceCfg) {
  */
 export async function checkLocalServiceStatus(serviceCfg) {
   const started = Date.now();
+  if (String(serviceCfg?.id || "").trim() === "surfshark") {
+    const { getSurfsharkStatus } = await import("./surfshark-status.mjs");
+    const status = await getSurfsharkStatus();
+    return {
+      ok: status.ok,
+      running: Boolean(status.running),
+      method: status.method,
+      serviceState: status.vpnConnected
+        ? "VPN"
+        : status.processRunning
+          ? "App"
+          : null,
+      latencyMs: status.latencyMs ?? Date.now() - started,
+      message: status.message,
+      processRunning: status.processRunning,
+      vpnConnected: status.vpnConnected,
+      installed: status.installed,
+    };
+  }
   const launch = normalizeLaunchConfig(serviceCfg);
   const serviceName = String(serviceCfg.windowsService || "").trim();
   const exePath = String(launch.exePath || "").trim();

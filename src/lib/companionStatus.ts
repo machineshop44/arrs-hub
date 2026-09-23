@@ -35,10 +35,20 @@ const COMPANION_FALLBACK_IDS = [
   "qbittorrent",
   "sabnzbd",
   "fileflows-node",
+  "surfshark",
 ] as const;
 
-function healthLabel(up: boolean | null): string {
-  if (up === true) return "up";
+function healthLabel(up: boolean | null, id?: string, message?: string): string {
+  if (id === "surfshark" && up === false) {
+    const msg = String(message || "");
+    if (/VPN disconnected/i.test(msg)) return "vpn off";
+    if (/not running/i.test(msg)) return "app off";
+    if (/not installed/i.test(msg)) return "missing";
+  }
+  if (up === true) {
+    if (id === "surfshark") return "vpn";
+    return "up";
+  }
   if (up === false) return "down";
   return "…";
 }
@@ -80,6 +90,22 @@ export function buildCompanionPcStatus(
       message: entry?.message,
       openUrl: getServiceUrl(service, "home") || getServiceUrl(service, "remote"),
     });
+  }
+
+  // Always surface Surfshark on the Companion chip when Port Watch has it,
+  // even if the dashboard tile was never enabled.
+  if (!apps.some((app) => app.id === "surfshark")) {
+    const cfg = watchServices.surfshark;
+    if (cfg?.monitor !== false && String(cfg?.restartPcId || "") === pc.id) {
+      const entry = health.surfshark;
+      apps.push({
+        id: "surfshark",
+        label: "Surfshark",
+        up: entry?.up ?? null,
+        message: entry?.message,
+        openUrl: null,
+      });
+    }
   }
 
   return {

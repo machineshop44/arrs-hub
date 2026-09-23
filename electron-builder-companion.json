@@ -14,6 +14,7 @@
     "server/windows-file-version.mjs",
     "server/wol.mjs",
     "server/lan-utils.mjs",
+    "server/surfshark-status.mjs",
     "package.json",
     "!desktop/**/*",
     "!server/index.mjs",
@@ -32,6 +33,7 @@
     "server/windows-file-version.mjs",
     "server/wol.mjs",
     "server/lan-utils.mjs",
+    "server/surfshark-status.mjs",
     "package.json",
     "**/node_modules/**/*"
   ],

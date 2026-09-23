@@ -28,6 +28,7 @@ export const DEFAULT_WINDOWS_SERVICES = {
   overseerr: "",
   fileflows: "FileFlows",
   "fileflows-node": "FileFlows Node",
+  surfshark: "",
   plex: "PlexUpdateService",
   calibre: "",
   whisparr: "Whisparr",
@@ -80,6 +81,11 @@ export function getDefaultExePaths() {
       "FileFlows",
       "Node",
       "FileFlows.Node.exe",
+    ),
+    surfshark: path.join(
+      process.env["ProgramFiles"] || "C:\\Program Files",
+      "Surfshark",
+      "Surfshark.exe",
     ),
     // Intentionally empty — leave for user:
     // plex, ombi, flaresolverr, overseerr, calibre, trash-guides

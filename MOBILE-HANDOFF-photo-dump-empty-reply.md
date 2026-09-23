@@ -1,24 +1,17 @@
-# Hub handoff — photo dump empty reply on duplicate/auth
+# Hub handoff — photo dump empty reply + rate limit
 
-## Bug
-`rejectPhotoDumpBody` called `req.destroy()` **before** sending JSON. Mobile then saw HTTP 0 / empty reply.
+## Bugs fixed
 
-Symptoms: retry after a partial dump shows e.g. **1 verified, 9 failed** — the 9 were already on Hub (duplicate skip) but the socket was killed before the duplicate JSON arrived.
+### 1) Empty reply on duplicate/auth (1.3.65)
+`rejectPhotoDumpBody` called `req.destroy()` before sending JSON → Mobile saw HTTP 0.
 
-## Fix (applied in this repo)
-`server/index.mjs`:
-- Replaced destroy with `drainPhotoDumpBody` (`req.resume()` only)
-- Always **send the response first**, then drain
-- Version bump → **1.3.65**
+### 2) Rate limit too low for full phone dumps (1.3.66)
+`RATE_MAX_UPLOADS` was **60/min**. Full dumps hit this and fail with:
+`Upload rate limit exceeded — try again in a minute.`
+
+Raised to **600/min** in `server/photo-dump.mjs`.
 
 ## Required on Hub PC
-Rebuild/restart Arrs Hub so remote `http://67.84.101.14:3000/api/health` reports **1.3.65+**.
+Rebuild/restart so `/api/health` reports **1.3.66+**.
 
-Quick check after restart:
-```bash
-curl -s -o - -w "\nHTTP=%{http_code}\n" -X POST \
-  -H "Content-Type: application/octet-stream" \
-  --data-binary "hi" \
-  http://127.0.0.1:3000/api/photo-dump/upload
-```
-Expect **HTTP=401** with JSON error (not empty reply / HTTP 000).
+On Mobile: check a failed item’s message — if it says rate limit, update Hub then retry failed only.

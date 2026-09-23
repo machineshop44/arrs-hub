@@ -21,6 +21,7 @@ const COMPANION_SERVICE_IDS = [
   "sabnzbd",
   "fileflows",
   "fileflows-node",
+  "surfshark",
 ];
 
 const DEFAULT_SERVICE_PORTS = {
@@ -292,14 +293,22 @@ export function registerCompanionPeer(payload) {
     const isFileFlows = id.startsWith("fileflows");
 
     // Preserve user monitor/autoRestart — never force-on every 60s register.
-    // FileFlows Node has no TCP probe — keep monitoring on so Hub can ask Companion.
+    // FileFlows Node / Surfshark have no TCP probe — keep monitoring on so Hub can ask Companion.
     const keepMonitor =
-      id === "fileflows-node" ? true : base.monitor !== false;
+      id === "fileflows-node" || id === "surfshark"
+        ? true
+        : base.monitor !== false;
+    const forceRestartPc =
+      id === "fileflows-node" || id === "surfshark" ? pcId : prevRestartPc;
     services[id] = {
       ...base,
       monitor: keepMonitor,
-      autoRestart: base.autoRestart !== false,
-      restartPcId: shouldRewire ? pcId : prevRestartPc || (id === "fileflows-node" ? pcId : prevRestartPc),
+      // Never auto-restart Surfshark (VPN UI / kill-switch sensitive).
+      autoRestart:
+        id === "surfshark" ? false : base.autoRestart !== false,
+      restartPcId: shouldRewire
+        ? pcId
+        : prevRestartPc || forceRestartPc,
       windowsService: isFileFlows
         ? fromCompanion.windowsService
         : fromCompanion.windowsService ||

@@ -9,6 +9,7 @@ import {
   subnetHosts,
 } from "./network.mjs";
 import { detectFileFlowsInstalls } from "./fileflows-detect.mjs";
+import { findSurfsharkExe } from "../server/surfshark-status.mjs";
 
 const HUB_PORTS = [3000, 3847];
 const COMPANION_SERVICE_IDS = ["qbittorrent", "sabnzbd"];
@@ -130,6 +131,14 @@ function buildRegistrationPayload(settings) {
       port: ff.port,
     });
   }
+
+  const surfExe = findSurfsharkExe();
+  services.push({
+    id: "surfshark",
+    windowsService: "",
+    exePath: surfExe || "",
+    port: 0,
+  });
 
   return {
     companionId: settings.companionId,
@@ -258,5 +267,12 @@ export function listLocalDownloaderApps() {
       windowsService: ff.windowsService,
     });
   }
+  const surfExe = findSurfsharkExe();
+  base.push({
+    id: "surfshark",
+    exePath: surfExe || "",
+    installed: Boolean(surfExe),
+    port: 0,
+  });
   return base;
 }
