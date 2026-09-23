@@ -8,6 +8,8 @@ interface ServiceCardProps {
   connectionMode: ConnectionMode;
   badge?: string | null;
   health?: ServiceHealth | null;
+  /** When set, click opens in-app UI instead of the service URL. */
+  onOpen?: () => void;
 }
 
 function statusLabel(health?: ServiceHealth | null) {
@@ -26,6 +28,7 @@ export function ServiceCard({
   connectionMode,
   badge,
   health,
+  onOpen,
 }: ServiceCardProps) {
   const activeUrl = getServiceUrl(service, connectionMode);
   const companionOnly =
@@ -38,6 +41,10 @@ export function ServiceCard({
     connectionMode === "remote" && !service.remoteUrl.trim() && !companionOnly;
 
   const handleClick = () => {
+    if (onOpen) {
+      onOpen();
+      return;
+    }
     if (!activeUrl || companionOnly) return;
     window.open(activeUrl, "_blank", "noopener,noreferrer");
   };
@@ -49,20 +56,26 @@ export function ServiceCard({
         ? "status-down"
         : "status-unknown";
 
+  const titleHint = onOpen
+    ? `${service.name} — search & request in Hub`
+    : companionOnly
+      ? `${service.name} — ${statusLabel(health)} (status via Companion)`
+      : activeUrl
+        ? `${service.name} — ${statusLabel(health)}`
+        : `${service.name} — remote URL not set`;
+
   return (
     <button
       type="button"
-      className={`service-card${isRemoteMissing ? " service-card-disabled" : ""}`}
+      className={`service-card${isRemoteMissing && !onOpen ? " service-card-disabled" : ""}`}
       onClick={handleClick}
-      disabled={isRemoteMissing || (!activeUrl && !companionOnly)}
-      style={{ "--accent": service.color } as CSSProperties}
-      title={
-        companionOnly
-          ? `${service.name} — ${statusLabel(health)} (status via Companion)`
-          : activeUrl
-            ? `${service.name} — ${statusLabel(health)}`
-            : `${service.name} — remote URL not set`
+      disabled={
+        onOpen
+          ? false
+          : isRemoteMissing || (!activeUrl && !companionOnly)
       }
+      style={{ "--accent": service.color } as CSSProperties}
+      title={titleHint}
     >
       {badge ? <span className="service-card-badge">{badge}</span> : null}
       <div className="service-card-icon">
@@ -81,9 +94,11 @@ export function ServiceCard({
         </h3>
         <p>{service.description}</p>
         <span className="service-card-url">
-          {companionOnly
-            ? "Status via Companion (no web UI)"
-            : (activeUrl ?? "Remote URL not configured")}
+          {onOpen
+            ? "Search & request in Hub"
+            : companionOnly
+              ? "Status via Companion (no web UI)"
+              : (activeUrl ?? "Remote URL not configured")}
         </span>
         {service.id !== "trash-guides" && (
           <span className={`service-card-health ${statusClass}`}>

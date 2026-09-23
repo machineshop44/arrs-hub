@@ -1348,6 +1348,27 @@ input {
   cursor: wait;
 }
 
+.dash-ombi-deny {
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.28rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, #f87171 45%, var(--border));
+  background: color-mix(in srgb, #ef4444 16%, var(--bg-card));
+  color: #fecaca;
+  cursor: pointer;
+}
+
+.dash-ombi-deny:hover:not(:disabled) {
+  background: color-mix(in srgb, #ef4444 26%, var(--bg-card));
+}
+
+.dash-ombi-deny:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
 .dash-chip-popover-error {
   margin: 0.55rem 0 0;
   font-size: 0.75rem;
@@ -1518,6 +1539,146 @@ input {
 
 .streams-panel {
   max-width: 820px;
+}
+
+.ombi-panel {
+  max-width: 760px;
+}
+
+.ombi-panel-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.ombi-panel-title-row img {
+  margin-top: 0.15rem;
+  flex-shrink: 0;
+}
+
+.ombi-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.85rem;
+}
+
+.ombi-toolbar .btn {
+  padding: 0.4rem 0.85rem;
+  font-size: 0.8rem;
+}
+
+.ombi-search-row {
+  display: flex;
+  gap: 0.55rem;
+  margin-bottom: 1rem;
+}
+
+.ombi-search-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.55rem 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+}
+
+.ombi-search-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ombi-search-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0 0 0.5rem;
+  max-height: min(55vh, 520px);
+  overflow: auto;
+}
+
+.ombi-search-item {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 0.85rem;
+  padding: 0.75rem;
+  background: #12151e;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.ombi-search-poster {
+  width: 64px;
+  height: 96px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.ombi-search-poster.placeholder {
+  display: grid;
+  place-items: center;
+  font-size: 1.4rem;
+}
+
+.ombi-search-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.ombi-search-body strong {
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.ombi-kind-badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 0.12rem 0.4rem;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-card));
+  color: #c7d2fe;
+  vertical-align: middle;
+  margin-right: 0.15rem;
+}
+
+.ombi-search-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.ombi-search-overview {
+  margin: 0.15rem 0 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ombi-search-actions {
+  margin-top: 0.35rem;
+}
+
+.ombi-search-actions .btn {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.8rem;
+}
+
+.ombi-search-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
 }
 
 .streams-summary {

@@ -58,8 +58,11 @@ import {
 } from "./integrations.mjs";
 import {
   approveOmbiRequest,
+  denyOmbiRequest,
   getHubStatusSummary,
   getOmbiPendingRequests,
+  searchOmbiRequests,
+  submitOmbiRequest,
 } from "./activity.mjs";
 import { getChipAppVersions } from "./app-versions.mjs";
 import {
@@ -662,6 +665,55 @@ app.post("/api/activity/ombi/approve", async (req, res) => {
     const result = await approveOmbiRequest({
       type: req.body?.type,
       id: req.body?.id,
+      urls: req.body?.urls ?? {},
+    });
+    res.json(result);
+  } catch (err) {
+    const status = Number(err?.status) || 500;
+    res.status(status).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/activity/ombi/deny", async (req, res) => {
+  try {
+    const result = await denyOmbiRequest({
+      type: req.body?.type,
+      id: req.body?.id,
+      reason: req.body?.reason,
+      urls: req.body?.urls ?? {},
+    });
+    res.json(result);
+  } catch (err) {
+    const status = Number(err?.status) || 500;
+    res.status(status).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/activity/ombi/search", async (req, res) => {
+  try {
+    const result = await searchOmbiRequests({
+      mode: req.body?.mode,
+      query: req.body?.query,
+      urls: req.body?.urls ?? {},
+    });
+    res.json(result);
+  } catch (err) {
+    const status = Number(err?.status) || 500;
+    res.status(status).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/activity/ombi/request", async (req, res) => {
+  try {
+    const result = await submitOmbiRequest({
+      kind: req.body?.kind,
+      title: req.body?.title,
+      tmdbId: req.body?.tmdbId,
+      tvdbId: req.body?.tvdbId,
+      foreignAlbumId: req.body?.foreignAlbumId,
+      available: req.body?.available,
+      requested: req.body?.requested,
+      approved: req.body?.approved,
       urls: req.body?.urls ?? {},
     });
     res.json(result);

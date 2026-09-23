@@ -10,6 +10,7 @@ import { TrashUpdateBanner } from "./components/TrashUpdateBanner";
 import { SyncPanel } from "./components/SyncPanel";
 import { WorkoutsPanel } from "./components/WorkoutsPanel";
 import { StreamsPanel } from "./components/StreamsPanel";
+import { OmbiPanel } from "./components/OmbiPanel";
 import { DashboardStatus } from "./components/DashboardStatus";
 import { CATEGORY_ORDER, getServiceUrl } from "./types";
 import type { ConnectionPreference } from "./types";
@@ -45,6 +46,7 @@ export default function App() {
   const [settingsSection, setSettingsSection] = useState<string | null>(null);
   const [showWorkouts, setShowWorkouts] = useState(false);
   const [showStreams, setShowStreams] = useState(false);
+  const [showOmbi, setShowOmbi] = useState(false);
 
   const plexService = settings.services.find((s) => s.id === "plex");
   const suggestedPlexUrl = plexService
@@ -134,6 +136,14 @@ export default function App() {
             <button
               type="button"
               className="btn btn-ghost"
+              title="Search & request via Ombi"
+              onClick={() => setShowOmbi(true)}
+            >
+              🎬 Ombi
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
               title="Play warm-up + workout day on your Plex TV"
               onClick={() => setShowWorkouts(true)}
             >
@@ -193,6 +203,7 @@ export default function App() {
           serviceHealth={watchdog.health}
           watchServices={watchdog.watchServices}
           onOpenStreams={() => setShowStreams(true)}
+          onOpenOmbi={() => setShowOmbi(true)}
         />
 
         {(watchdog.serverUp || watchdog.scanning || watchdog.serverUp === null) && (
@@ -304,6 +315,7 @@ export default function App() {
               connectionMode={activeMode}
               badges={badges}
               healthById={watchdog.health}
+              onOpenOmbi={() => setShowOmbi(true)}
             />
           ))
         )}
@@ -359,6 +371,19 @@ export default function App() {
         <StreamsPanel
           onClose={() => setShowStreams(false)}
           suggestedBaseUrl={suggestedTautulliUrl}
+        />
+      )}
+
+      {showOmbi && (
+        <OmbiPanel
+          onClose={() => setShowOmbi(false)}
+          services={settings.services}
+          connectionMode={activeMode}
+          onOpenSettings={() => {
+            setShowOmbi(false);
+            setSettingsSection("apps-monitoring");
+            setShowSettings(true);
+          }}
         />
       )}
     </div>

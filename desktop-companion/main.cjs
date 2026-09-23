@@ -216,23 +216,54 @@ function waitForHealth(port, timeoutMs = HEALTH_TIMEOUT_MS) {
   const url = `http://127.0.0.1:${port}/api/health`;
   const started = Date.now();
   return new Promise((resolve, reject) => {
+    let settled = false;
     const fail = (message) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(logWatch);
       const details = failureDetails(message);
       writeBootLog(details);
       reject(new Error(details));
     };
+    const ok = (how) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(logWatch);
+      appendServerLog(`Health ready (${how})\n`);
+      resolve();
+    };
+
+    // Server printed "listening" but HTTP probe can still fail under some
+    // VPN / Windows loopback stacks - treat that as ready too.
+    const listeningRe = /Arrs Hub Companion listening on /i;
+    const onLogTick = () => {
+      if (settled) return;
+      if (listeningRe.test(serverLog)) {
+        ok("server listening log");
+      }
+    };
+    const logWatch = setInterval(onLogTick, 200);
 
     const tryOnce = () => {
+      if (settled) return;
       if (serverExit) {
         fail("Companion server stopped before it became ready.");
         return;
       }
       const req = http.get(url, (res) => {
         res.resume();
-        if (res.statusCode === 200) resolve();
-        else retry();
+        // 200 = ok. 401 still means Express answered (loopback auth quirk).
+        if (res.statusCode === 200 || res.statusCode === 401) {
+          ok(`HTTP ${res.statusCode}`);
+          return;
+        }
+        appendServerLog(`Health probe HTTP ${res.statusCode}\n`);
+        retry();
       });
-      req.on("error", retry);
+      req.on("error", (err) => {
+        appendServerLog(`Health probe error: ${err?.message || err}\n`);
+        retry();
+      });
       req.setTimeout(1500, () => {
         req.destroy();
         retry();
@@ -240,6 +271,7 @@ function waitForHealth(port, timeoutMs = HEALTH_TIMEOUT_MS) {
     };
 
     const retry = () => {
+      if (settled) return;
       if (serverExit) {
         fail("Companion server stopped before it became ready.");
         return;
@@ -292,7 +324,7 @@ function startServer() {
     throw new Error("Could not start companion (no Node runtime).");
   }
 
-  // Do not inherit NODE_OPTIONS / Electron flags â€” they crash ELECTRON_RUN_AS_NODE
+  // Do not inherit NODE_OPTIONS / Electron flags — they crash ELECTRON_RUN_AS_NODE
   // (e.g. SyntaxError: Unexpected token '`') on machines with custom Node env.
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
@@ -543,12 +575,12 @@ function toggleStartup() {
 function registrationStatusLabel() {
   const settings = readCompanionSettings();
   if (settings.lastRegisterOk) {
-    return `Hub linked Â· ${settings.hubUrl || "LAN"}`;
+    return `Hub linked · ${settings.hubUrl || "LAN"}`;
   }
   if (settings.hubUrl) {
-    return `Hub URL set Â· waiting for registerâ€¦`;
+    return `Hub URL set · waiting for register…`;
   }
-  return "Scanning LAN for Arrs Hub (VPN may require manual URL)â€¦";
+  return "Scanning LAN for Arrs Hub (VPN may require manual URL)…";
 }
 
 function openSetupInfo() {
@@ -620,7 +652,7 @@ function buildTrayMenu() {
       click: () => void registerWithHubNow(),
     },
     {
-      label: "Set Arrs Hub URLâ€¦",
+      label: "Set Arrs Hub URL…",
       click: () => {
         void setHubUrlFromTray();
       },
@@ -656,7 +688,7 @@ function createTray() {
   }
   const icon = trayIcon();
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
-  tray.setToolTip(`${APP_DISPLAY_NAME} v${app.getVersion()} Â· :${companionPort}`);
+  tray.setToolTip(`${APP_DISPLAY_NAME} v${app.getVersion()} · :${companionPort}`);
   tray.setContextMenu(buildTrayMenu());
 }
 

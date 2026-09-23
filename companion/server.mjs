@@ -44,9 +44,26 @@ function readApiKey(req) {
 
 /** Fail-closed: only loopback (tray readiness probe). */
 function isLocalCompanionRequest(req) {
-  const raw = req.socket?.remoteAddress || req.connection?.remoteAddress || "";
-  const ip = String(raw).replace(/^::ffff:/i, "");
-  return ip === "127.0.0.1" || ip === "::1";
+  const candidates = [
+    req.socket?.remoteAddress,
+    req.connection?.remoteAddress,
+    req.ip,
+  ];
+  for (const raw of candidates) {
+    const ip = String(raw || "")
+      .replace(/^::ffff:/i, "")
+      .trim();
+    if (ip === "127.0.0.1" || ip === "::1" || ip === "localhost") {
+      return true;
+    }
+  }
+  // Some VPN / Windows stacks obscure remoteAddress on 127.0.0.1 probes.
+  // Host header still identifies the tray boot check.
+  const host = String(req.headers?.host || "")
+    .split(":")[0]
+    .trim()
+    .toLowerCase();
+  return host === "127.0.0.1" || host === "localhost" || host === "[::1]";
 }
 
 function requireAuth(req, res, next) {

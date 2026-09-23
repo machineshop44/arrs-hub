@@ -84,6 +84,7 @@ interface DashboardStatusProps {
   serviceHealth?: Record<string, ServiceHealth>;
   watchServices?: Record<string, WatchServiceSummary>;
   onOpenStreams?: () => void;
+  onOpenOmbi?: () => void;
 }
 
 function urlMap(
@@ -211,6 +212,7 @@ export function DashboardStatus({
   serviceHealth = {},
   watchServices = {},
   onOpenStreams,
+  onOpenOmbi,
 }: DashboardStatusProps) {
   const [summary, setSummary] = useState<HubStatusSummary | null>(null);
   const [chipVersions, setChipVersions] = useState<ChipVersionsPayload | null>(
@@ -679,6 +681,32 @@ export function DashboardStatus({
       const json = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(json.error || "Approve failed");
       setOmbiSuccess(`Approved “${item.title}”.`);
+      await Promise.all([loadOmbiPending(), load()]);
+    } catch (err) {
+      setOmbiError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOmbiApprovingId(null);
+    }
+  };
+
+  const denyOmbi = async (item: OmbiPendingItem) => {
+    const key = `${item.type}-${item.id}`;
+    setOmbiApprovingId(key);
+    setOmbiError(null);
+    setOmbiSuccess(null);
+    try {
+      const res = await fetch("/api/activity/ombi/deny", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: item.type,
+          id: item.id,
+          urls: urlMap(services, connectionMode),
+        }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(json.error || "Deny failed");
+      setOmbiSuccess(`Denied “${item.title}”.`);
       await Promise.all([loadOmbiPending(), load()]);
     } catch (err) {
       setOmbiError(err instanceof Error ? err.message : String(err));
@@ -1763,7 +1791,7 @@ export function DashboardStatus({
                       <ul className="dash-queue-issues">
                         {ombiItems.map((item) => {
                           const key = `${item.type}-${item.id}`;
-                          const approving = ombiApprovingId === key;
+                          const busy = ombiApprovingId === key;
                           return (
                             <li key={key}>
                               <div className="dash-queue-issue-main">
@@ -1781,10 +1809,18 @@ export function DashboardStatus({
                                 <button
                                   type="button"
                                   className="dash-ombi-approve"
-                                  disabled={approving || ombiApprovingId != null}
+                                  disabled={busy || ombiApprovingId != null}
                                   onClick={() => void approveOmbi(item)}
                                 >
-                                  {approving ? "Approving…" : "Approve"}
+                                  {busy ? "…" : "Approve"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="dash-ombi-deny"
+                                  disabled={busy || ombiApprovingId != null}
+                                  onClick={() => void denyOmbi(item)}
+                                >
+                                  Deny
                                 </button>
                                 {ombiOpenUrl ? (
                                   <a
@@ -1809,6 +1845,28 @@ export function DashboardStatus({
                     {ombiSuccess && !ombiError ? (
                       <p className="dash-chip-popover-hint dash-ombi-success">
                         {ombiSuccess}
+                      </p>
+                    ) : null}
+
+                    {onOpenOmbi ? (
+                      <p className="dash-chip-popover-hint">
+                        <button
+                          type="button"
+                          className="dash-queue-issue-link"
+                          style={{
+                            background: "none",
+                            border: "none",
+                            padding: 0,
+                            cursor: "pointer",
+                            font: "inherit",
+                          }}
+                          onClick={() => {
+                            setOmbiOpen(false);
+                            onOpenOmbi();
+                          }}
+                        >
+                          Search &amp; request in Hub
+                        </button>
                       </p>
                     ) : null}
 

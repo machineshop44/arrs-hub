@@ -9,6 +9,7 @@ interface ServiceSectionProps {
   connectionMode: ConnectionMode;
   badges?: Record<string, string>;
   healthById?: Record<string, ServiceHealth>;
+  onOpenOmbi?: () => void;
 }
 
 export function ServiceSection({
@@ -17,6 +18,7 @@ export function ServiceSection({
   connectionMode,
   badges,
   healthById,
+  onOpenOmbi,
 }: ServiceSectionProps) {
   if (services.length === 0) return null;
 
@@ -31,6 +33,9 @@ export function ServiceSection({
             connectionMode={connectionMode}
             badge={badges?.[service.id]}
             health={healthById?.[service.id]}
+            onOpen={
+              service.id === "ombi" && onOpenOmbi ? onOpenOmbi : undefined
+            }
           />
         ))}
       </div>

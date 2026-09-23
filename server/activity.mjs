@@ -2,6 +2,15 @@ import { loadSyncSettings } from "./config.mjs";
 import { loadIntegrationsSettings } from "./integrations.mjs";
 import { getArrApiKey } from "./arr-api-keys.mjs";
 import { getTautulliActivity, loadTautulliSettings } from "./tautulli.mjs";
+import {
+  assertOmbiOk,
+  normalizeOmbiBase,
+  ombiApprovePath,
+  ombiDenyPath,
+  ombiHttp,
+  requestOmbiMedia,
+  searchOmbi,
+} from "./ombi-client.mjs";
 
 function normalizeBase(url) {
   return String(url || "")
@@ -389,6 +398,20 @@ export async function getOmbiPendingRequests(opts = {}) {
   }
 }
 
+function resolveOmbiConnection(urls = {}) {
+  const integrations = loadIntegrationsSettings();
+  const ombiUrl = normalizeOmbiBase(
+    urls.ombi || integrations.ombi.baseUrl,
+  );
+  const apiKey = String(integrations.ombi.apiKey || "").trim();
+  if (!ombiUrl || !apiKey) {
+    throw Object.assign(new Error("Ombi is not configured (URL + API key)"), {
+      status: 400,
+    });
+  }
+  return { ombiUrl, apiKey };
+}
+
 /**
  * Approve a pending Ombi request via Ombi's Request API.
  * Movie/music: request id. TV: child request id (see summarizeOmbiTvPending).
@@ -408,42 +431,92 @@ export async function approveOmbiRequest(body = {}) {
     });
   }
 
-  const urls = body.urls || {};
-  const integrations = loadIntegrationsSettings();
-  const ombiUrl = normalizeBase(urls.ombi || integrations.ombi.baseUrl);
-  const apiKey = integrations.ombi.apiKey;
-  if (!ombiUrl || !apiKey) {
-    throw Object.assign(new Error("Ombi is not configured (URL + API key)"), {
+  const approvePath = ombiApprovePath(type);
+  const { ombiUrl, apiKey } = resolveOmbiConnection(body.urls || {});
+  const { status, data } = await ombiHttp(
+    ombiUrl,
+    apiKey,
+    `/api/v1/Request/${approvePath}`,
+    { method: "POST", body: { id } },
+  );
+  assertOmbiOk(status, data, "Ombi approve failed");
+  return { ok: true, type, id, ombi: data ?? null };
+}
+
+/**
+ * Deny a pending Ombi request via Ombi's Request API (PUT).
+ * @param {{ type: string, id: number, reason?: string, urls?: Record<string, string> }} body
+ */
+export async function denyOmbiRequest(body = {}) {
+  const type = String(body.type || "").toLowerCase();
+  const id = Number(body.id);
+  if (!["movie", "tv", "music"].includes(type)) {
+    throw Object.assign(new Error("type must be movie, tv, or music"), {
+      status: 400,
+    });
+  }
+  if (!Number.isFinite(id) || id <= 0) {
+    throw Object.assign(new Error("id must be a positive number"), {
       status: 400,
     });
   }
 
-  const pathByType = {
-    movie: "movie/approve",
-    tv: "tv/approve",
-    music: "music/approve",
-  };
-  const url = `${ombiUrl}/api/v1/Request/${pathByType[type]}`;
-  const data = await fetchJson(url, {
-    method: "POST",
-    headers: {
-      ApiKey: apiKey,
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ id }),
-  });
+  const denyPath = ombiDenyPath(type);
+  const { ombiUrl, apiKey } = resolveOmbiConnection(body.urls || {});
+  const payload = { id };
+  const reason = String(body.reason || "").trim();
+  if (reason) payload.reason = reason;
 
-  // Ombi often returns { result, isError, errorMessage, message }.
-  if (data && typeof data === "object") {
-    if (data.isError === true || data.result === false) {
-      const msg =
-        data.errorMessage || data.message || "Ombi approve failed";
-      throw Object.assign(new Error(String(msg)), { status: 502 });
-    }
-  }
-
+  // Ombi deny endpoints are PUT (not POST).
+  const { status, data } = await ombiHttp(
+    ombiUrl,
+    apiKey,
+    `/api/v1/Request/${denyPath}`,
+    { method: "PUT", body: payload },
+  );
+  assertOmbiOk(status, data, "Ombi deny failed");
   return { ok: true, type, id, ombi: data ?? null };
+}
+
+/**
+ * Search Ombi (movies+TV or music). Server-side so the API key stays on Hub.
+ * @param {{ mode?: string, query: string, urls?: Record<string, string> }} body
+ */
+export async function searchOmbiRequests(body = {}) {
+  const { ombiUrl, apiKey } = resolveOmbiConnection(body.urls || {});
+  const mode =
+    String(body.mode || "media").toLowerCase() === "music"
+      ? "music"
+      : "media";
+  const results = await searchOmbi(ombiUrl, apiKey, mode, body.query);
+  return {
+    ok: true,
+    configured: true,
+    mode,
+    query: String(body.query || "").trim(),
+    results,
+    ombiUrl,
+  };
+}
+
+/**
+ * Submit a media request through Ombi.
+ * @param {{ kind: string, title?: string, tmdbId?: number, tvdbId?: number, foreignAlbumId?: string, available?: boolean, requested?: boolean, approved?: boolean, urls?: Record<string, string> }} body
+ */
+export async function submitOmbiRequest(body = {}) {
+  const { ombiUrl, apiKey } = resolveOmbiConnection(body.urls || {});
+  const hit = {
+    kind: String(body.kind || "").toLowerCase(),
+    title: String(body.title || "").trim() || "Untitled",
+    tmdbId: body.tmdbId ?? null,
+    tvdbId: body.tvdbId ?? null,
+    foreignAlbumId: body.foreignAlbumId ?? null,
+    available: body.available === true,
+    requested: body.requested === true,
+    approved: body.approved === true,
+  };
+  const result = await requestOmbiMedia(ombiUrl, apiKey, hit);
+  return { ...result, kind: hit.kind, ombiUrl };
 }
 
 async function getStreamsSummary() {

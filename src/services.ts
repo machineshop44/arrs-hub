@@ -108,7 +108,7 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
   {
     id: "ombi",
     name: "Ombi",
-    description: "Media request portal for users",
+    description: "Search & request movies, TV, music",
     category: "requests",
     defaultUrl: "http://localhost:3579",
     defaultRemoteUrl: `${REMOTE_HOST}:5000/discover`,
