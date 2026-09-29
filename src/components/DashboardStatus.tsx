@@ -70,53 +70,13 @@ export type HubStatusSummary = {
     radarr?: ArrQueueApp;
     lidarr?: ArrQueueApp;
   };
-  stablebit?: StableBitSummary;
 };
 
-export type DrivePoolStatus = {
-  installed: boolean;
-  running: boolean;
-  serviceStatus?: string;
-  pools: {
-    letter: string;
-    label: string;
-    size: number;
-    free: number;
-    freePct: number | null;
-  }[];
-  lowSpace?: boolean;
-  message: string;
-};
-
-export type ScannerStatus = {
-  installed: boolean;
-  running: boolean;
-  serviceStatus?: string;
-  disks: { name: string; size: number; health: string }[];
-  smartFailures?: number;
-  problemCount?: number;
-  message: string;
-};
-
-export type StableBitSummary = {
-  ok: boolean;
-  checking?: boolean;
-  error?: string;
-  drivepool: DrivePoolStatus | null;
-  scanner: ScannerStatus | null;
-};
-
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value.toFixed(value >= 100 || unit === 0 ? 0 : 1)} ${units[unit]}`;
-}
+/** Hub-PC Windows services shown as their own up/down chips. */
+const LOCAL_SERVICE_CHIPS: { id: string; label: string }[] = [
+  { id: "drivepool", label: "DrivePool" },
+  { id: "stablebit-scanner", label: "Scanner" },
+];
 
 interface DashboardStatusProps {
   services: ServiceConfig[];
@@ -271,9 +231,6 @@ export function DashboardStatus({
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [ombiOpen, setOmbiOpen] = useState(false);
   const [plexOpen, setPlexOpen] = useState(false);
-  const [storageOpen, setStorageOpen] = useState<
-    "drivepool" | "scanner" | null
-  >(null);
   const [ombiItems, setOmbiItems] = useState<OmbiPendingItem[]>([]);
   const [ombiLoading, setOmbiLoading] = useState(false);
   const [ombiError, setOmbiError] = useState<string | null>(null);
@@ -297,9 +254,6 @@ export function DashboardStatus({
   const downloadsWrapRef = useRef<HTMLDivElement>(null);
   const ombiWrapRef = useRef<HTMLDivElement>(null);
   const plexWrapRef = useRef<HTMLDivElement>(null);
-  const drivepoolWrapRef = useRef<HTMLDivElement>(null);
-  const scannerWrapRef = useRef<HTMLDivElement>(null);
-
   const closeAllPopovers = useCallback(() => {
     setHubOpen(false);
     setCompanionOpen(false);
@@ -307,7 +261,6 @@ export function DashboardStatus({
     setDownloadsOpen(false);
     setOmbiOpen(false);
     setPlexOpen(false);
-    setStorageOpen(null);
     setCompanionWakeMsg(null);
   }, []);
 
@@ -567,8 +520,7 @@ export function DashboardStatus({
       !queueOpen &&
       !downloadsOpen &&
       !ombiOpen &&
-      !plexOpen &&
-      !storageOpen
+      !plexOpen
     )
       return;
     const downOutside = {
@@ -578,19 +530,9 @@ export function DashboardStatus({
       downloads: false,
       ombi: false,
       plex: false,
-      storage: false,
     };
-    const storageRef =
-      storageOpen === "drivepool"
-        ? drivepoolWrapRef
-        : storageOpen === "scanner"
-          ? scannerWrapRef
-          : null;
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
-      if (storageRef?.current && !storageRef.current.contains(target)) {
-        downOutside.storage = true;
-      }
       if (hubOpen && hubWrapRef.current && !hubWrapRef.current.contains(target)) {
         downOutside.hub = true;
       }
@@ -680,14 +622,6 @@ export function DashboardStatus({
       ) {
         setPlexOpen(false);
       }
-      if (
-        downOutside.storage &&
-        storageRef?.current &&
-        !storageRef.current.contains(target)
-      ) {
-        setStorageOpen(null);
-      }
-      downOutside.storage = false;
       downOutside.hub = false;
       downOutside.companion = false;
       downOutside.queue = false;
@@ -713,7 +647,6 @@ export function DashboardStatus({
     downloadsOpen,
     ombiOpen,
     plexOpen,
-    storageOpen,
     closeAllPopovers,
   ]);
 
@@ -794,14 +727,24 @@ export function DashboardStatus({
   const pendingSummary = summary == null && serverUp !== false;
   const urls = urlMap(services, connectionMode);
   const ombiOpenUrl = ombiRequestsUrl(urls.ombi) || ombiHomeUrl(urls.ombi);
-  const drivepool = summary?.stablebit?.drivepool ?? null;
-  const scanner = summary?.stablebit?.scanner ?? null;
-  const drivepoolMinFreePct = (() => {
-    const pcts = (drivepool?.pools ?? [])
-      .map((p) => p.freePct)
-      .filter((p): p is number => p != null);
-    return pcts.length ? Math.min(...pcts) : null;
-  })();
+  const localServiceChips = LOCAL_SERVICE_CHIPS.flatMap(({ id, label }) => {
+    if (!services.some((s) => s.id === id && s.enabled)) return [];
+    const health = serviceHealth[id];
+    if (health?.up == null && /not installed/i.test(health?.message || "")) {
+      return [];
+    }
+    return [
+      {
+        id,
+        label,
+        value:
+          health?.up === true ? "up" : health?.up === false ? "down" : "…",
+        tone:
+          health?.up === true ? "good" : health?.up === false ? "bad" : "muted",
+        title: `${label} — ${health?.message || "Waiting for first check"}`,
+      },
+    ];
+  });
 
   const arrApps: {
     id: "sonarr" | "radarr" | "lidarr";
@@ -1013,48 +956,7 @@ export function DashboardStatus({
         return "muted";
       })(),
     },
-    ...(drivepool?.installed
-      ? [
-          {
-            id: "drivepool",
-            label: "DrivePool",
-            value: (() => {
-              if (serverUp === false) return "—";
-              if (!drivepool.running) return "down";
-              const pct = drivepoolMinFreePct;
-              if (pct == null) return "ok";
-              return `${pct}% free`;
-            })(),
-            tone: (() => {
-              if (serverUp === false) return "muted";
-              if (!drivepool.running) return "bad";
-              if (drivepool.lowSpace) return "warn";
-              return "good";
-            })(),
-          },
-        ]
-      : []),
-    ...(scanner?.installed
-      ? [
-          {
-            id: "scanner",
-            label: "Scanner",
-            value: (() => {
-              if (serverUp === false) return "—";
-              if (!scanner.running) return "down";
-              const problems = scanner.problemCount ?? 0;
-              if (problems > 0) return `${problems} warn`;
-              return `${scanner.disks.length} ok`;
-            })(),
-            tone: (() => {
-              if (serverUp === false) return "muted";
-              if (!scanner.running) return "bad";
-              if ((scanner.problemCount ?? 0) > 0) return "bad";
-              return "good";
-            })(),
-          },
-        ]
-      : []),
+    ...localServiceChips,
   ];
 
   const plexCanInstall =
@@ -2237,154 +2139,11 @@ export function DashboardStatus({
             );
           }
 
-          if (chip.id === "drivepool" && drivepool) {
-            const open = storageOpen === "drivepool";
-            return (
-              <div
-                key={chip.id}
-                className="dash-chip-wrap"
-                ref={drivepoolWrapRef}
-              >
-                <button
-                  type="button"
-                  className={`dash-chip dash-chip-btn tone-${chip.tone}`}
-                  aria-expanded={open}
-                  aria-haspopup="dialog"
-                  title={`StableBit DrivePool — ${drivepool.message}`}
-                  onClick={() => {
-                    const next = open ? null : "drivepool";
-                    closeAllPopovers();
-                    setStorageOpen(next);
-                  }}
-                >
-                  <span className="dash-chip-value">{chip.value}</span>
-                  <span className="dash-chip-label">{chip.label}</span>
-                </button>
-                {open && (
-                  <div
-                    className="dash-chip-popover"
-                    role="dialog"
-                    aria-label="StableBit DrivePool status"
-                  >
-                    <p className="dash-chip-popover-title">
-                      StableBit DrivePool
-                    </p>
-                    <p className="dash-chip-popover-hint">
-                      Service: {drivepool.serviceStatus || "unknown"} ·{" "}
-                      {drivepool.message}
-                    </p>
-                    {drivepool.pools.length > 0 ? (
-                      <ul className="dash-queue-issues">
-                        {drivepool.pools.map((pool) => (
-                          <li key={pool.letter}>
-                            <div className="dash-queue-issue-main">
-                              <span className="dash-queue-issue-badge">
-                                {pool.letter}
-                                {pool.label ? ` · ${pool.label}` : ""}
-                              </span>
-                              <span className="dash-queue-issue-title">
-                                {formatBytes(pool.free)} free of{" "}
-                                {formatBytes(pool.size)}
-                                {pool.freePct != null
-                                  ? ` (${pool.freePct}%)`
-                                  : ""}
-                              </span>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                    {summary?.stablebit?.error ? (
-                      <p className="dash-chip-popover-error">
-                        {summary.stablebit.error}
-                      </p>
-                    ) : null}
-                    <p className="dash-chip-popover-hint">
-                      Warns under 10% free. Balancing / duplication details stay
-                      in the DrivePool app.
-                    </p>
-                  </div>
-                )}
-              </div>
-            );
-          }
-
-          if (chip.id === "scanner" && scanner) {
-            const open = storageOpen === "scanner";
-            return (
-              <div
-                key={chip.id}
-                className="dash-chip-wrap"
-                ref={scannerWrapRef}
-              >
-                <button
-                  type="button"
-                  className={`dash-chip dash-chip-btn tone-${chip.tone}`}
-                  aria-expanded={open}
-                  aria-haspopup="dialog"
-                  title={`StableBit Scanner — ${scanner.message}`}
-                  onClick={() => {
-                    const next = open ? null : "scanner";
-                    closeAllPopovers();
-                    setStorageOpen(next);
-                  }}
-                >
-                  <span className="dash-chip-value">{chip.value}</span>
-                  <span className="dash-chip-label">{chip.label}</span>
-                </button>
-                {open && (
-                  <div
-                    className="dash-chip-popover"
-                    role="dialog"
-                    aria-label="StableBit Scanner status"
-                  >
-                    <p className="dash-chip-popover-title">StableBit Scanner</p>
-                    <p className="dash-chip-popover-hint">
-                      Service: {scanner.serviceStatus || "unknown"} ·{" "}
-                      {scanner.message}
-                    </p>
-                    {scanner.disks.length > 0 ? (
-                      <ul className="dash-queue-issues">
-                        {scanner.disks.map((disk, idx) => (
-                          <li key={`${disk.name}-${idx}`}>
-                            <div className="dash-queue-issue-main">
-                              <span className="dash-queue-issue-badge">
-                                {disk.health}
-                              </span>
-                              <span className="dash-queue-issue-title">
-                                {disk.name} · {formatBytes(disk.size)}
-                              </span>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                    {(scanner.smartFailures ?? 0) > 0 ? (
-                      <p className="dash-chip-popover-error">
-                        SMART predicts failure on {scanner.smartFailures} disk
-                        {scanner.smartFailures === 1 ? "" : "s"} — open Scanner
-                        on the Plex PC.
-                      </p>
-                    ) : null}
-                    {summary?.stablebit?.error ? (
-                      <p className="dash-chip-popover-error">
-                        {summary.stablebit.error}
-                      </p>
-                    ) : null}
-                    <p className="dash-chip-popover-hint">
-                      Disk health from Windows SMART (what Scanner reads).
-                      Surface-scan results stay in the Scanner app.
-                    </p>
-                  </div>
-                )}
-              </div>
-            );
-          }
-
           return (
             <div
               key={chip.id}
               className={`dash-chip tone-${chip.tone}`}
+              title={"title" in chip ? chip.title : undefined}
             >
               <span className="dash-chip-value">{chip.value}</span>
               <span className="dash-chip-label">{chip.label}</span>

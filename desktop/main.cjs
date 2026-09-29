@@ -645,7 +645,53 @@ function createTray() {
   tray.on("double-click", () => showWindow());
 }
 
+/**
+ * Older folder installs (install-startup.bat) left Startup/Desktop shortcuts
+ * running wscript "…\Start Arrs Hub.vbs". Once that folder is gone, Windows
+ * shows "Can not find script file" at every login. The installed app has its
+ * own login item, so drop those shortcuts when their script no longer exists.
+ */
+function removeStaleVbsShortcuts() {
+  if (process.platform !== "win32" || !isPackaged()) return;
+  const locations = [
+    path.join(
+      app.getPath("appData"),
+      "Microsoft",
+      "Windows",
+      "Start Menu",
+      "Programs",
+      "Startup",
+    ),
+    app.getPath("desktop"),
+  ];
+  for (const dir of locations) {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const name of entries) {
+      if (!/^arrs hub.*\.lnk$/i.test(name)) continue;
+      const lnk = path.join(dir, name);
+      try {
+        const link = shell.readShortcutLink(lnk);
+        if (!/wscript\.exe$/i.test(String(link.target || ""))) continue;
+        const match = String(link.args || "").match(
+          /"?([^"]*Start Arrs Hub\.vbs)"?/i,
+        );
+        if (!match || fs.existsSync(match[1])) continue;
+        fs.unlinkSync(lnk);
+        console.log(`Removed stale shortcut ${lnk} (missing ${match[1]})`);
+      } catch {
+        // unreadable shortcut — leave it alone
+      }
+    }
+  }
+}
+
 async function boot() {
+  removeStaleVbsShortcuts();
   openAtLoginEnabled = syncOpenAtLogin(
     app,
     HUB_LOGIN_SETTINGS_FILE,

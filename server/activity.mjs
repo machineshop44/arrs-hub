@@ -1,9 +1,7 @@
 import { loadSyncSettings } from "./config.mjs";
 import { loadIntegrationsSettings } from "./integrations.mjs";
 import { getArrApiKey } from "./arr-api-keys.mjs";
-import { getTautulliActivity, loadTautulliSettings } from "./tautulli.mjs";
-import { getStableBitStatus } from "./stablebit-status.mjs";
-import {
+import { getTautulliActivity, loadTautulliSettings } from "./tautulli.mjs";import {
   assertOmbiOk,
   normalizeOmbiBase,
   ombiApprovePath,
@@ -607,6 +605,5 @@ export async function getHubStatusSummary(opts = {}) {
       radarr,
       lidarr,
     },
-    stablebit: getStableBitStatus(),
   };
 }

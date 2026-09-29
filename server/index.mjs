@@ -63,9 +63,7 @@ import {
   getOmbiPendingRequests,
   searchOmbiRequests,
   submitOmbiRequest,
-} from "./activity.mjs";
-import { getStableBitStatus } from "./stablebit-status.mjs";
-import { getChipAppVersions } from "./app-versions.mjs";
+} from "./activity.mjs";import { getChipAppVersions } from "./app-versions.mjs";
 import {
   getAppUpdateJob,
   startAppUpdate,
@@ -1303,9 +1301,7 @@ app.listen(PORT, HOST, () => {
     startWatchdog();
   } catch (err) {
     console.error("Watchdog failed to start:", err?.message || err);
-  }
-  getStableBitStatus();
-}).on("error", (err) => {
+  }}).on("error", (err) => {
   if (err?.code === "EADDRINUSE") {
     console.error(
       `Port ${PORT} is already in use. Close the other Arrs Hub window/process, or set ARRS_HUB_PORT (or PORT) to a free port, then start again.`,

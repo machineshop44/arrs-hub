@@ -19,6 +19,7 @@ import {
   checkLocalServiceStatus,
   restartServiceOrExe,
 } from "./restart-windows.mjs";
+import { windowsServiceExists } from "./fileflows-launch.mjs";
 
 /**
  * @typedef {object} WatchTarget
@@ -27,7 +28,7 @@ import {
  * @property {string} url
  * @property {"home"|"remote"} [mode]
  * @property {boolean} [allowRestart]
- * @property {"tcp"|"companion"} [probe]
+ * @property {"tcp"|"companion"|"local"} [probe]
  */
 
 const COMPANION_PROBE_URL = "companion://local";
@@ -43,6 +44,46 @@ function wantsCompanionProbe(target, serviceCfg) {
     return true;
   }
   return false;
+}
+
+/** Hub-PC Windows service with no TCP port (StableBit DrivePool / Scanner). */
+function wantsLocalProbe(target) {
+  if (target?.probe === "local") return true;
+  return String(target?.url || "")
+    .trim()
+    .toLowerCase()
+    .startsWith("local:");
+}
+
+async function probeLocalService(target, serviceCfg) {
+  const serviceName = String(serviceCfg.windowsService || "").trim();
+  if (!serviceName) {
+    return {
+      up: false,
+      latencyMs: null,
+      message: "No Windows service name set in Port Watch",
+    };
+  }
+  if (!windowsServiceExists(serviceName)) {
+    // Not installed on this PC — stay grey instead of alerting / restarting.
+    return {
+      up: null,
+      latencyMs: null,
+      message: `Service "${serviceName}" not installed on the Hub PC`,
+    };
+  }
+  const status = await checkLocalServiceStatus({
+    id: target.id,
+    windowsService: serviceName,
+  });
+  if (!status.ok) {
+    return { up: null, latencyMs: status.latencyMs, message: status.message };
+  }
+  return {
+    up: Boolean(status.running),
+    latencyMs: status.latencyMs,
+    message: status.message,
+  };
 }
 
 /** @type {WatchTarget[]} */
@@ -120,7 +161,8 @@ function applyWatchTargets(nextTargets, { persist = true } = {}) {
           url: String(t.url || ""),
           mode: t.mode === "remote" ? "remote" : "home",
           allowRestart: Boolean(t.allowRestart),
-          probe: t.probe === "companion" ? "companion" : "tcp",
+          probe:
+            t.probe === "companion" || t.probe === "local" ? t.probe : "tcp",
         })),
       });
     } catch (err) {
@@ -589,13 +631,17 @@ async function checkOne(target) {
     return;
   }
 
-  const companionProbe = wantsCompanionProbe(target, serviceCfg);
-  const parsed = companionProbe ? null : hostPortFromUrl(target.url);
+  const localProbe = wantsLocalProbe(target);
+  const companionProbe = !localProbe && wantsCompanionProbe(target, serviceCfg);
+  const serviceProbe = localProbe || companionProbe;
+  const parsed = serviceProbe ? null : hostPortFromUrl(target.url);
   const graceLeftMs = startupGraceRemainingMs(settings);
   const inStartupGrace = graceLeftMs > 0;
 
   let result;
-  if (companionProbe) {
+  if (localProbe) {
+    result = await probeLocalService(target, serviceCfg);
+  } else if (companionProbe) {
     result = await probeViaCompanion(target, serviceCfg, settings);
   } else if (!parsed) {
     state.set(target.id, {
@@ -715,16 +761,18 @@ async function checkOne(target) {
   const usesCompanion = Boolean(String(serviceCfg.restartPcId || "").trim());
   const canRestart =
     target.allowRestart !== false &&
-    (usesCompanion || target.mode !== "remote") &&
+    (usesCompanion || localProbe || target.mode !== "remote") &&
     settings.autoRestart &&
     serviceCfg.autoRestart &&
     hasRestartTarget;
 
-  const locationLabel = companionProbe
-    ? "Companion service/process"
-    : parsed
-      ? `${parsed.host}:${parsed.port}`
-      : "unknown";
+  const locationLabel = localProbe
+    ? "Windows service on Hub PC"
+    : companionProbe
+      ? "Companion service/process"
+      : parsed
+        ? `${parsed.host}:${parsed.port}`
+        : "unknown";
 
   if (
     !result.up &&
@@ -735,7 +783,7 @@ async function checkOne(target) {
     downAlertSent = true;
     const detailWithReason = await explainDownReason({
       result,
-      companionProbe,
+      companionProbe: serviceProbe,
       serviceCfg,
       settings,
       serviceId: target.id,
@@ -744,8 +792,8 @@ async function checkOne(target) {
       title: `${target.name} is down`,
       description: [
         `Mode: **${target.mode === "remote" ? "Remote" : "Home"}**`,
-        companionProbe
-          ? `Check: Companion service/process`
+        serviceProbe
+          ? `Check: ${locationLabel}`
           : `Host: \`${locationLabel}\``,
         `Failed checks: **${consecutiveFails}** (threshold ${threshold})`,
         `Detail: ${detailWithReason}`,
@@ -753,7 +801,7 @@ async function checkOne(target) {
           ? usesCompanion
             ? "Arrs Hub will ask the Companion app on that PC to restart."
             : "Arrs Hub will try to restart the Windows service."
-          : target.mode === "remote"
+          : target.mode === "remote" && !localProbe
             ? "Remote status only - restart is Home/Plex-PC only."
             : "Auto-restart is not enabled for this app.",
       ].join("\n"),
@@ -789,8 +837,8 @@ async function checkOne(target) {
               ? `Exe: \`${serviceCfg.exePath}\``
               : "Exe: (none)",
             restart.message,
-            companionProbe
-              ? "Checked via Companion service status"
+            serviceProbe
+              ? `Checked: ${locationLabel}`
               : `Checked port: \`${locationLabel}\``,
           ].join("\n"),
           color: restart.ok
@@ -804,7 +852,7 @@ async function checkOne(target) {
   if (confirmedRecovered && settings.discordNotifyRecovered !== false) {
     await notifyDiscord(settings, {
       title: `${target.name} is back up`,
-      description: companionProbe
+      description: serviceProbe
         ? `${result.message}${
             result.latencyMs != null ? ` (${result.latencyMs} ms)` : ""
           }.`
@@ -823,7 +871,9 @@ async function checkOne(target) {
     lastRestartAt,
     lastRestartResult,
     message:
-      target.mode === "remote"
+      localProbe
+        ? result.message
+        : target.mode === "remote"
         ? result.up
           ? companionProbe
             ? "Remote · running (Companion)"

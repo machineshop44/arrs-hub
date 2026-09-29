@@ -29,6 +29,8 @@ export const DEFAULT_WINDOWS_SERVICES = {
   fileflows: "FileFlows",
   "fileflows-node": "FileFlows Node",
   surfshark: "",
+  drivepool: "DrivePoolService",
+  "stablebit-scanner": "Scanner",
   plex: "PlexUpdateService",
   calibre: "",
   whisparr: "Whisparr",

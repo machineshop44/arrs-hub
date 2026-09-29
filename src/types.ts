@@ -50,6 +50,16 @@ export function getServiceUrl(
   return service.defaultUrl;
 }
 
+/** Hub-PC Windows service with no web UI (e.g. StableBit DrivePool / Scanner). */
+export function isLocalServiceProbe(service: ServiceConfig): boolean {
+  return [service.homeUrl, service.defaultUrl].some((url) =>
+    String(url || "")
+      .trim()
+      .toLowerCase()
+      .startsWith("local:"),
+  );
+}
+
 export const CATEGORY_LABELS: Record<ServiceCategory, string> = {
   "media-management": "Media Management",
   indexers: "Indexers",

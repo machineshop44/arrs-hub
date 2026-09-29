@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import type { ConnectionMode, ServiceConfig } from "../types";
-import { getServiceUrl } from "../types";
+import { getServiceUrl, isLocalServiceProbe } from "../types";
 import type { ServiceHealth } from "../hooks/useServiceHealth";
 
 interface ServiceCardProps {
@@ -31,21 +31,23 @@ export function ServiceCard({
   onOpen,
 }: ServiceCardProps) {
   const activeUrl = getServiceUrl(service, connectionMode);
+  const localOnly = isLocalServiceProbe(service);
   const companionOnly =
     service.id === "fileflows-node" ||
     String(activeUrl || "")
       .trim()
       .toLowerCase()
       .startsWith("companion:");
+  const noWebUi = companionOnly || localOnly;
   const isRemoteMissing =
-    connectionMode === "remote" && !service.remoteUrl.trim() && !companionOnly;
+    connectionMode === "remote" && !service.remoteUrl.trim() && !noWebUi;
 
   const handleClick = () => {
     if (onOpen) {
       onOpen();
       return;
     }
-    if (!activeUrl || companionOnly) return;
+    if (!activeUrl || noWebUi) return;
     window.open(activeUrl, "_blank", "noopener,noreferrer");
   };
 
@@ -58,7 +60,9 @@ export function ServiceCard({
 
   const titleHint = onOpen
     ? `${service.name} — search & request in Hub`
-    : companionOnly
+    : localOnly
+      ? `${service.name} — ${statusLabel(health)} (Windows service on the Hub PC)`
+      : companionOnly
       ? `${service.name} — ${statusLabel(health)} (status via Companion)`
       : activeUrl
         ? `${service.name} — ${statusLabel(health)}`
@@ -72,7 +76,7 @@ export function ServiceCard({
       disabled={
         onOpen
           ? false
-          : isRemoteMissing || (!activeUrl && !companionOnly)
+          : isRemoteMissing || (!activeUrl && !noWebUi)
       }
       style={{ "--accent": service.color } as CSSProperties}
       title={titleHint}
@@ -96,7 +100,9 @@ export function ServiceCard({
         <span className="service-card-url">
           {onOpen
             ? "Search & request in Hub"
-            : companionOnly
+            : localOnly
+              ? "Windows service on this PC (no web UI)"
+              : companionOnly
               ? "Status via Companion (no web UI)"
               : (activeUrl ?? "Remote URL not configured")}
         </span>

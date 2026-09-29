@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ConnectionMode, ServiceConfig } from "../types";
-import { getServiceUrl } from "../types";
+import { getServiceUrl, isLocalServiceProbe } from "../types";
 
 export type ServiceHealth = {
   up: boolean | null;
@@ -61,6 +61,17 @@ export function useServiceHealth(
       services
         .filter((service) => service.enabled && service.id !== "trash-guides")
         .map((service) => {
+          if (isLocalServiceProbe(service)) {
+            // Windows service on the Hub PC itself — restart works in any mode.
+            return {
+              id: service.id,
+              name: service.name,
+              url: "local://service",
+              mode: activeMode,
+              allowRestart: true,
+              probe: "local" as const,
+            };
+          }
           const url = getServiceUrl(service, activeMode);
           const companionProbe =
             service.id === "fileflows-node" ||
