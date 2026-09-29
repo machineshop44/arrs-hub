@@ -147,6 +147,11 @@ const PUBLIC_IP_URLS = [
   "https://ifconfig.me/ip",
 ];
 
+/** Last detected public IPv4 (no network call; "" until detectPublicIpv4 succeeds). */
+export function getCachedPublicIpv4() {
+  return cachedPublicIp.ip || "";
+}
+
 function looksLikeIpv4(ip) {
   const parts = String(ip || "")
     .trim()

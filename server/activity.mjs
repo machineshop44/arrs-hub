@@ -1,7 +1,9 @@
 import { loadSyncSettings } from "./config.mjs";
 import { loadIntegrationsSettings } from "./integrations.mjs";
 import { getArrApiKey } from "./arr-api-keys.mjs";
-import { getTautulliActivity, loadTautulliSettings } from "./tautulli.mjs";import {
+import { getTautulliActivity, loadTautulliSettings } from "./tautulli.mjs";
+import { createServiceUrlResolver } from "./url-policy.mjs";
+import {
   assertOmbiOk,
   normalizeOmbiBase,
   ombiApprovePath,
@@ -356,13 +358,19 @@ async function getOmbiPending(baseUrl, apiKey) {
 }
 
 /**
+ * @param {{ urls?: Record<string, string>, resolver?: ReturnType<typeof createServiceUrlResolver> }} opts
+ */
+function resolverFrom(opts = {}) {
+  return opts.resolver || createServiceUrlResolver({ urls: opts.urls || {} });
+}
+
+/**
  * Pending Ombi requests with enough detail for the dashboard chip popover.
- * @param {{ urls?: Record<string, string> }} [opts]
+ * @param {{ urls?: Record<string, string>, resolver?: ReturnType<typeof createServiceUrlResolver> }} [opts]
  */
 export async function getOmbiPendingRequests(opts = {}) {
-  const urls = opts.urls || {};
   const integrations = loadIntegrationsSettings();
-  const ombiUrl = normalizeBase(urls.ombi || integrations.ombi.baseUrl);
+  const ombiUrl = normalizeBase(resolverFrom(opts).resolve("ombi"));
   const apiKey = integrations.ombi.apiKey;
 
   if (!ombiUrl || !apiKey) {
@@ -397,11 +405,9 @@ export async function getOmbiPendingRequests(opts = {}) {
   }
 }
 
-function resolveOmbiConnection(urls = {}) {
+function resolveOmbiConnection(body = {}) {
   const integrations = loadIntegrationsSettings();
-  const ombiUrl = normalizeOmbiBase(
-    urls.ombi || integrations.ombi.baseUrl,
-  );
+  const ombiUrl = normalizeOmbiBase(resolverFrom(body).resolve("ombi"));
   const apiKey = String(integrations.ombi.apiKey || "").trim();
   if (!ombiUrl || !apiKey) {
     throw Object.assign(new Error("Ombi is not configured (URL + API key)"), {
@@ -431,7 +437,7 @@ export async function approveOmbiRequest(body = {}) {
   }
 
   const approvePath = ombiApprovePath(type);
-  const { ombiUrl, apiKey } = resolveOmbiConnection(body.urls || {});
+  const { ombiUrl, apiKey } = resolveOmbiConnection(body);
   const { status, data } = await ombiHttp(
     ombiUrl,
     apiKey,
@@ -461,7 +467,7 @@ export async function denyOmbiRequest(body = {}) {
   }
 
   const denyPath = ombiDenyPath(type);
-  const { ombiUrl, apiKey } = resolveOmbiConnection(body.urls || {});
+  const { ombiUrl, apiKey } = resolveOmbiConnection(body);
   const payload = { id };
   const reason = String(body.reason || "").trim();
   if (reason) payload.reason = reason;
@@ -482,7 +488,7 @@ export async function denyOmbiRequest(body = {}) {
  * @param {{ mode?: string, query: string, urls?: Record<string, string> }} body
  */
 export async function searchOmbiRequests(body = {}) {
-  const { ombiUrl, apiKey } = resolveOmbiConnection(body.urls || {});
+  const { ombiUrl, apiKey } = resolveOmbiConnection(body);
   const mode =
     String(body.mode || "media").toLowerCase() === "music"
       ? "music"
@@ -503,7 +509,7 @@ export async function searchOmbiRequests(body = {}) {
  * @param {{ kind: string, title?: string, tmdbId?: number, tvdbId?: number, foreignAlbumId?: string, available?: boolean, requested?: boolean, approved?: boolean, urls?: Record<string, string> }} body
  */
 export async function submitOmbiRequest(body = {}) {
-  const { ombiUrl, apiKey } = resolveOmbiConnection(body.urls || {});
+  const { ombiUrl, apiKey } = resolveOmbiConnection(body);
   const hit = {
     kind: String(body.kind || "").toLowerCase(),
     title: String(body.title || "").trim() || "Untitled",
@@ -541,36 +547,48 @@ async function getStreamsSummary() {
   }
 }
 
+/** *arr apps whose download queue feeds the summary (additive: readarr/whisparr). */
+export const SUMMARY_QUEUE_APP_IDS = [
+  "sonarr",
+  "radarr",
+  "lidarr",
+  "readarr",
+  "whisparr",
+];
+
+/**
+ * Queue snapshot for each *arr in SUMMARY_QUEUE_APP_IDS.
+ * @param {ReturnType<typeof createServiceUrlResolver>} resolver
+ */
+export async function getArrQueues(resolver) {
+  const sync = loadSyncSettings();
+  const entries = await Promise.all(
+    SUMMARY_QUEUE_APP_IDS.map(async (id) => {
+      const url = normalizeBase(resolver.resolve(id));
+      const apiKey =
+        id === "sonarr" || id === "radarr"
+          ? sync[id]?.apiKey || ""
+          : getArrApiKey(id);
+      return [id, await getArrQueue(id, url, apiKey)];
+    }),
+  );
+  return Object.fromEntries(entries);
+}
+
 /**
  * Aggregate high-level hub status for the dashboard chips + activity strip.
- * @param {{ urls?: Record<string, string> }} [opts]
+ * @param {{ urls?: Record<string, string>, resolver?: ReturnType<typeof createServiceUrlResolver> }} [opts]
  */
 export async function getHubStatusSummary(opts = {}) {
-  const urls = opts.urls || {};
-  const sync = loadSyncSettings();
+  const resolver = resolverFrom(opts);
   const integrations = loadIntegrationsSettings();
 
-  const sonarrUrl = normalizeBase(urls.sonarr || sync.sonarr.baseUrl);
-  const radarrUrl = normalizeBase(urls.radarr || sync.radarr.baseUrl);
-  const lidarrUrl = normalizeBase(urls.lidarr || "");
-  const qbUrl = normalizeBase(
-    urls.qbittorrent || integrations.qbittorrent.baseUrl,
-  );
-  const sabUrl = normalizeBase(urls.sabnzbd || integrations.sabnzbd.baseUrl);
-  const ombiUrl = normalizeBase(urls.ombi || integrations.ombi.baseUrl);
+  const qbUrl = normalizeBase(resolver.resolve("qbittorrent"));
+  const sabUrl = normalizeBase(resolver.resolve("sabnzbd"));
+  const ombiUrl = normalizeBase(resolver.resolve("ombi"));
 
-  const [sonarr, radarr, lidarr, qb, sab, ombi, streams] = await Promise.all([
-    getArrQueue("sonarr", sonarrUrl, sync.sonarr.apiKey),
-    getArrQueue("radarr", radarrUrl, sync.radarr.apiKey),
-    lidarrUrl
-      ? getArrQueue("lidarr", lidarrUrl, getArrApiKey("lidarr"))
-      : Promise.resolve({
-          ok: false,
-          configured: false,
-          total: 0,
-          downloading: 0,
-          issues: [],
-        }),
+  const [queues, qb, sab, ombi, streams] = await Promise.all([
+    getArrQueues(resolver),
     getQbittorrentActive(
       qbUrl,
       integrations.qbittorrent.username,
@@ -581,10 +599,10 @@ export async function getHubStatusSummary(opts = {}) {
     getStreamsSummary(),
   ]);
 
-  const arrQueueTotal =
-    (sonarr.ok ? sonarr.total : 0) +
-    (radarr.ok ? radarr.total : 0) +
-    (lidarr.ok ? lidarr.total : 0);
+  const arrQueueTotal = SUMMARY_QUEUE_APP_IDS.reduce(
+    (sum, id) => sum + (queues[id]?.ok ? queues[id].total : 0),
+    0,
+  );
 
   const downloadsActive =
     (qb.ok ? qb.active : 0) + (sab.ok ? sab.active : 0);
@@ -601,9 +619,7 @@ export async function getHubStatusSummary(opts = {}) {
     ombi,
     arr: {
       queueTotal: arrQueueTotal,
-      sonarr,
-      radarr,
-      lidarr,
+      ...queues,
     },
   };
 }

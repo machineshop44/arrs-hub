@@ -299,6 +299,76 @@ export function startExeProcess(exePath, exeArgs, exeCwd) {
 }
 
 /**
+ * Alternate launches when the primary spawn is refused. `dotnet.exe <dll>` can
+ * fail with EACCES/EPERM (Smart App Control, Defender, per-user dotnet ACLs),
+ * while FileFlows' own apphost / tray launcher still starts fine.
+ */
+function launchAlternates(serviceCfg, launch) {
+  const out = [];
+  const add = (exe, args = "", cwd = "") => {
+    if (!exe || !fs.existsSync(exe)) return;
+    if (out.some((c) => c.exePath.toLowerCase() === exe.toLowerCase() && c.exeArgs === args)) return;
+    out.push({ exePath: exe, exeArgs: args, exeCwd: cwd || path.dirname(exe) });
+  };
+  const configured = String(serviceCfg.exePath || "").trim();
+  if (/\.exe$/i.test(configured)) add(configured, String(serviceCfg.exeArgs || "").trim());
+  const dir = launch.exeCwd || (configured ? path.dirname(configured) : "");
+  const role = fileFlowsRoleFromPath(`${launch.exePath} ${launch.exeArgs} ${dir} ${configured}`);
+  if (role && dir) {
+    add(path.join(dir, role === "node" ? "FileFlows.Node.exe" : "FileFlows.Server.exe"));
+    add(path.join(path.dirname(dir), "FileFlows.exe"));
+  }
+  return out.filter(
+    (c) =>
+      !(
+        c.exePath.toLowerCase() === String(launch.exePath || "").toLowerCase() &&
+        c.exeArgs === String(launch.exeArgs || "")
+      ),
+  );
+}
+
+function startViaShell(exePath, exeArgs, exeCwd) {
+  const file = sanitizePsLiteral(exePath, 260).replace(/'/g, "''");
+  const cwd = sanitizePsLiteral(exeCwd || path.dirname(exePath), 260).replace(/'/g, "''");
+  const args = sanitizePsLiteral(exeArgs || "", 400).replace(/'/g, "''");
+  const ps = `
+$ErrorActionPreference = 'Stop'
+try {
+  $p = @{ FilePath = '${file}'; WorkingDirectory = '${cwd}'; WindowStyle = 'Hidden' }
+  if ('${args}') { $p.ArgumentList = '${args}' }
+  Start-Process @p
+  Write-Output 'OK'
+} catch { Write-Output ('FAIL=' + $_.Exception.Message) }
+`;
+  return runPowerShell(ps, 20000).then((r) => {
+    const out = String(r.stdout || "").trim();
+    return out.startsWith("OK")
+      ? { ok: true, message: `Started via Start-Process "${exePath}"` }
+      : { ok: false, message: out.replace(/^FAIL=/, "") || "Start-Process failed" };
+  });
+}
+
+async function startWithFallbacks(serviceCfg, launch) {
+  const first = await startExeProcess(launch.exePath, launch.exeArgs, launch.exeCwd);
+  if (first.ok) return first;
+  const errors = [first.message];
+  for (const alt of launchAlternates(serviceCfg, launch)) {
+    const r = await startExeProcess(alt.exePath, alt.exeArgs, alt.exeCwd);
+    if (r.ok) return { ok: true, message: `${first.message}; fallback ${r.message}` };
+    errors.push(r.message);
+  }
+  if (process.platform === "win32") {
+    const candidates = [launch, ...launchAlternates(serviceCfg, launch)];
+    for (const c of candidates) {
+      const r = await startViaShell(c.exePath, c.exeArgs, c.exeCwd);
+      if (r.ok) return { ok: true, message: `${first.message}; fallback ${r.message}` };
+      errors.push(r.message);
+    }
+  }
+  return { ok: false, message: [...new Set(errors)].join("; ") };
+}
+
+/**
  * Prefer Windows service restart; if that fails or no service name, kill then start exe.
  * @param {{ windowsService?: string, exePath?: string, exeArgs?: string, exeCwd?: string, id?: string, processHints?: string[] }} serviceCfg
  */
@@ -312,11 +382,7 @@ export async function restartServiceOrExe(serviceCfg) {
     if (serviceResult.ok) return serviceResult;
     if (exePath) {
       const kill = await killMatchingProcesses(serviceCfg, launch);
-      const exeResult = await startExeProcess(
-        launch.exePath,
-        launch.exeArgs,
-        launch.exeCwd,
-      );
+      const exeResult = await startWithFallbacks(serviceCfg, launch);
       return {
         ok: exeResult.ok,
         message: `${serviceResult.message}; ${kill.message}; exe fallback: ${exeResult.message}`,
@@ -327,11 +393,7 @@ export async function restartServiceOrExe(serviceCfg) {
 
   if (exePath) {
     const kill = await killMatchingProcesses(serviceCfg, launch);
-    const exeResult = await startExeProcess(
-      launch.exePath,
-      launch.exeArgs,
-      launch.exeCwd,
-    );
+    const exeResult = await startWithFallbacks(serviceCfg, launch);
     return {
       ok: exeResult.ok,
       message: `${kill.message}; ${exeResult.message}`,

@@ -11,6 +11,7 @@ import {
   normalizeTautulliBaseUrl,
 } from "./tautulli.mjs";
 import { getHubLocalFileFlowsVersions } from "./hub-local-versions.mjs";
+import { createServiceUrlResolver } from "./url-policy.mjs";
 
 function normalizeBase(url) {
   return String(url || "")
@@ -164,23 +165,25 @@ function withGithubUpdate(row, latest) {
  * @param {string} id
  * @param {string} baseUrl
  * @param {string} apiKey
+ * @param {string} [openBase] client-facing base for openUrl (defaults to baseUrl)
  */
-async function fetchArrUpdateInfo(id, baseUrl, apiKey) {
+async function fetchArrUpdateInfo(id, baseUrl, apiKey, openBase) {
   const label = SERVICE_LABELS[id] || id;
   const base = normalizeBase(baseUrl);
+  const open = normalizeBase(openBase) || base;
   if (!base && !apiKey) {
     return emptyAppInfo(id, null);
   }
   if (!base) {
     return {
-      ...emptyAppInfo(id, null),
+      ...emptyAppInfo(id, open ? `${open}/` : null),
       configured: Boolean(apiKey),
       error: "No Home/Remote URL set for this app in Settings.",
     };
   }
   if (!apiKey) {
     return {
-      ...emptyAppInfo(id, `${base}/`),
+      ...emptyAppInfo(id, `${open}/`),
       configured: false,
       error: "API key not saved — add it under Settings → Apps & monitoring.",
     };
@@ -240,7 +243,7 @@ async function fetchArrUpdateInfo(id, baseUrl, apiKey) {
       version: installed || null,
       updateAvailable,
       latestVersion,
-      openUrl: `${base}/`,
+      openUrl: `${open}/`,
     };
   } catch (err) {
     return {
@@ -251,15 +254,20 @@ async function fetchArrUpdateInfo(id, baseUrl, apiKey) {
       version: null,
       updateAvailable: false,
       latestVersion: null,
-      openUrl: `${base}/`,
+      openUrl: `${open}/`,
       error: err instanceof Error ? err.message : String(err),
     };
   }
 }
 
-async function fetchQbitVersion(baseUrl, username, password) {
+function openUrlFor(base, openBase) {
+  const open = normalizeBase(openBase) || base;
+  return open ? `${open}/` : null;
+}
+
+async function fetchQbitVersion(baseUrl, username, password, openBase) {
   const base = normalizeBase(baseUrl);
-  const openUrl = base ? `${base}/` : null;
+  const openUrl = openUrlFor(base, openBase);
   if (!base) return emptyAppInfo("qbittorrent", openUrl);
 
   try {
@@ -307,9 +315,9 @@ async function fetchQbitVersion(baseUrl, username, password) {
   }
 }
 
-async function fetchSabVersion(baseUrl, apiKey) {
+async function fetchSabVersion(baseUrl, apiKey, openBase) {
   const base = normalizeBase(baseUrl);
-  const openUrl = base ? `${base}/` : null;
+  const openUrl = openUrlFor(base, openBase);
   if (!base) return emptyAppInfo("sabnzbd", openUrl);
 
   try {
@@ -342,9 +350,9 @@ async function fetchSabVersion(baseUrl, apiKey) {
   }
 }
 
-async function fetchTautulliUpdateInfo(baseUrl, apiKey) {
-  const base = normalizeTautulliBaseUrl(baseUrl || "");
-  const openUrl = base ? `${base}/` : null;
+async function fetchTautulliUpdateInfo(baseUrl, apiKey, openBase) {
+  const base = baseUrl ? normalizeTautulliBaseUrl(baseUrl) : "";
+  const openUrl = openUrlFor(base, openBase);
   const key = String(apiKey || "").trim();
   if (!base || !key) {
     return emptyAppInfo("tautulli", openUrl);
@@ -432,9 +440,9 @@ async function fetchTautulliUpdateInfo(baseUrl, apiKey) {
  * @param {string} baseUrl
  * @param {{ version?: string|null, path?: string|null }} local
  */
-async function fetchFileFlowsServerInfo(baseUrl, local = {}) {
+async function fetchFileFlowsServerInfo(baseUrl, local = {}, openBase) {
   const base = normalizeBase(baseUrl);
-  const openUrl = base ? `${base}/` : null;
+  const openUrl = openUrlFor(base, openBase);
   const localVer = shortAppVersion(local.version);
 
   if (base) {
@@ -557,10 +565,19 @@ async function applyCompanionGithubUpdates(apps) {
 }
 
 /**
- * @param {{ urls?: Record<string, string>, hubVersion?: string }} opts
+ * @param {{ urls?: Record<string, string>, hubVersion?: string, resolver?: ReturnType<typeof createServiceUrlResolver> }} opts
  */
 export async function getChipAppVersions(opts = {}) {
-  const urls = opts.urls || {};
+  const resolver =
+    opts.resolver || createServiceUrlResolver({ urls: opts.urls || {} });
+  /** @type {Record<string, string>} */
+  const resolved = {};
+  /** @type {Record<string, string>} */
+  const display = {};
+  for (const id of [...ARR_IDS, "qbittorrent", "sabnzbd", "tautulli", "fileflows"]) {
+    resolved[id] = normalizeBase(resolver.resolve(id));
+    display[id] = resolver.display(id, resolved[id]);
+  }
   const settings = loadWatchdogSettings();
   const integrations = loadIntegrationsSettings();
   const tautulli = loadTautulliSettings();
@@ -569,7 +586,7 @@ export async function getChipAppVersions(opts = {}) {
     null;
 
   const arrTargets = ARR_IDS.filter((id) => {
-    const url = normalizeBase(urls[id]);
+    const url = resolved[id];
     const key = getArrApiKey(id);
     return Boolean(url) || Boolean(key);
   });
@@ -589,12 +606,10 @@ export async function getChipAppVersions(opts = {}) {
       (arrOrder.indexOf(b) === -1 ? 99 : arrOrder.indexOf(b)),
   );
 
-  const qbitUrl = normalizeBase(
-    urls.qbittorrent || integrations.qbittorrent?.baseUrl,
-  );
-  const sabUrl = normalizeBase(urls.sabnzbd || integrations.sabnzbd?.baseUrl);
-  const tautulliUrl = normalizeBase(urls.tautulli || tautulli.baseUrl);
-  const fileflowsUrl = normalizeBase(urls.fileflows || "");
+  const qbitUrl = resolved.qbittorrent;
+  const sabUrl = resolved.sabnzbd;
+  const tautulliUrl = resolved.tautulli;
+  const fileflowsUrl = resolved.fileflows;
 
   const [
     arrs,
@@ -607,16 +622,21 @@ export async function getChipAppVersions(opts = {}) {
   ] = await Promise.all([
     Promise.all(
       arrTargets.map((id) =>
-        fetchArrUpdateInfo(id, urls[id], getArrApiKey(id)),
+        fetchArrUpdateInfo(id, resolved[id], getArrApiKey(id), display[id]),
       ),
     ),
     fetchQbitVersion(
       qbitUrl,
       integrations.qbittorrent?.username || "",
       integrations.qbittorrent?.password || "",
+      display.qbittorrent,
     ),
-    fetchSabVersion(sabUrl, integrations.sabnzbd?.apiKey || ""),
-    fetchTautulliUpdateInfo(tautulliUrl, tautulli.apiKey || ""),
+    fetchSabVersion(sabUrl, integrations.sabnzbd?.apiKey || "", display.sabnzbd),
+    fetchTautulliUpdateInfo(
+      tautulliUrl,
+      tautulli.apiKey || "",
+      display.tautulli,
+    ),
     getHubLocalFileFlowsVersions(),
     companionPc?.companionUrl
       ? checkCompanionHealth(
@@ -635,6 +655,7 @@ export async function getChipAppVersions(opts = {}) {
   const fileflowsHub = await fetchFileFlowsServerInfo(
     fileflowsUrl,
     hubLocals.fileflows || {},
+    display.fileflows,
   );
 
   // Hub popover list: *arr + Tautulli + FileFlows Server (on this PC).

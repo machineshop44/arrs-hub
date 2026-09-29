@@ -56,7 +56,7 @@ npm run build
 npm run desktop
 ```
 
-Or double-click **`Start Arrs Hub.bat`** (runs install/build if needed, then Electron). Optional: **`install-startup.bat`** for Desktop + Startup shortcuts. See **`SETUP-AT-HOME.txt`** for the older folder-based Plex PC path.
+Or double-click **`Start Arrs Hub.bat`** (runs install/build if needed, then Electron). The installed app has its own "Start with Windows" toggle in the tray menu. See **`SETUP-AT-HOME.txt`** for the older folder-based Plex PC path.
 
 ### Build the Windows installer
 

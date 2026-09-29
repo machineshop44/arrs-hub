@@ -2,14 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DATA_DIR, ensureDataDirs } from "./config.mjs";
-import { isLiteVariant } from "./variant.mjs";
 
-const LITE_DOWNLOAD_EXE_PATHS = {
+const DOWNLOAD_CLIENT_EXE_PATHS = {
   qbittorrent: "C:\\Program Files\\qBittorrent\\qbittorrent.exe",
   sabnzbd: "C:\\Program Files\\SABnzbd\\SABnzbd.exe",
 };
-
-const LITE_MONITORED_IDS = ["qbittorrent", "sabnzbd"];
 
 export const WATCHDOG_SETTINGS_PATH = path.join(DATA_DIR, "watchdog-settings.json");
 
@@ -71,8 +68,8 @@ export function getDefaultExePaths() {
     tautulli: path.join(localAppData, "Tautulli", "Tautulli.exe"),
     // ytarr Inno Setup default: {localappdata}\Programs\ytarr\ytarr.exe
     ytarr: path.join(localAppData, "Programs", "ytarr", "ytarr.exe"),
-    qbittorrent: LITE_DOWNLOAD_EXE_PATHS.qbittorrent,
-    sabnzbd: LITE_DOWNLOAD_EXE_PATHS.sabnzbd,
+    qbittorrent: DOWNLOAD_CLIENT_EXE_PATHS.qbittorrent,
+    sabnzbd: DOWNLOAD_CLIENT_EXE_PATHS.sabnzbd,
     fileflows: path.join(
       process.env.APPDATA || path.join(userProfileDir(), "AppData", "Roaming"),
       "FileFlows",
@@ -92,27 +89,6 @@ export function getDefaultExePaths() {
     // Intentionally empty — leave for user:
     // plex, ombi, flaresolverr, overseerr, calibre, trash-guides
   };
-}
-
-function applyLiteWatchdogDefaults(settings) {
-  for (const id of Object.keys(settings.services)) {
-    if (!LITE_MONITORED_IDS.includes(id)) {
-      settings.services[id].monitor = false;
-      settings.services[id].autoRestart = false;
-    }
-  }
-  for (const id of LITE_MONITORED_IDS) {
-    const cfg = settings.services[id];
-    if (!cfg) continue;
-    cfg.monitor = true;
-    cfg.autoRestart = true;
-    if (!String(cfg.windowsService || "").trim()) {
-      cfg.windowsService = DEFAULT_WINDOWS_SERVICES[id] || "";
-    }
-    if (!String(cfg.exePath || "").trim()) {
-      cfg.exePath = LITE_DOWNLOAD_EXE_PATHS[id] || "";
-    }
-  }
 }
 
 /** @deprecated use getDefaultExePaths() — kept for callers that expect a map */
@@ -163,9 +139,6 @@ export function defaultWatchdogSettings() {
       ]),
     ),
   };
-  if (isLiteVariant()) {
-    applyLiteWatchdogDefaults(settings);
-  }
   return settings;
 }
 

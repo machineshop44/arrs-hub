@@ -69,7 +69,28 @@ export type HubStatusSummary = {
     sonarr?: ArrQueueApp;
     radarr?: ArrQueueApp;
     lidarr?: ArrQueueApp;
+    readarr?: ArrQueueApp;
+    whisparr?: ArrQueueApp;
   };
+};
+
+export type HubProblem = {
+  key: string;
+  kind: "health" | "disk" | "vpn" | "queue" | "ombi";
+  severity: "error" | "warning" | "info";
+  app: string;
+  title: string;
+  detail: string;
+  url?: string;
+};
+
+type ProblemsSnapshot = {
+  problems: HubProblem[];
+  disk?: {
+    drives: { path: string; label: string; freeGb: number; totalGb: number; low: boolean }[];
+    thresholdGb?: number;
+  };
+  qbittorrent?: { ok: boolean; configured: boolean; bound?: boolean; vpnLike?: boolean; message?: string };
 };
 
 /** Hub-PC Windows services shown as their own up/down chips. */
@@ -221,6 +242,12 @@ export function DashboardStatus({
   onOpenOmbi,
 }: DashboardStatusProps) {
   const [summary, setSummary] = useState<HubStatusSummary | null>(null);
+  const [problemsSnap, setProblemsSnap] = useState<ProblemsSnapshot | null>(null);
+  const [problemsOpen, setProblemsOpen] = useState(false);
+  const problemsWrapRef = useRef<HTMLDivElement>(null);
+  const problemsFetchedAtRef = useRef(0);
+  const [queueBusyKey, setQueueBusyKey] = useState<string | null>(null);
+  const [queueActionMsg, setQueueActionMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [chipVersions, setChipVersions] = useState<ChipVersionsPayload | null>(
     null,
   );
@@ -261,6 +288,7 @@ export function DashboardStatus({
     setDownloadsOpen(false);
     setOmbiOpen(false);
     setPlexOpen(false);
+    setProblemsOpen(false);
     setCompanionWakeMsg(null);
   }, []);
 
@@ -327,6 +355,20 @@ export function DashboardStatus({
       };
       if (!summaryRes.ok) throw new Error(json.error || "Status failed");
       setSummary(json);
+      // Problems scan logs into qBit + hits every *arr; keep it at most once a minute.
+      if (Date.now() - problemsFetchedAtRef.current >= 60_000) {
+        problemsFetchedAtRef.current = Date.now();
+        void fetch("/api/status/problems", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ urls }),
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((snap: ProblemsSnapshot | null) => {
+            if (snap) setProblemsSnap(snap);
+          })
+          .catch(() => {});
+      }
       if (versionsRes.ok) {
         setChipVersions((await versionsRes.json()) as ChipVersionsPayload);
       }
@@ -512,6 +554,55 @@ export function DashboardStatus({
     if (!ombiOpen) return;
     void loadOmbiPending();
   }, [ombiOpen, loadOmbiPending]);
+
+  useEffect(() => {
+    if (!problemsOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!problemsWrapRef.current?.contains(event.target as Node)) {
+        setProblemsOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [problemsOpen]);
+
+  const removeQueueItem = async (
+    appId: string,
+    issue: ArrQueueIssue,
+    blocklist: boolean,
+  ) => {
+    if (issue.id == null) return;
+    const verb = blocklist ? "Remove and blocklist" : "Remove";
+    if (!window.confirm(`${verb} “${issue.title}” from ${appId}?${blocklist ? " The app will search for a different release." : ""}`)) {
+      return;
+    }
+    const key = `${appId}-${issue.id}`;
+    setQueueBusyKey(key);
+    setQueueActionMsg(null);
+    try {
+      const res = await fetch("/api/activity/queue/remove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          app: appId,
+          id: issue.id,
+          blocklist,
+          urls: urlMap(services, connectionMode),
+        }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(json.error || "Remove failed");
+      setQueueActionMsg({
+        ok: true,
+        text: blocklist ? `Blocklisted “${issue.title}”.` : `Removed “${issue.title}”.`,
+      });
+      await load();
+    } catch (err) {
+      setQueueActionMsg({ ok: false, text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setQueueBusyKey(null);
+    }
+  };
 
   useEffect(() => {
     if (
@@ -747,13 +838,15 @@ export function DashboardStatus({
   });
 
   const arrApps: {
-    id: "sonarr" | "radarr" | "lidarr";
+    id: "sonarr" | "radarr" | "lidarr" | "readarr" | "whisparr";
     label: string;
     data?: ArrQueueApp;
   }[] = [
     { id: "sonarr", label: "Sonarr", data: summary?.arr?.sonarr },
     { id: "radarr", label: "Radarr", data: summary?.arr?.radarr },
     { id: "lidarr", label: "Lidarr", data: summary?.arr?.lidarr },
+    { id: "readarr", label: "Readarr", data: summary?.arr?.readarr },
+    { id: "whisparr", label: "Whisparr", data: summary?.arr?.whisparr },
   ];
 
   const downloadApps: {
@@ -783,6 +876,11 @@ export function DashboardStatus({
       issue,
       openUrl: activityQueueUrl(urls[app.id]),
     })),
+  );
+
+  /** Queue + Ombi items already have their own chips; this chip is health / disk / VPN. */
+  const stackProblems = (problemsSnap?.problems ?? []).filter(
+    (p) => p.kind !== "queue" && p.kind !== "ombi",
   );
 
   const arrUpdateCount = chipVersions?.hub?.arrUpdateCount ?? 0;
@@ -894,7 +992,9 @@ export function DashboardStatus({
             ? "—"
             : summary?.arr?.sonarr?.ok ||
                 summary?.arr?.radarr?.ok ||
-                summary?.arr?.lidarr?.ok
+                summary?.arr?.lidarr?.ok ||
+                summary?.arr?.readarr?.ok ||
+                summary?.arr?.whisparr?.ok
               ? String(queueTotal)
               : "setup",
       tone:
@@ -955,6 +1055,24 @@ export function DashboardStatus({
           return "good";
         return "muted";
       })(),
+    },
+    {
+      id: "problems",
+      label: "Problems",
+      value:
+        serverUp === false
+          ? "—"
+          : problemsSnap == null
+            ? "…"
+            : String(stackProblems.length),
+      tone:
+        serverUp === false || problemsSnap == null
+          ? "muted"
+          : stackProblems.some((p) => p.severity === "error")
+            ? "bad"
+            : stackProblems.length > 0
+              ? "warn"
+              : "good",
     },
     ...localServiceChips,
   ];
@@ -1741,27 +1859,147 @@ export function DashboardStatus({
                                 </span>
                               ) : null}
                             </div>
-                            {openUrl ? (
+                            <div className="dash-ombi-actions">
+                              {issue.id != null ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="dash-ombi-deny"
+                                    disabled={queueBusyKey != null}
+                                    title="Remove from the queue and download client"
+                                    onClick={() => void removeQueueItem(appId, issue, false)}
+                                  >
+                                    {queueBusyKey === `${appId}-${issue.id}` ? "…" : "Remove"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="dash-ombi-deny"
+                                    disabled={queueBusyKey != null}
+                                    title="Remove, blocklist this release, and search for another"
+                                    onClick={() => void removeQueueItem(appId, issue, true)}
+                                  >
+                                    Blocklist
+                                  </button>
+                                </>
+                              ) : null}
+                              {openUrl ? (
+                                <a
+                                  className="dash-queue-issue-link"
+                                  href={openUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={() => setQueueOpen(false)}
+                                >
+                                  Open Activity
+                                </a>
+                              ) : null}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {queueActionMsg ? (
+                      <p
+                        className={
+                          queueActionMsg.ok
+                            ? "dash-chip-popover-hint dash-ombi-success"
+                            : "dash-chip-popover-error"
+                        }
+                      >
+                        {queueActionMsg.text}
+                      </p>
+                    ) : null}
+                    <p className="dash-chip-popover-hint">
+                      Click an app above to open its Activity Queue for manual
+                      import. Blocklist removes the release and searches for a
+                      different one.
+                    </p>
+                  </div>
+                )}
+              </div>
+            );
+          }
+
+          if (chip.id === "problems") {
+            const drives = problemsSnap?.disk?.drives ?? [];
+            const qb = problemsSnap?.qbittorrent;
+            return (
+              <div key={chip.id} className="dash-chip-wrap" ref={problemsWrapRef}>
+                <button
+                  type="button"
+                  className={`dash-chip dash-chip-btn tone-${chip.tone}`}
+                  aria-expanded={problemsOpen}
+                  aria-haspopup="dialog"
+                  title="*arr health warnings, low disk space, qBittorrent VPN binding"
+                  onClick={() => {
+                    const next = !problemsOpen;
+                    closeAllPopovers();
+                    setProblemsOpen(next);
+                  }}
+                >
+                  <span className="dash-chip-value">{chip.value}</span>
+                  <span className="dash-chip-label">{chip.label}</span>
+                </button>
+                {problemsOpen && (
+                  <div className="dash-chip-popover" role="dialog" aria-label="Stack problems">
+                    <p className="dash-chip-popover-title">Stack problems</p>
+                    {stackProblems.length === 0 ? (
+                      <p className="dash-chip-popover-empty">
+                        No *arr health warnings, low drives, or VPN binding issues.
+                      </p>
+                    ) : (
+                      <ul className="dash-queue-issues">
+                        {stackProblems.map((p) => (
+                          <li key={p.key}>
+                            <div className="dash-queue-issue-main">
+                              <span className={`dash-queue-issue-badge dash-problem-${p.severity}`}>
+                                {p.severity === "error" ? "Error" : "Warning"}
+                              </span>
+                              <span className="dash-queue-issue-title">{p.title}</span>
+                              {p.detail ? (
+                                <span className="dash-queue-issue-msg">{p.detail}</span>
+                              ) : null}
+                            </div>
+                            {p.url ? (
                               <a
                                 className="dash-queue-issue-link"
-                                href={openUrl}
+                                href={p.url}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                onClick={() => setQueueOpen(false)}
                               >
-                                Open Activity
+                                How to fix
                               </a>
                             ) : null}
                           </li>
                         ))}
                       </ul>
                     )}
-                    {/* TODO: interactive Manual Import from hub (fetch /api/v3/manualimport
-                        candidates, pick episode/movie, confirm) — deferred beyond this release. */}
+                    {drives.length > 0 && (
+                      <>
+                        <p className="dash-chip-popover-title">Drives</p>
+                        <ul className="dash-queue-breakdown">
+                          {drives.map((d) => (
+                            <li key={d.path}>
+                              <span className="dash-queue-app-static">
+                                <span>{d.label ? `${d.label} (${d.path})` : d.path}</span>
+                                <strong className={d.low ? "dash-problem-error" : undefined}>
+                                  {d.freeGb} / {d.totalGb} GB free
+                                </strong>
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    {qb?.configured && (
+                      <p className="dash-chip-popover-hint">
+                        qBittorrent network:{" "}
+                        {qb.ok ? qb.message : "could not read qBittorrent settings"}
+                      </p>
+                    )}
                     <p className="dash-chip-popover-hint">
-                      Click Sonarr / Radarr / Lidarr above to open that app&apos;s
-                      Activity Queue. Matching still happens there; in-hub Manual
-                      Import is planned later.
+                      New problems are sent to Discord in the background — see
+                      Settings → Problem alerts &amp; backups.
                     </p>
                   </div>
                 )}
@@ -1780,6 +2018,8 @@ export function DashboardStatus({
                   title="Requests awaiting approval in Ombi — click to review"
                   onClick={() => {
                     setHubOpen(false);
+                    setCompanionOpen(false);
+                    setProblemsOpen(false);
                     setQueueOpen(false);
                     setDownloadsOpen(false);
                     setPlexOpen(false);

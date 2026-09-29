@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppSettings, ServiceConfig } from "../types";
 import { APP_VERSION_LABEL } from "../version";
-import { getServiceUrl } from "../types";
+import { MonitorSettingsSection } from "./MonitorSettingsSection";
 import { PlexUpdateCard } from "./PlexUpdateCard";
 import {
   AppsMonitoringSection,
@@ -9,6 +9,7 @@ import {
 } from "./AppsMonitoringSection";
 import { PhotoDumpSettingsSection } from "./PhotoDumpSettingsSection";
 import { HubAuthSettingsSection } from "./HubAuthSettingsSection";
+import { NtfySettingsSection } from "./NtfySettingsSection";
 import { useModalBackdropClose } from "../hooks/useModalBackdropClose";
 
 interface SettingsPanelProps {
@@ -22,8 +23,19 @@ interface SettingsPanelProps {
   onOpenStreams?: () => void;
   /** Scroll to section id on open (e.g. apps-monitoring from Port Watch) */
   initialSection?: string | null;
-  /** Downloader lite — service URLs + optional download creds only */
-  liteMode?: boolean;
+  /** Swap the host on every saved Remote URL (ports/paths kept). */
+  onApplyRemoteHost?: (host: string) => void;
+}
+
+function currentRemoteHost(services: ServiceConfig[]): string {
+  for (const service of services) {
+    try {
+      if (service.remoteUrl.trim()) return new URL(service.remoteUrl).hostname;
+    } catch {
+      // try the next one
+    }
+  }
+  return "";
 }
 
 export function SettingsPanel({
@@ -35,7 +47,7 @@ export function SettingsPanel({
   onReset,
   onOpenStreams,
   initialSection = null,
-  liteMode = false,
+  onApplyRemoteHost,
 }: SettingsPanelProps) {
   const appsMonitorRef = useRef<AppsMonitoringHandle | null>(null);
 
@@ -52,15 +64,10 @@ export function SettingsPanel({
     void handleDone();
   });
 
-  const [sonarrApiKey, setSonarrApiKey] = useState("");
-  const [radarrApiKey, setRadarrApiKey] = useState("");
-  const [sonarrKeySet, setSonarrKeySet] = useState(false);
-  const [radarrKeySet, setRadarrKeySet] = useState(false);
-  const [apiBusy, setApiBusy] = useState(false);
-  const [apiMessage, setApiMessage] = useState<{
-    type: "ok" | "err";
-    text: string;
-  } | null>(null);
+  const [remoteHost, setRemoteHost] = useState(() =>
+    currentRemoteHost(settings.services),
+  );
+  const [remoteHostMsg, setRemoteHostMsg] = useState<string | null>(null);
   const [apiServerUp, setApiServerUp] = useState<boolean | null>(null);
 
   const [discordWebhookUrl, setDiscordWebhookUrl] = useState("");
@@ -73,42 +80,6 @@ export function SettingsPanel({
     type: "ok" | "err";
     text: string;
   } | null>(null);
-
-  const [qbUser, setQbUser] = useState("");
-  const [qbPass, setQbPass] = useState("");
-  const [qbPassSet, setQbPassSet] = useState(false);
-  const [sabKey, setSabKey] = useState("");
-  const [sabKeySet, setSabKeySet] = useState(false);
-  const [integrationsBusy, setIntegrationsBusy] = useState(false);
-  const [integrationsMessage, setIntegrationsMessage] = useState<{
-    type: "ok" | "err";
-    text: string;
-  } | null>(null);
-
-  const hubUrl = (id: string) => {
-    const service = settings.services.find((s) => s.id === id);
-    if (!service) return "";
-    return getServiceUrl(service, "home") || service.homeUrl || service.defaultUrl;
-  };
-
-  const loadApiKeys = useCallback(async () => {
-    try {
-      const health = await fetch("/api/health");
-      setApiServerUp(health.ok);
-      if (!health.ok) return;
-
-      const res = await fetch("/api/sync/settings");
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Could not load API keys");
-
-      setSonarrKeySet(Boolean(json.settings?.sonarr?.apiKeySet));
-      setRadarrKeySet(Boolean(json.settings?.radarr?.apiKeySet));
-      setSonarrApiKey("");
-      setRadarrApiKey("");
-    } catch {
-      setApiServerUp(false);
-    }
-  }, []);
 
   const loadDiscord = useCallback(async () => {
     try {
@@ -135,24 +106,6 @@ export function SettingsPanel({
     }
   }, []);
 
-  const loadIntegrations = useCallback(async () => {
-    try {
-      const health = await fetch("/api/health");
-      setApiServerUp(health.ok);
-      if (!health.ok) return;
-      const res = await fetch("/api/integrations/settings");
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Could not load integrations");
-      setQbUser(json.settings?.qbittorrent?.username || "");
-      setQbPass("");
-      setQbPassSet(Boolean(json.settings?.qbittorrent?.passwordSet));
-      setSabKey("");
-      setSabKeySet(Boolean(json.settings?.sabnzbd?.apiKeySet));
-    } catch {
-      // Keep prior health result from probeApiHealth.
-    }
-  }, []);
-
   useEffect(() => {
     if (!initialSection) return;
     const timer = window.setTimeout(() => {
@@ -167,75 +120,14 @@ export function SettingsPanel({
   useEffect(() => {
     void probeApiHealth();
     void loadDiscord();
-    if (liteMode) {
-      void loadApiKeys();
-      void loadIntegrations();
-    }
-  }, [loadApiKeys, loadDiscord, loadIntegrations, liteMode, probeApiHealth]);
+  }, [loadDiscord, probeApiHealth]);
 
-  const saveApiKeys = async () => {
-    setApiBusy(true);
-    setApiMessage(null);
-    try {
-      const res = await fetch("/api/sync/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sonarr: { apiKey: sonarrApiKey, baseUrl: hubUrl("sonarr") },
-          radarr: { apiKey: radarrApiKey, baseUrl: hubUrl("radarr") },
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Save failed");
-      setApiMessage({
-        type: "ok",
-        text: "API keys saved on this PC (used by TRaSH Sync + *arr queue chip).",
-      });
-      await loadApiKeys();
-    } catch (err) {
-      setApiMessage({
-        type: "err",
-        text: err instanceof Error ? err.message : String(err),
-      });
-    } finally {
-      setApiBusy(false);
-    }
-  };
-
-  const saveIntegrations = async () => {
-    setIntegrationsBusy(true);
-    setIntegrationsMessage(null);
-    try {
-      const res = await fetch("/api/integrations/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          qbittorrent: {
-            baseUrl: hubUrl("qbittorrent"),
-            username: qbUser,
-            password: qbPass,
-          },
-          sabnzbd: {
-            baseUrl: hubUrl("sabnzbd"),
-            apiKey: sabKey,
-          },
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Save failed");
-      setIntegrationsMessage({
-        type: "ok",
-        text: "Download credentials saved.",
-      });
-      await loadIntegrations();
-    } catch (err) {
-      setIntegrationsMessage({
-        type: "err",
-        text: err instanceof Error ? err.message : String(err),
-      });
-    } finally {
-      setIntegrationsBusy(false);
-    }
+  const applyRemoteHost = () => {
+    const host = remoteHost.trim();
+    if (!host || !onApplyRemoteHost) return;
+    const count = settings.services.filter((s) => s.remoteUrl.trim()).length;
+    onApplyRemoteHost(host);
+    setRemoteHostMsg(`Updated ${count} remote URL${count === 1 ? "" : "s"} to ${host}.`);
   };
 
   const saveDiscord = async () => {
@@ -323,7 +215,6 @@ export function SettingsPanel({
         </header>
 
         <div className="settings-body">
-          {!liteMode && (
           <section className="settings-group">
             <h3>Dashboard</h3>
             <label className="field">
@@ -343,14 +234,11 @@ export function SettingsPanel({
               />
             </label>
           </section>
-          )}
 
           <section className="settings-group">
             <h3>Hub network (phone / LAN)</h3>
             <p className="settings-hint">
-              {liteMode
-                ? "Phones reach this downloader hub on port 3000. Port-forward 3000 for Wake-on-LAN relay from mobile while away."
-                : "The Hub API must listen on the LAN so Arrs Hub Mobile and remote chips can connect. Default bind is 0.0.0.0 (all interfaces) on port 3000 in the desktop app."}
+              {"The Hub API must listen on the LAN so Arrs Hub Mobile and remote chips can connect. Default bind is 0.0.0.0 (all interfaces) on port 3000 in the desktop app."}
             </p>
             <ul className="settings-hint-list">
               <li>
@@ -382,209 +270,50 @@ export function SettingsPanel({
             )}
           </section>
 
-          {!liteMode && (
-            <AppsMonitoringSection
-              ref={appsMonitorRef}
-              settings={settings}
-              onUpdateService={onUpdateService}
-              serverUp={apiServerUp}
-              onOpenStreams={onOpenStreams}
-            />
-          )}
-
-          {!liteMode && <HubAuthSettingsSection serverUp={apiServerUp} />}
-
-          {!liteMode && <PhotoDumpSettingsSection serverUp={apiServerUp} />}
-
-          {liteMode && (
           <section className="settings-group">
-            <h3>Services</h3>
+            <h3>Remote host (away from home)</h3>
             <p className="settings-hint">
-              Local URLs for qBittorrent and SABnzbd (defaults: localhost:8080
-              and :8085).
-            </p>
-            <div className="settings-services">
-              {settings.services.map((service) => (
-                <div key={service.id} className="settings-service-row">
-                  <label className="toggle">
-                    <input
-                      type="checkbox"
-                      checked={service.enabled}
-                      onChange={(e) =>
-                        onUpdateService(service.id, { enabled: e.target.checked })
-                      }
-                    />
-                    <span className="toggle-label">
-                      <img
-                        className="settings-service-icon"
-                        src={service.icon}
-                        alt={service.name}
-                        width={20}
-                        height={20}
-                        draggable={false}
-                      />{" "}
-                      {service.name}
-                    </span>
-                  </label>
-                  <label className="field">
-                    <span>Home (local IP &amp; port)</span>
-                    <input
-                      type="text"
-                      className="url-input"
-                      value={service.homeUrl}
-                      placeholder="http://192.168.1.50:8989"
-                      disabled={!service.enabled}
-                      onChange={(e) =>
-                        onUpdateService(service.id, { homeUrl: e.target.value })
-                      }
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Remote (optional)</span>
-                    <input
-                      type="text"
-                      className="url-input"
-                      value={service.remoteUrl}
-                      placeholder="https://sonarr.yourdomain.com"
-                      disabled={!service.enabled}
-                      onChange={(e) =>
-                        onUpdateService(service.id, {
-                          remoteUrl: e.target.value,
-                        })
-                      }
-                    />
-                  </label>
-                </div>
-              ))}
-            </div>
-          </section>
-          )}
-
-          {!liteMode && <PlexUpdateCard serverUp={apiServerUp} />}
-
-          {liteMode && (
-          <section className="settings-group">
-            <h3>TRaSH Sync API keys</h3>
-            <p className="settings-hint">
-              Used by Recyclarr and the dashboard *arr queue chip for Sonarr
-              and Radarr. Keys stay on this PC under the hub&apos;s local data
-              folder. Leave a field blank to keep the saved key.
-            </p>
-            {apiServerUp === false && (
-              <p className="settings-hint">
-                Hub API is offline — start the hub server to save API keys.
-              </p>
-            )}
-            <label className="field">
-              <span>
-                Sonarr API key
-                {sonarrKeySet ? " (saved — leave blank to keep)" : ""}
-              </span>
-              <input
-                type="password"
-                autoComplete="off"
-                placeholder={sonarrKeySet ? "•••• saved ••••" : "Paste API key"}
-                value={sonarrApiKey}
-                disabled={apiServerUp === false || apiBusy}
-                onChange={(e) => setSonarrApiKey(e.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>
-                Radarr API key
-                {radarrKeySet ? " (saved — leave blank to keep)" : ""}
-              </span>
-              <input
-                type="password"
-                autoComplete="off"
-                placeholder={radarrKeySet ? "•••• saved ••••" : "Paste API key"}
-                value={radarrApiKey}
-                disabled={apiServerUp === false || apiBusy}
-                onChange={(e) => setRadarrApiKey(e.target.value)}
-              />
-            </label>
-            {apiMessage && (
-              <div
-                className={`sync-alert ${apiMessage.type === "ok" ? "sync-alert-ok" : "sync-alert-err"}`}
-              >
-                {apiMessage.text}
-              </div>
-            )}
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={apiServerUp === false || apiBusy}
-              onClick={() => void saveApiKeys()}
-            >
-              {apiBusy ? "Saving…" : "Save API keys"}
-            </button>
-          </section>
-          )}
-
-          {liteMode && (
-          <section className="settings-group">
-            <h3>Download clients</h3>
-            <p className="settings-hint">
-              Optional credentials if your qBit or SAB web UI requires login for
-              port checks.
+              Public IP or DDNS name (e.g. <code>myplex.duckdns.org</code>) used
+              by every app&apos;s Remote URL. Changing it here rewrites the host
+              on all saved Remote URLs and keeps each app&apos;s port and path.
             </p>
             <label className="field">
-              <span>qBittorrent username</span>
+              <span>Host</span>
               <input
                 type="text"
-                autoComplete="off"
-                value={qbUser}
-                disabled={apiServerUp === false || integrationsBusy}
-                onChange={(e) => setQbUser(e.target.value)}
+                value={remoteHost}
+                placeholder="myplex.duckdns.org or 203.0.113.10"
+                onChange={(e) => {
+                  setRemoteHost(e.target.value);
+                  setRemoteHostMsg(null);
+                }}
               />
             </label>
-            <label className="field">
-              <span>
-                qBittorrent password
-                {qbPassSet ? " (saved — leave blank to keep)" : ""}
-              </span>
-              <input
-                type="password"
-                autoComplete="off"
-                placeholder={qbPassSet ? "•••• saved ••••" : "Password"}
-                value={qbPass}
-                disabled={apiServerUp === false || integrationsBusy}
-                onChange={(e) => setQbPass(e.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>
-                SABnzbd API key
-                {sabKeySet ? " (saved — leave blank to keep)" : ""}
-              </span>
-              <input
-                type="password"
-                autoComplete="off"
-                placeholder={sabKeySet ? "•••• saved ••••" : "Paste API key"}
-                value={sabKey}
-                disabled={apiServerUp === false || integrationsBusy}
-                onChange={(e) => setSabKey(e.target.value)}
-              />
-            </label>
-            {integrationsMessage && (
-              <div
-                className={`sync-alert ${integrationsMessage.type === "ok" ? "sync-alert-ok" : "sync-alert-err"}`}
-              >
-                {integrationsMessage.text}
-              </div>
-            )}
+            {remoteHostMsg && <p className="settings-ok">{remoteHostMsg}</p>}
             <button
               type="button"
               className="btn btn-secondary"
-              disabled={apiServerUp === false || integrationsBusy}
-              onClick={() => void saveIntegrations()}
+              disabled={!remoteHost.trim() || !onApplyRemoteHost}
+              onClick={applyRemoteHost}
             >
-              {integrationsBusy ? "Saving…" : "Save download creds"}
+              Apply to all Remote URLs
             </button>
           </section>
-          )}
 
-          {!liteMode && (
+          <AppsMonitoringSection
+            ref={appsMonitorRef}
+            settings={settings}
+            onUpdateService={onUpdateService}
+            serverUp={apiServerUp}
+            onOpenStreams={onOpenStreams}
+          />
+
+          <HubAuthSettingsSection serverUp={apiServerUp} />
+
+          <PhotoDumpSettingsSection serverUp={apiServerUp} />
+
+          <PlexUpdateCard serverUp={apiServerUp} />
+
           <section className="settings-group">
             <h3>Discord notifications</h3>
             <p className="settings-hint">
@@ -670,7 +399,10 @@ export function SettingsPanel({
               </button>
             </div>
           </section>
-          )}
+
+          <MonitorSettingsSection serverUp={apiServerUp} />
+
+          <NtfySettingsSection serverUp={apiServerUp} />
 
           <p className="settings-version" aria-label="App version">
             {APP_VERSION_LABEL}

@@ -503,6 +503,16 @@ async function restartForService(serviceCfg, settings) {
   return result;
 }
 
+const RESTART_REMINDER_MS = 6 * 60 * 60 * 1000;
+const RESTART_BACKOFF_MAX_MS = 60 * 60 * 1000;
+
+/** Cooldown before the next restart attempt: doubles per attempt while still down, capped at 1 h. */
+export function restartBackoffMs(settings, attempts) {
+  const base = Math.max(30, Number(settings.restartCooldownSeconds) || 120) * 1000;
+  const n = Math.max(0, Number(attempts) || 0);
+  return Math.min(RESTART_BACKOFF_MAX_MS, base * 2 ** Math.max(0, n - 1));
+}
+
 async function notifyDiscord(settings, payload) {
   if (!settings.discordWebhookUrl) return;
   const result = await sendDiscordWebhook(settings.discordWebhookUrl, payload);
@@ -719,8 +729,17 @@ async function checkOne(target) {
 
   const confirmedRecovered = result.up === true && downAlertSent;
 
+  let restartAttempts = prev.restartAttempts || 0;
+  let lastRestartOk = prev.lastRestartOk ?? null;
+  let lastRestartNotifyAt = prev.lastRestartNotifyAt ?? null;
+  let lastRestartNotifyMsg = prev.lastRestartNotifyMsg ?? null;
+
   if (result.up === true) {
     downAlertSent = false;
+    restartAttempts = 0;
+    lastRestartOk = null;
+    lastRestartNotifyAt = null;
+    lastRestartNotifyMsg = null;
   }
 
   // Unknown probe (Companion timeout etc.) — keep last known status message, skip alerts.
@@ -816,15 +835,28 @@ async function checkOne(target) {
 
   if (shouldRestart) {
     const last = lastRestartAt ? Date.parse(lastRestartAt) : 0;
-    const cooledDown =
-      Date.now() - last >= settings.restartCooldownSeconds * 1000;
-    if (cooledDown) {
+    const cooldownMs = restartBackoffMs(settings, restartAttempts);
+    if (Date.now() - last >= cooldownMs) {
       const restart = await restartForService(serviceCfg, settings);
       lastRestartAt = new Date().toISOString();
       lastRestartResult = restart.message;
       consecutiveFails = 0;
+      restartAttempts += 1;
 
-      if (settings.discordNotifyRestart !== false) {
+      const now = Date.now();
+      const notify =
+        settings.discordNotifyRestart !== false &&
+        (restartAttempts === 1 ||
+          restart.ok !== lastRestartOk ||
+          restart.message !== lastRestartNotifyMsg ||
+          !lastRestartNotifyAt ||
+          now - Date.parse(lastRestartNotifyAt) >= RESTART_REMINDER_MS);
+      lastRestartOk = restart.ok;
+
+      if (notify) {
+        lastRestartNotifyAt = new Date(now).toISOString();
+        lastRestartNotifyMsg = restart.message;
+        const nextMin = Math.round(restartBackoffMs(settings, restartAttempts) / 60_000);
         await notifyDiscord(settings, {
           title: restart.ok
             ? `${target.name} restart succeeded`
@@ -840,7 +872,12 @@ async function checkOne(target) {
             serviceProbe
               ? `Checked: ${locationLabel}`
               : `Checked port: \`${locationLabel}\``,
-          ].join("\n"),
+            restartAttempts > 1
+              ? `Attempt ${restartAttempts} while down. Next try in ~${nextMin} min; repeats of this message are muted for 6 h unless the result changes.`
+              : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
           color: restart.ok
             ? DISCORD_COLORS.restartOk
             : DISCORD_COLORS.restartFail,
@@ -885,6 +922,10 @@ async function checkOne(target) {
             : result.message || "Port open"
           : result.message,
     downAlertSent,
+    restartAttempts,
+    lastRestartOk,
+    lastRestartNotifyAt,
+    lastRestartNotifyMsg,
     mode: target.mode || "home",
   });
 }

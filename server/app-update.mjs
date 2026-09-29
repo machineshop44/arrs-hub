@@ -3,7 +3,7 @@
  * and Companion-side qBit/SAB (winget via Companion).
  */
 import { ARR_API_APP_IDS, getArrApiKey } from "./arr-api-keys.mjs";
-import { loadSyncSettings } from "./config.mjs";
+import { createServiceUrlResolver } from "./url-policy.mjs";
 import {
   loadTautulliSettings,
   normalizeTautulliBaseUrl,
@@ -95,20 +95,15 @@ export function getAppUpdateJob(appId) {
   return idleJob(id || null);
 }
 
-function resolveArrBaseUrl(appId, urls = {}) {
-  const fromClient = normalizeBase(urls[appId] || urls.baseUrl);
-  if (fromClient) return fromClient;
-  if (appId === "sonarr" || appId === "radarr") {
-    const sync = loadSyncSettings();
-    return normalizeBase(sync[appId]?.baseUrl);
-  }
-  return "";
+function resolveArrBaseUrl(appId, resolver) {
+  return normalizeBase(resolver.resolve(appId, { fallbackKey: "baseUrl" }));
 }
 
-function resolveTautulliBaseUrl(urls = {}) {
-  const fromClient = normalizeBase(urls.tautulli || urls.baseUrl);
-  if (fromClient) return normalizeTautulliBaseUrl(fromClient);
-  return normalizeTautulliBaseUrl(loadTautulliSettings().baseUrl);
+function resolveTautulliBaseUrl(resolver) {
+  const url = normalizeBase(
+    resolver.resolve("tautulli", { fallbackKey: "baseUrl" }),
+  );
+  return url ? normalizeTautulliBaseUrl(url) : "";
 }
 
 async function fetchJson(url, options = {}, timeoutMs = 20000) {
@@ -160,7 +155,7 @@ async function runArrApplicationUpdate(appId, baseUrl, apiKey) {
 
 async function runTautulliUpdate(baseUrl) {
   const settings = loadTautulliSettings();
-  const base = normalizeTautulliBaseUrl(baseUrl || settings.baseUrl);
+  const base = baseUrl ? normalizeTautulliBaseUrl(baseUrl) : "";
   const apiKey = String(settings.apiKey || "").trim();
   if (!base) throw new Error("No Tautulli URL configured.");
   if (!apiKey) {
@@ -242,8 +237,9 @@ async function runCompanionWingetUpdate(appId, pcId) {
 
 /**
  * @param {{ id: string, urls?: Record<string, string>, baseUrl?: string, pcId?: string }} body
+ * @param {{ requestHost?: string }} [ctx]
  */
-export function startAppUpdate(body = {}) {
+export function startAppUpdate(body = {}, ctx = {}) {
   const appId = String(body.id || "").trim().toLowerCase();
   if (!appId) {
     const err = new Error("Missing app id.");
@@ -278,6 +274,10 @@ export function startAppUpdate(body = {}) {
     ...(body.urls && typeof body.urls === "object" ? body.urls : {}),
   };
   if (body.baseUrl) urls.baseUrl = String(body.baseUrl);
+  const resolver = createServiceUrlResolver({
+    urls,
+    requestHost: ctx.requestHost,
+  });
   const pcId = String(body.pcId || "").trim();
 
   jobSeq += 1;
@@ -303,11 +303,11 @@ export function startAppUpdate(body = {}) {
       if (COMPANION_UPDATE_IDS.includes(appId)) {
         message = await runCompanionWingetUpdate(appId, pcId);
       } else if (appId === "tautulli") {
-        message = await runTautulliUpdate(resolveTautulliBaseUrl(urls));
+        message = await runTautulliUpdate(resolveTautulliBaseUrl(resolver));
       } else {
         message = await runArrApplicationUpdate(
           appId,
-          resolveArrBaseUrl(appId, urls),
+          resolveArrBaseUrl(appId, resolver),
           getArrApiKey(appId),
         );
       }

@@ -29,7 +29,6 @@ import {
   getCompanionUrlHints,
   registerCompanionPeer,
 } from "./companion-register.mjs";
-import { hubProductName, isLiteVariant } from "./variant.mjs";
 import {
   discoverWorkoutDays,
   getPlexAuthStatus,
@@ -63,7 +62,36 @@ import {
   getOmbiPendingRequests,
   searchOmbiRequests,
   submitOmbiRequest,
-} from "./activity.mjs";import { getChipAppVersions } from "./app-versions.mjs";
+} from "./activity.mjs";
+import { getChipAppVersions } from "./app-versions.mjs";
+import { collectProblems } from "./problems.mjs";
+import {
+  getProblemsMonitorStatus,
+  runProblemsScan,
+  startProblemsMonitor,
+} from "./problems-monitor.mjs";
+import {
+  isBackupRunning,
+  resolveBackupDir,
+  runArrBackups,
+  startBackupScheduler,
+} from "./arr-backup.mjs";
+import { removeArrQueueItem } from "./queue-actions.mjs";
+import {
+  loadMonitorSettings,
+  updateMonitorSettings,
+} from "./monitor-settings.mjs";
+import {
+  requestHostname,
+  serviceUrlResolverForRequest,
+} from "./url-policy.mjs";
+import {
+  getNtfyStatus,
+  publicNtfySettings,
+  startNtfyAlerts,
+  testNtfy,
+  updateNtfySettings,
+} from "./ntfy.mjs";
 import {
   getAppUpdateJob,
   startAppUpdate,
@@ -176,8 +204,7 @@ app.get("/api/health", (_req, res) => {
     ok: true,
     version: packageJson.version,
     name: packageJson.name,
-    productName: hubProductName(),
-    variant: isLiteVariant() ? "lite" : "full",
+    productName: "Arrs Hub",
     bind: HOST,
     port: PORT,
     lanReachable,
@@ -591,7 +618,7 @@ app.put("/api/arr/credentials", (req, res) => {
 app.post("/api/status/summary", async (req, res) => {
   try {
     const summary = await getHubStatusSummary({
-      urls: req.body?.urls ?? {},
+      resolver: serviceUrlResolverForRequest(req),
     });
     res.json(summary);
   } catch (err) {
@@ -602,7 +629,7 @@ app.post("/api/status/summary", async (req, res) => {
 app.post("/api/status/chip-versions", async (req, res) => {
   try {
     const result = await getChipAppVersions({
-      urls: req.body?.urls ?? {},
+      resolver: serviceUrlResolverForRequest(req),
       hubVersion: packageJson.version,
     });
     res.json(result);
@@ -621,7 +648,9 @@ app.get("/api/status/app-update", (req, res) => {
 
 app.post("/api/status/app-update", (req, res) => {
   try {
-    const job = startAppUpdate(req.body ?? {});
+    const job = startAppUpdate(req.body ?? {}, {
+      requestHost: requestHostname(req),
+    });
     res.json({ ok: true, job });
   } catch (err) {
     const code = err?.code;
@@ -639,9 +668,11 @@ app.post("/api/status/app-update", (req, res) => {
   }
 });
 
-app.get("/api/activity/ombi/pending", async (_req, res) => {
+app.get("/api/activity/ombi/pending", async (req, res) => {
   try {
-    const result = await getOmbiPendingRequests({});
+    const result = await getOmbiPendingRequests({
+      resolver: serviceUrlResolverForRequest(req),
+    });
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message || String(err) });
@@ -651,7 +682,7 @@ app.get("/api/activity/ombi/pending", async (_req, res) => {
 app.post("/api/activity/ombi/pending", async (req, res) => {
   try {
     const result = await getOmbiPendingRequests({
-      urls: req.body?.urls ?? {},
+      resolver: serviceUrlResolverForRequest(req),
     });
     res.json(result);
   } catch (err) {
@@ -664,7 +695,7 @@ app.post("/api/activity/ombi/approve", async (req, res) => {
     const result = await approveOmbiRequest({
       type: req.body?.type,
       id: req.body?.id,
-      urls: req.body?.urls ?? {},
+      resolver: serviceUrlResolverForRequest(req),
     });
     res.json(result);
   } catch (err) {
@@ -679,7 +710,7 @@ app.post("/api/activity/ombi/deny", async (req, res) => {
       type: req.body?.type,
       id: req.body?.id,
       reason: req.body?.reason,
-      urls: req.body?.urls ?? {},
+      resolver: serviceUrlResolverForRequest(req),
     });
     res.json(result);
   } catch (err) {
@@ -693,7 +724,7 @@ app.post("/api/activity/ombi/search", async (req, res) => {
     const result = await searchOmbiRequests({
       mode: req.body?.mode,
       query: req.body?.query,
-      urls: req.body?.urls ?? {},
+      resolver: serviceUrlResolverForRequest(req),
     });
     res.json(result);
   } catch (err) {
@@ -713,12 +744,79 @@ app.post("/api/activity/ombi/request", async (req, res) => {
       available: req.body?.available,
       requested: req.body?.requested,
       approved: req.body?.approved,
-      urls: req.body?.urls ?? {},
+      resolver: serviceUrlResolverForRequest(req),
     });
     res.json(result);
   } catch (err) {
     const status = Number(err?.status) || 500;
     res.status(status).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/status/problems", async (req, res) => {
+  try {
+    const result = await collectProblems({
+      resolver: serviceUrlResolverForRequest(req),
+    });
+    res.json({ ...result, monitor: getProblemsMonitorStatus() });
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/activity/queue/remove", async (req, res) => {
+  try {
+    const result = await removeArrQueueItem(
+      {
+        app: req.body?.app,
+        id: req.body?.id,
+        blocklist: req.body?.blocklist,
+        removeFromClient: req.body?.removeFromClient,
+      },
+      serviceUrlResolverForRequest(req),
+    );
+    res.json(result);
+  } catch (err) {
+    const status = Number(err?.status) || 500;
+    res.status(status).json({ error: err.message || String(err) });
+  }
+});
+
+app.get("/api/monitor/settings", (_req, res) => {
+  const settings = loadMonitorSettings();
+  res.json({
+    ok: true,
+    settings,
+    backupDirResolved: resolveBackupDir(settings),
+    backupRunning: isBackupRunning(),
+    problems: getProblemsMonitorStatus(),
+  });
+});
+
+app.put("/api/monitor/settings", (req, res) => {
+  try {
+    const settings = updateMonitorSettings(req.body ?? {});
+    res.json({ ok: true, settings, backupDirResolved: resolveBackupDir(settings) });
+  } catch (err) {
+    res.status(400).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/monitor/backup-now", async (_req, res) => {
+  try {
+    res.json(await runArrBackups());
+  } catch (err) {
+    const status = Number(err?.status) || 500;
+    res.status(status).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/monitor/scan-now", async (_req, res) => {
+  try {
+    const snapshot = await runProblemsScan();
+    res.json({ ok: true, snapshot, monitor: getProblemsMonitorStatus() });
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
   }
 });
 
@@ -748,6 +846,40 @@ app.put("/api/watchdog/settings", (req, res) => {
 app.post("/api/watchdog/discord-test", async (_req, res) => {
   try {
     const result = await testDiscordWebhook();
+    if (!result.ok) {
+      res.status(400).json({ error: result.message });
+      return;
+    }
+    res.json({ ok: true, message: result.message });
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.get("/api/ntfy/settings", (_req, res) => {
+  try {
+    res.json({ settings: publicNtfySettings(), status: getNtfyStatus() });
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.put("/api/ntfy/settings", (req, res) => {
+  try {
+    const settings = updateNtfySettings(req.body ?? {});
+    res.json({
+      ok: true,
+      settings: publicNtfySettings(settings),
+      status: getNtfyStatus(),
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/ntfy/test", async (_req, res) => {
+  try {
+    const result = await testNtfy();
     if (!result.ok) {
       res.status(400).json({ error: result.message });
       return;
@@ -1301,7 +1433,19 @@ app.listen(PORT, HOST, () => {
     startWatchdog();
   } catch (err) {
     console.error("Watchdog failed to start:", err?.message || err);
-  }}).on("error", (err) => {
+  }
+  try {
+    startNtfyAlerts();
+  } catch (err) {
+    console.error("ntfy alerts failed to start:", err?.message || err);
+  }
+  try {
+    startProblemsMonitor();
+    startBackupScheduler();
+  } catch (err) {
+    console.error("Problems monitor / backups failed to start:", err?.message || err);
+  }
+}).on("error", (err) => {
   if (err?.code === "EADDRINUSE") {
     console.error(
       `Port ${PORT} is already in use. Close the other Arrs Hub window/process, or set ARRS_HUB_PORT (or PORT) to a free port, then start again.`,

@@ -26,6 +26,7 @@ export default function App() {
     updateSubtitle,
     setConnectionPreference,
     resetSettings,
+    applyRemoteHost,
   } = useSettings();
 
   useCompanionUrlHints(settings.services, updateService);
@@ -344,6 +345,7 @@ export default function App() {
           onUpdateTitle={updateTitle}
           onUpdateSubtitle={updateSubtitle}
           onReset={resetSettings}
+          onApplyRemoteHost={applyRemoteHost}
           onOpenStreams={() => {
             setShowSettings(false);
             setSettingsSection(null);

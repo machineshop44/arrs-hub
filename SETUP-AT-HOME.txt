@@ -36,7 +36,7 @@ Only if you are developing or prefer running from a git checkout.
 2) Optional: Git for Windows — https://git-scm.com/download/win
 3) Clone or copy this repo, e.g. C:\Apps\Arrs-Hub
 4) Double-click Start Arrs Hub.bat  (npm install + UI build first time)
-5) Optional: install-startup.bat for Desktop + Startup shortcuts
+5) Optional: use the tray menu "Start with Windows" toggle in the installed app
 
 Dev console mode: start-hub.bat / npm run dev
 
