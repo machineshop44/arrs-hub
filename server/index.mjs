@@ -64,6 +64,7 @@ import {
   searchOmbiRequests,
   submitOmbiRequest,
 } from "./activity.mjs";
+import { getStableBitStatus } from "./stablebit-status.mjs";
 import { getChipAppVersions } from "./app-versions.mjs";
 import {
   getAppUpdateJob,
@@ -1303,6 +1304,7 @@ app.listen(PORT, HOST, () => {
   } catch (err) {
     console.error("Watchdog failed to start:", err?.message || err);
   }
+  getStableBitStatus();
 }).on("error", (err) => {
   if (err?.code === "EADDRINUSE") {
     console.error(
