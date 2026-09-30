@@ -89,13 +89,6 @@ import {
   serviceUrlResolverForRequest,
 } from "./url-policy.mjs";
 import {
-  getNtfyStatus,
-  publicNtfySettings,
-  startNtfyAlerts,
-  testNtfy,
-  updateNtfySettings,
-} from "./ntfy.mjs";
-import {
   getAppUpdateJob,
   startAppUpdate,
   supportedAppUpdateIds,
@@ -872,40 +865,6 @@ app.post("/api/watchdog/discord-test", async (_req, res) => {
   }
 });
 
-app.get("/api/ntfy/settings", (_req, res) => {
-  try {
-    res.json({ settings: publicNtfySettings(), status: getNtfyStatus() });
-  } catch (err) {
-    res.status(500).json({ error: err.message || String(err) });
-  }
-});
-
-app.put("/api/ntfy/settings", (req, res) => {
-  try {
-    const settings = updateNtfySettings(req.body ?? {});
-    res.json({
-      ok: true,
-      settings: publicNtfySettings(settings),
-      status: getNtfyStatus(),
-    });
-  } catch (err) {
-    res.status(400).json({ error: err.message || String(err) });
-  }
-});
-
-app.post("/api/ntfy/test", async (_req, res) => {
-  try {
-    const result = await testNtfy();
-    if (!result.ok) {
-      res.status(400).json({ error: result.message });
-      return;
-    }
-    res.json({ ok: true, message: result.message });
-  } catch (err) {
-    res.status(500).json({ error: err.message || String(err) });
-  }
-});
-
 app.post("/api/watchdog/check", async (_req, res) => {
   try {
     const status = await runWatchCycle();
@@ -1449,11 +1408,6 @@ app.listen(PORT, HOST, () => {
     startWatchdog();
   } catch (err) {
     console.error("Watchdog failed to start:", err?.message || err);
-  }
-  try {
-    startNtfyAlerts();
-  } catch (err) {
-    console.error("ntfy alerts failed to start:", err?.message || err);
   }
   try {
     startProblemsMonitor();

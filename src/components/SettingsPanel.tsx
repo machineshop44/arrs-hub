@@ -9,7 +9,6 @@ import {
 } from "./AppsMonitoringSection";
 import { PhotoDumpSettingsSection } from "./PhotoDumpSettingsSection";
 import { HubAuthSettingsSection } from "./HubAuthSettingsSection";
-import { NtfySettingsSection } from "./NtfySettingsSection";
 import { useModalBackdropClose } from "../hooks/useModalBackdropClose";
 
 interface SettingsPanelProps {
@@ -401,8 +400,6 @@ export function SettingsPanel({
           </section>
 
           <MonitorSettingsSection serverUp={apiServerUp} />
-
-          <NtfySettingsSection serverUp={apiServerUp} />
 
           <p className="settings-version" aria-label="App version">
             {APP_VERSION_LABEL}
