@@ -324,7 +324,7 @@ function startServer() {
     throw new Error("Could not start companion (no Node runtime).");
   }
 
-  // Do not inherit NODE_OPTIONS / Electron flags — they crash ELECTRON_RUN_AS_NODE
+  // Do not inherit NODE_OPTIONS / Electron flags ? they crash ELECTRON_RUN_AS_NODE
   // (e.g. SyntaxError: Unexpected token '`') on machines with custom Node env.
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
@@ -475,7 +475,7 @@ input.focus(); input.select();
   });
 }
 
-function companionApiRequest(apiPath, method = "GET", body = null) {
+function companionApiRequest(apiPath, method = "GET", body = null, timeoutMs = 15000) {
   const settings = readCompanionSettings();
   const apiKey = settings.apiKey || "";
   return new Promise((resolve, reject) => {
@@ -507,7 +507,7 @@ function companionApiRequest(apiPath, method = "GET", body = null) {
       },
     );
     req.on("error", reject);
-    req.setTimeout(15000, () => {
+    req.setTimeout(timeoutMs, () => {
       req.destroy();
       reject(new Error("Companion API timed out"));
     });
@@ -518,7 +518,8 @@ function companionApiRequest(apiPath, method = "GET", body = null) {
 
 async function registerWithHubNow() {
   try {
-    const { status, json } = await companionApiRequest("/api/register-hub", "POST");
+    // Registration may probe the saved Hub URL, then sweep the LAN before POSTing.
+    const { status, json } = await companionApiRequest("/api/register-hub", "POST", null, 90000);
     if (status === 200 && json.ok) {
       dialog.showMessageBox({
         type: "info",
@@ -533,10 +534,14 @@ async function registerWithHubNow() {
       });
     }
   } catch (err) {
+    const settings = readCompanionSettings();
     dialog.showMessageBox({
       type: "error",
       title: "Registration failed",
       message: String(err?.message || err),
+      detail: settings.hubUrl
+        ? `Hub URL: ${settings.hubUrl}\nCheck Arrs Hub is running on the Plex PC and Windows Firewall there allows its port. Companion keeps retrying every minute.`
+        : "No Hub URL set and Arrs Hub was not found on the LAN. Use Set Hub URL? (e.g. http://<Plex-PC-IP>:3000).",
     });
   }
   refreshTrayMenu();
@@ -551,16 +556,10 @@ async function setHubUrlFromTray() {
   saveHubUrl(entered);
   try {
     await companionApiRequest("/api/settings", "PUT", { hubUrl: entered });
-    await companionApiRequest("/api/register-hub", "POST");
   } catch {
     // settings file saved; registration retries on the next loop
   }
-  dialog.showMessageBox({
-    type: "info",
-    title: "Arrs Hub URL saved",
-    message: `Hub URL: ${entered}\nCompanion will register automatically.`,
-  });
-  refreshTrayMenu();
+  await registerWithHubNow();
 }
 
 function toggleStartup() {
@@ -575,12 +574,12 @@ function toggleStartup() {
 function registrationStatusLabel() {
   const settings = readCompanionSettings();
   if (settings.lastRegisterOk) {
-    return `Hub linked · ${settings.hubUrl || "LAN"}`;
+    return `Hub linked ? ${settings.hubUrl || "LAN"}`;
   }
   if (settings.hubUrl) {
-    return `Hub URL set · waiting for register…`;
+    return `Hub URL set ? waiting for register?`;
   }
-  return "Scanning LAN for Arrs Hub (VPN may require manual URL)…";
+  return "Scanning LAN for Arrs Hub (VPN may require manual URL)?";
 }
 
 function openSetupInfo() {
@@ -652,7 +651,7 @@ function buildTrayMenu() {
       click: () => void registerWithHubNow(),
     },
     {
-      label: "Set Arrs Hub URL…",
+      label: "Set Arrs Hub URL?",
       click: () => {
         void setHubUrlFromTray();
       },
@@ -688,7 +687,7 @@ function createTray() {
   }
   const icon = trayIcon();
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
-  tray.setToolTip(`${APP_DISPLAY_NAME} v${app.getVersion()} · :${companionPort}`);
+  tray.setToolTip(`${APP_DISPLAY_NAME} v${app.getVersion()} ? :${companionPort}`);
   tray.setContextMenu(buildTrayMenu());
 }
 

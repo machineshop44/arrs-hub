@@ -35,12 +35,12 @@ function normalizeHubUrl(raw) {
   return trimmed.includes("://") ? trimmed : `http://${trimmed}`;
 }
 
-async function probeHub(baseUrl) {
+async function probeHub(baseUrl, timeoutMs = 1500) {
   const url = normalizeHubUrl(baseUrl);
   if (!url) return "";
   try {
     const res = await fetch(`${url}/api/health`, {
-      signal: AbortSignal.timeout(1500),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) return "";
     const data = await res.json();
@@ -68,8 +68,8 @@ async function scanHostsForHub(hosts) {
       urls.push(`http://${host}:${port}`);
     }
   }
-  for (let i = 0; i < urls.length; i += 30) {
-    const batch = urls.slice(i, i + 30);
+  for (let i = 0; i < urls.length; i += 128) {
+    const batch = urls.slice(i, i + 128);
     const results = await Promise.all(batch.map((url) => probeHub(url)));
     const hit = results.find(Boolean);
     if (hit) return hit;
@@ -167,7 +167,7 @@ export async function registerWithHub(hubUrl, settings) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(12000),
+      signal: AbortSignal.timeout(10000),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -183,16 +183,47 @@ export async function registerWithHub(hubUrl, settings) {
       pcId: data?.pcId,
     };
   } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
-      message: err instanceof Error ? err.message : String(err),
+      message: `Arrs Hub at ${base} did not answer the registration (${detail}).`,
     };
   }
 }
 
-export async function runHubRegistration() {
+/** @type {Promise<{ ok: boolean, message: string, hubUrl?: string, pcId?: string }> | null} */
+let inflight = null;
+
+/** Tray clicks and the 60s loop share one attempt instead of stacking LAN sweeps. */
+export function runHubRegistration() {
+  if (!inflight) {
+    inflight = runHubRegistrationOnce().finally(() => {
+      inflight = null;
+    });
+  }
+  return inflight;
+}
+
+async function runHubRegistrationOnce() {
   const settings = loadCompanionSettings();
   let hubUrl = normalizeHubUrl(settings.hubUrl);
+
+  if (hubUrl && !(await probeHub(hubUrl, 4000))) {
+    const saved = hubUrl;
+    const discovered =
+      settings.autoDiscoverHub !== false ? await discoverHubUrl() : "";
+    if (!discovered) {
+      const message = `Can't reach Arrs Hub at ${saved}. Check the Hub is running on the Plex PC, the URL/port is right (tray → Set Hub URL), and Windows Firewall on the Plex PC allows that port.`;
+      saveCompanionSettings({
+        ...loadCompanionSettings(),
+        lastRegisterAt: new Date().toISOString(),
+        lastRegisterOk: false,
+        lastRegisterMessage: message,
+      });
+      return { ok: false, message };
+    }
+    hubUrl = discovered;
+  }
 
   if (!hubUrl && settings.autoDiscoverHub !== false) {
     const discovered = await discoverHubUrl();
