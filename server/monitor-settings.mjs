@@ -20,6 +20,16 @@ export function defaultMonitorSettings() {
     diskDrives: "C:, D:",
     /** Warn when qBittorrent is not bound to a network interface (VPN leak guard). */
     qbRequireInterfaceBind: true,
+    /** Background scan fixes known stuck-queue cases (see queue-autofix.mjs). */
+    autoFixEnabled: true,
+    autoFixDangerous: true,
+    autoFixSample: true,
+    autoFixNotUpgrade: true,
+    autoFixFailed: true,
+    /** Private trackers with seed-time rules: remove from the *arr only, never from qBittorrent. */
+    keepSeedingIndexers: "TorrentDay, TorrentLeech",
+    autoFixMaxPerScan: 10,
+    discordNotifyAutoFix: true,
     /** Scheduled *arr config backups copied to backupDir. */
     backupEnabled: false,
     backupDir: "",
@@ -50,6 +60,15 @@ function normalize(raw) {
     diskMinTotalGb: clampNumber(s.diskMinTotalGb, d.diskMinTotalGb, 0, 100000),
     diskDrives: typeof s.diskDrives === "string" ? s.diskDrives.trim() : d.diskDrives,
     qbRequireInterfaceBind: s.qbRequireInterfaceBind !== false,
+    autoFixEnabled: s.autoFixEnabled !== false,
+    autoFixDangerous: s.autoFixDangerous !== false,
+    autoFixSample: s.autoFixSample !== false,
+    autoFixNotUpgrade: s.autoFixNotUpgrade !== false,
+    autoFixFailed: s.autoFixFailed !== false,
+    keepSeedingIndexers:
+      typeof s.keepSeedingIndexers === "string" ? s.keepSeedingIndexers.trim() : d.keepSeedingIndexers,
+    autoFixMaxPerScan: Math.round(clampNumber(s.autoFixMaxPerScan, d.autoFixMaxPerScan, 1, 50)),
+    discordNotifyAutoFix: s.discordNotifyAutoFix !== false,
     backupEnabled: s.backupEnabled === true,
     backupDir: String(s.backupDir || "").trim(),
     backupIntervalHours: clampNumber(s.backupIntervalHours, d.backupIntervalHours, 1, 24 * 90),

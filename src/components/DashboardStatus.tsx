@@ -88,6 +88,19 @@ type ProblemsSnapshot = {
   problems: HubProblem[];
   /** Problems the user cleared; hidden until they resolve and recur. */
   dismissedCount?: number;
+  monitor?: {
+    recentAutoFixes?: {
+      key: string;
+      app: string;
+      title: string;
+      reason: string;
+      blocklist: boolean;
+      keptSeeding: boolean;
+      ok: boolean;
+      error?: string;
+      at: string;
+    }[];
+  };
   disk?: {
     drives: { path: string; label: string; freeGb: number; totalGb: number; low: boolean }[];
     thresholdGb?: number;
@@ -593,11 +606,12 @@ export function DashboardStatus({
           urls: urlMap(services, connectionMode),
         }),
       });
-      const json = (await res.json()) as { error?: string };
+      const json = (await res.json()) as { error?: string; keptSeeding?: boolean };
       if (!res.ok) throw new Error(json.error || "Remove failed");
+      const seeding = json.keptSeeding ? " Still seeding in qBittorrent." : "";
       setQueueActionMsg({
         ok: true,
-        text: blocklist ? `Blocklisted “${issue.title}”.` : `Removed “${issue.title}”.`,
+        text: `${blocklist ? "Blocklisted" : "Removed"} “${issue.title}”.${seeding}`,
       });
       await load();
     } catch (err) {
@@ -2066,6 +2080,31 @@ export function DashboardStatus({
                                   {d.freeGb} / {d.totalGb} GB free
                                 </strong>
                               </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    {(problemsSnap?.monitor?.recentAutoFixes?.length ?? 0) > 0 && (
+                      <>
+                        <p className="dash-chip-popover-title">Recently auto-fixed</p>
+                        <ul className="dash-queue-issues">
+                          {problemsSnap!.monitor!.recentAutoFixes!.slice(0, 5).map((f) => (
+                            <li key={`${f.key}-${f.at}`}>
+                              <div className="dash-queue-issue-main">
+                                <span
+                                  className={`dash-queue-issue-badge ${f.ok ? "" : "dash-problem-error"}`}
+                                >
+                                  {f.ok ? (f.blocklist ? "Blocklisted" : "Removed") : "Failed"}
+                                </span>
+                                <span className="dash-queue-issue-title">{f.title}</span>
+                                <span className="dash-queue-issue-msg">
+                                  {f.reason}
+                                  {f.keptSeeding ? " · still seeding in qBittorrent" : ""}
+                                  {!f.ok && f.error ? ` · ${f.error}` : ""} ·{" "}
+                                  {new Date(f.at).toLocaleString()}
+                                </span>
+                              </div>
                             </li>
                           ))}
                         </ul>

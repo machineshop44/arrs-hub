@@ -1,13 +1,53 @@
 import { getArrApiKey } from "./arr-api-keys.mjs";
+import { loadMonitorSettings } from "./monitor-settings.mjs";
 import { arrApiVersion } from "./problems.mjs";
 import { createServiceUrlResolver } from "./url-policy.mjs";
 
 const QUEUE_APPS = new Set(["sonarr", "radarr", "lidarr", "readarr", "whisparr"]);
 
+function squash(s) {
+  return String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** "TorrentDay, TorrentLeech" → ["torrentday", "torrentleech"] */
+export function parseIndexerList(value) {
+  return String(value || "")
+    .split(/[,;\n]+/)
+    .map(squash)
+    .filter(Boolean);
+}
+
+/**
+ * Private-tracker torrents must keep seeding: remove from the *arr only.
+ * A torrent with no indexer name is treated as keep-seeding (can't prove it's safe).
+ * @param {{ indexer?: string, protocol?: string }} item
+ * @param {string} keepSeedingIndexers
+ */
+export function mustKeepSeeding(item, keepSeedingIndexers) {
+  const list = parseIndexerList(keepSeedingIndexers);
+  if (!list.length) return false;
+  const indexer = squash(item?.indexer);
+  if (!indexer) return String(item?.protocol || "").toLowerCase() === "torrent";
+  return list.some((name) => indexer.includes(name));
+}
+
+async function fetchQueueItem(base, app, id, apiKey) {
+  try {
+    const res = await fetch(`${base}/api/${arrApiVersion(app)}/queue/${id}`, {
+      headers: { "X-Api-Key": apiKey, Accept: "application/json" },
+      signal: AbortSignal.timeout(8_000),
+    });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Remove a stuck *arr queue item, optionally blocklisting the release so the
- * app searches for a different one.
- * @param {{ app: string, id: number, blocklist?: boolean, removeFromClient?: boolean, urls?: Record<string, string> }} body
+ * app searches for a different one. Keep-seeding indexers are never removed
+ * from the download client.
+ * @param {{ app: string, id: number, blocklist?: boolean, removeFromClient?: boolean, indexer?: string, protocol?: string, urls?: Record<string, string> }} body
  * @param {ReturnType<typeof createServiceUrlResolver>} [resolver]
  */
 export async function removeArrQueueItem(body = {}, resolver) {
@@ -26,7 +66,18 @@ export async function removeArrQueueItem(body = {}, resolver) {
     throw Object.assign(new Error(`${app} URL or API key is not configured`), { status: 400 });
   }
   const blocklist = body.blocklist === true;
-  const removeFromClient = body.removeFromClient !== false;
+  let removeFromClient = body.removeFromClient !== false;
+  let keptSeeding = false;
+  if (removeFromClient) {
+    const item = (await fetchQueueItem(base, app, id, apiKey)) || {
+      indexer: body.indexer,
+      protocol: body.protocol,
+    };
+    if (mustKeepSeeding(item, loadMonitorSettings().keepSeedingIndexers)) {
+      removeFromClient = false;
+      keptSeeding = true;
+    }
+  }
   const qs = new URLSearchParams({
     removeFromClient: String(removeFromClient),
     blocklist: String(blocklist),
@@ -44,5 +95,5 @@ export async function removeArrQueueItem(body = {}, resolver) {
       { status: res.status === 404 ? 404 : 502 },
     );
   }
-  return { ok: true, app, id, blocklist, removeFromClient };
+  return { ok: true, app, id, blocklist, removeFromClient, keptSeeding };
 }

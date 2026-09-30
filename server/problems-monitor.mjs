@@ -4,6 +4,7 @@ import { DATA_DIR, ensureDataDirs } from "./config.mjs";
 import { sendDiscordWebhook, DISCORD_COLORS } from "./discord.mjs";
 import { loadMonitorSettings } from "./monitor-settings.mjs";
 import { collectProblems } from "./problems.mjs";
+import { describeAutoFix, runQueueAutoFix } from "./queue-autofix.mjs";
 import { loadWatchdogSettings } from "./watchdog-store.mjs";
 
 const STATE_PATH = path.join(DATA_DIR, "problems-state.json");
@@ -11,6 +12,7 @@ const STATE_PATH = path.join(DATA_DIR, "problems-state.json");
 const RESOLVE_AFTER_MISSES = 2;
 const FIRST_SCAN_DELAY_MS = 90_000;
 const MAX_LINES_PER_EMBED = 15;
+const AUTOFIX_LOG_LIMIT = 25;
 
 let timer = null;
 let running = false;
@@ -28,9 +30,10 @@ function loadState() {
     return {
       active: raw && typeof raw.active === "object" && raw.active ? raw.active : {},
       dismissed: raw && typeof raw.dismissed === "object" && raw.dismissed ? raw.dismissed : {},
+      autoFixLog: Array.isArray(raw?.autoFixLog) ? raw.autoFixLog : [],
     };
   } catch {
-    return { active: {}, dismissed: {} };
+    return { active: {}, dismissed: {}, autoFixLog: [] };
   }
 }
 
@@ -205,6 +208,11 @@ export async function runProblemsScan() {
   try {
     const settings = loadMonitorSettings();
     const snapshot = await collectProblems({ includeQueues: true, includeOmbi: true });
+    const fixes = await runQueueAutoFix(snapshot.queues, settings);
+    const fixedKeys = new Set(fixes.filter((f) => f.ok).map((f) => f.key));
+    if (fixedKeys.size) {
+      snapshot.problems = snapshot.problems.filter((p) => !fixedKeys.has(p.key));
+    }
     lastSnapshot = snapshot;
     lastError = null;
     const { state, added, resolved } = diffProblems(
@@ -212,10 +220,24 @@ export async function runProblemsScan() {
       snapshot.problems,
       snapshot.failedSources,
     );
+    if (fixes.length) {
+      state.autoFixLog = [...fixes, ...(state.autoFixLog || [])].slice(0, AUTOFIX_LOG_LIMIT);
+    }
     saveState(state);
     applyDismissals(snapshot);
     const webhookUrl = loadWatchdogSettings().discordWebhookUrl || "";
     await notify(added, resolved, settings, webhookUrl);
+    if (webhookUrl && settings.discordNotifyAutoFix && fixes.length) {
+      const failed = fixes.some((f) => !f.ok);
+      await sendDiscordWebhook(webhookUrl, {
+        title:
+          fixes.length === 1
+            ? `Auto-fixed: ${fixes[0].title}`
+            : `Auto-fixed ${fixes.filter((f) => f.ok).length} stuck download(s)`,
+        description: formatLines(fixes, (f) => `${f.ok ? "🧹" : "⚠️"} ${describeAutoFix(f)}`),
+        color: failed ? DISCORD_COLORS.restartFail : DISCORD_COLORS.restartOk,
+      });
+    }
     return snapshot;
   } catch (err) {
     lastError = err instanceof Error ? err.message : String(err);
@@ -247,5 +269,6 @@ export function getProblemsMonitorStatus() {
     lastCheckedAt: lastSnapshot?.checkedAt || null,
     lastError,
     activeCount: Object.keys(state.active).length,
+    recentAutoFixes: (state.autoFixLog || []).slice(0, 10),
   };
 }

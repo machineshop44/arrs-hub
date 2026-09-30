@@ -17,6 +17,13 @@ type MonitorSettings = {
   diskFreeWarnGb: number;
   diskDrives: string;
   qbRequireInterfaceBind: boolean;
+  autoFixEnabled: boolean;
+  autoFixDangerous: boolean;
+  autoFixSample: boolean;
+  autoFixNotUpgrade: boolean;
+  autoFixFailed: boolean;
+  keepSeedingIndexers: string;
+  discordNotifyAutoFix: boolean;
   backupEnabled: boolean;
   backupDir: string;
   backupIntervalHours: number;
@@ -188,6 +195,64 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
             <span className="toggle-label">
               Warn if qBittorrent is not bound to the VPN adapter
             </span>
+          </label>
+
+          <h4 className="settings-subhead">Auto-fix stuck downloads</h4>
+          <p className="settings-hint">
+            Each background scan clears known-bad queue items in Sonarr, Radarr,
+            Lidarr, Readarr and Whisparr. Items that need a human (manual
+            import, unmatched series) are left alone.
+          </p>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={settings.autoFixEnabled}
+              disabled={disabled}
+              onChange={(e) => patch({ autoFixEnabled: e.target.checked })}
+            />
+            <span className="toggle-label">Auto-fix enabled</span>
+          </label>
+          {(
+            [
+              ["autoFixDangerous", "Unwanted files (.exe, .lnk, .scr…) → blocklist + search again"],
+              ["autoFixSample", "Sample only / no importable files → blocklist + search again"],
+              ["autoFixNotUpgrade", "Not an upgrade / already imported → remove"],
+              ["autoFixFailed", "Failed download → blocklist + search again"],
+            ] as const
+          ).map(([key, label]) => (
+            <label className="toggle" key={key}>
+              <input
+                type="checkbox"
+                checked={settings[key]}
+                disabled={disabled || !settings.autoFixEnabled}
+                onChange={(e) => patch({ [key]: e.target.checked })}
+              />
+              <span className="toggle-label">{label}</span>
+            </label>
+          ))}
+          <label className="field">
+            <span>Keep seeding (remove from the *arr only, never from qBittorrent)</span>
+            <input
+              type="text"
+              placeholder="TorrentDay, TorrentLeech"
+              value={settings.keepSeedingIndexers}
+              disabled={disabled}
+              onChange={(e) => patch({ keepSeedingIndexers: e.target.value })}
+            />
+          </label>
+          <p className="settings-hint">
+            Indexer names, comma-separated. Also applies to the dashboard
+            Remove / Blocklist buttons. Torrents with no indexer name are kept
+            seeding to be safe.
+          </p>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={settings.discordNotifyAutoFix}
+              disabled={disabled}
+              onChange={(e) => patch({ discordNotifyAutoFix: e.target.checked })}
+            />
+            <span className="toggle-label">Discord: auto-fixes</span>
           </label>
 
           <h4 className="settings-subhead">Scheduled *arr config backups</h4>

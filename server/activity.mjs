@@ -89,6 +89,9 @@ function summarizeQueueIssue(record) {
     trackedDownloadState: record.trackedDownloadState || "",
     errorMessage: messages.filter(Boolean).slice(0, 3).join(" · "),
     outputPath: record.outputPath || "",
+    indexer: record.indexer || "",
+    protocol: record.protocol || "",
+    downloadClient: record.downloadClient || "",
   };
 }
 
@@ -120,7 +123,7 @@ async function getArrQueue(id, baseUrl, apiKey) {
     const issues = records
       .filter(isQueueIssue)
       .map(summarizeQueueIssue)
-      .slice(0, 12);
+      .slice(0, 25);
     return {
       ok: true,
       configured: true,

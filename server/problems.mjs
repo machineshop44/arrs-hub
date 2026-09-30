@@ -381,5 +381,6 @@ export async function collectProblems(opts = {}) {
     health,
     disk,
     qbittorrent: qb,
+    queues,
   };
 }
