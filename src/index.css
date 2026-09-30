@@ -1381,7 +1381,8 @@ strong.dash-problem-error {
   color: #fca5a5;
 }
 
-.dash-queue-issue-badge.dash-problem-warning {
+.dash-queue-issue-badge.dash-problem-warning,
+.dash-queue-app-static .dash-problem-warning {
   color: #fcd34d;
 }
 

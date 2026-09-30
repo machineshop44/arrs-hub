@@ -214,6 +214,7 @@ export function getWatchStatus() {
         companionApiKeySet: Boolean(pc.companionApiKey),
         companionId: pc.companionId || "",
         lastRegisterAt: pc.lastRegisterAt || null,
+        companionVersion: pc.companionVersion || "",
       })),
       discordWebhookUrl: settings.discordWebhookUrl
         ? maskWebhook(settings.discordWebhookUrl)
@@ -264,6 +265,7 @@ export function updateWatchdogSettings(partial) {
               ),
               companionId: String(pc.companionId || prev?.companionId || "").trim(),
               lastRegisterAt: prev?.lastRegisterAt || null,
+              companionVersion: prev?.companionVersion || "",
             };
           })
           .filter((pc) => pc.host || pc.mac || pc.companionUrl)

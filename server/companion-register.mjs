@@ -238,6 +238,9 @@ export function registerCompanionPeer(payload) {
     companionApiKey: apiKey,
     companionId,
     lastRegisterAt: new Date().toISOString(),
+    companionVersion: /^\d+\.\d+\.\d+[\w.+-]{0,20}$/.test(String(payload?.version || ""))
+      ? String(payload.version)
+      : existing?.companionVersion || "",
   };
 
   if (existingIdx >= 0) {

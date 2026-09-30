@@ -147,6 +147,7 @@ function buildRegistrationPayload(settings) {
     mac,
     port: settings.port,
     apiKey: settings.apiKey,
+    version: process.env.ARRS_COMPANION_VERSION || "",
     services,
   };
 }

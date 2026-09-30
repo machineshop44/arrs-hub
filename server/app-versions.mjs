@@ -72,6 +72,17 @@ function extractArrVersion(id, status) {
   return shortAppVersion(status?.version || status?.data?.version || "");
 }
 
+/** "1.3.72" vs "1.3.75" → -1 / 0 / 1 (numeric per part). */
+export function compareSemver(a, b) {
+  const pa = String(a || "").split(/[.+-]/).map((n) => Number.parseInt(n, 10) || 0);
+  const pb = String(b || "").split(/[.+-]/).map((n) => Number.parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length, 3); i += 1) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
 export function shortAppVersion(raw) {
   const text = String(raw || "").trim();
   if (!text) return "";
@@ -581,8 +592,11 @@ export async function getChipAppVersions(opts = {}) {
   const settings = loadWatchdogSettings();
   const integrations = loadIntegrationsSettings();
   const tautulli = loadTautulliSettings();
+  // Most recently registered Companion wins over stale entries (old IPs / reinstalls).
   const companionPc =
-    (settings.pcs || []).find((pc) => String(pc.companionUrl || "").trim()) ||
+    (settings.pcs || [])
+      .filter((pc) => String(pc.companionUrl || "").trim())
+      .sort((a, b) => String(b.lastRegisterAt || "").localeCompare(String(a.lastRegisterAt || "")))[0] ||
     null;
 
   const arrTargets = ARR_IDS.filter((id) => {
@@ -679,7 +693,10 @@ export async function getChipAppVersions(opts = {}) {
     });
   }
 
-  const companionVersion = shortAppVersion(companionHealth?.version) || null;
+  const liveCompanionVersion = shortAppVersion(companionHealth?.version) || null;
+  const companionVersion =
+    liveCompanionVersion || shortAppVersion(companionPc?.companionVersion) || null;
+  const hubVersion = shortAppVersion(opts.hubVersion) || null;
   let companionApps = mergeCompanionAppRows(
     [qbit, sab],
     companionLocals?.apps || [],
@@ -704,6 +721,12 @@ export async function getChipAppVersions(opts = {}) {
           pcId: companionPc.id,
           name: companionPc.name || "Companion",
           version: companionVersion,
+          /** "live" = answered just now; "registered" = last version it reported when registering. */
+          versionSource: liveCompanionVersion ? "live" : companionVersion ? "registered" : null,
+          lastRegisterAt: companionPc.lastRegisterAt || null,
+          outdated: Boolean(
+            companionVersion && hubVersion && compareSemver(companionVersion, hubVersion) < 0,
+          ),
           appUpdateCount: companionUpdatesAvailable.length,
           apps: companionApps,
         }

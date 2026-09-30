@@ -234,6 +234,9 @@ type ChipVersionsPayload = {
   companion?: {
     name?: string;
     version?: string | null;
+    versionSource?: "live" | "registered" | null;
+    lastRegisterAt?: string | null;
+    outdated?: boolean;
     appUpdateCount?: number;
     apps?: ChipVersionApp[];
   } | null;
@@ -1420,7 +1423,11 @@ export function DashboardStatus({
                   <span className="dash-chip-value">{chip.value}</span>
                   <span className="dash-chip-label">{chip.label}</span>
                   <ChipProductVersion
-                    version={chipVersions?.companion?.version || null}
+                    version={
+                      chipVersions?.companion?.version
+                        ? `${chipVersions.companion.version}${chipVersions.companion.outdated ? " ↑" : ""}`
+                        : null
+                    }
                   />
                 </button>
                 {companionOpen && (
@@ -1459,8 +1466,25 @@ export function DashboardStatus({
                                 : online === false
                                   ? "Unreachable"
                                   : "Checking…"}
+                          </strong>
+                        </span>
+                      </li>
+                      <li>
+                        <span className="dash-queue-app-static">
+                          <span>Companion app</span>
+                          <strong
+                            className={
+                              chipVersions?.companion?.outdated ? "dash-problem-warning" : undefined
+                            }
+                          >
                             {chipVersions?.companion?.version
-                              ? ` · v${chipVersions.companion.version}`
+                              ? `v${chipVersions.companion.version}`
+                              : "Unknown — re-register Companion"}
+                            {chipVersions?.companion?.versionSource === "registered"
+                              ? " (last reported)"
+                              : ""}
+                            {chipVersions?.companion?.outdated && chipVersions?.hub?.version
+                              ? ` · Hub is v${chipVersions.hub.version} — update Companion`
                               : ""}
                           </strong>
                         </span>
