@@ -23,6 +23,7 @@ type MonitorSettings = {
   autoFixNotUpgrade: boolean;
   autoFixFailed: boolean;
   autoFixManualImport: boolean;
+  autoFixHealth: boolean;
   keepSeedingIndexers: string;
   discordNotifyAutoFix: boolean;
   backupEnabled: boolean;
@@ -223,6 +224,10 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
               [
                 "autoFixManualImport",
                 "Manual import (Sonarr/Radarr) → import when the file name matches the series + SxxEyy / movie + year",
+              ],
+              [
+                "autoFixHealth",
+                "Health nudges (never delete): re-run pending imports, re-test download clients / failed indexers / Prowlarr app links, cancel refreshes hung 3h+",
               ],
             ] as const
           ).map(([key, label]) => (

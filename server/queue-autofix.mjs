@@ -6,6 +6,13 @@ import { AUTO_IMPORT_APPS, autoImportDownload, needsManualImport } from "./queue
 const DANGEROUS_EXT = /\.(exe|lnk|scr|bat|cmd|vbs|vbe|msi|pif|ps1|jar|arj|hta|wsf)\b/i;
 const DANGEROUS_MSG = /dangerous|unwanted (file )?extension|executable/i;
 const SAMPLE_MSG = /\bsample\b|no files found (are )?eligible|no (video|audio|media) files/i;
+/**
+ * Path / permission / disk / client-connectivity problems: the release is fine,
+ * the setup isn't. Never blocklist or remove over these (DrivePool balancing,
+ * Surfshark reconnects, full disk).
+ */
+const NEVER_REMOVE_MSG =
+  /remote path|does not appear to exist|not a valid (windows )?path|access to the path|permission|denied|not enough (free )?space|disk is full|i\/o error|connection refused|timed out|unable to communicate|unavailable due to failures/i;
 const NOT_UPGRADE_MSG =
   /not an upgrade|not a custom format upgrade|already imported|existing file .*(better|same)|has a (better|same) (quality|custom format)|already (exists|has a file)/i;
 
@@ -20,6 +27,7 @@ export function classifyQueueIssue(issue, settings) {
   const msg = String(issue?.errorMessage || "");
   const state = String(issue?.trackedDownloadState || "").toLowerCase();
   const status = String(issue?.status || "").toLowerCase();
+  if (NEVER_REMOVE_MSG.test(msg) || status === "downloadclientunavailable") return null;
 
   if (settings.autoFixDangerous !== false && (DANGEROUS_MSG.test(msg) || DANGEROUS_EXT.test(msg))) {
     const ext = DANGEROUS_EXT.exec(msg)?.[0]?.toLowerCase();
@@ -162,7 +170,12 @@ export async function runQueueAutoFix(queues, settings, deps = {}) {
   return results;
 }
 
+const HEALTH_RULES = new Set(["nudgeImport", "testClients", "testIndexer", "testApp", "cancelHung"]);
+
 export function describeAutoFix(r) {
+  if (HEALTH_RULES.has(r.rule)) {
+    return `${appLabel(r.app)}: ${r.title} — ${r.ok ? r.reason : `fix failed: ${r.error}`}`;
+  }
   const action = r.imported ? "imported" : r.blocklist ? "blocklisted, searching again" : "removed";
   const seed = r.keptSeeding ? " · still seeding in qBittorrent" : "";
   const status = r.ok ? `${action}${seed}` : `fix failed: ${r.error}`;

@@ -96,6 +96,7 @@ type ProblemsSnapshot = {
       reason: string;
       blocklist: boolean;
       imported?: boolean;
+      badge?: string;
       keptSeeding: boolean;
       ok: boolean;
       error?: string;
@@ -2098,7 +2099,9 @@ export function DashboardStatus({
                                 >
                                   {!f.ok
                                     ? "Failed"
-                                    : f.imported
+                                    : f.badge
+                                      ? f.badge
+                                      : f.imported
                                       ? "Imported"
                                       : f.blocklist
                                         ? "Blocklisted"

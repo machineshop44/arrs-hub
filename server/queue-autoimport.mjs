@@ -7,13 +7,11 @@ const MANUAL_IMPORT_MSG =
 
 export const AUTO_IMPORT_APPS = new Set(["sonarr", "radarr"]);
 
+/** importPending with no message = the app is about to import on its own (see health-autofix nudge). */
 export function needsManualImport(issue) {
   const state = String(issue?.trackedDownloadState || "").toLowerCase();
-  return (
-    MANUAL_IMPORT_MSG.test(String(issue?.errorMessage || "")) ||
-    state === "importpending" ||
-    state === "importblocked"
-  );
+  const msg = String(issue?.errorMessage || "");
+  return MANUAL_IMPORT_MSG.test(msg) || (Boolean(msg) && (state === "importpending" || state === "importblocked"));
 }
 
 /** "The Office (US)" / "Marvel's Agents of S.H.I.E.L.D." → comparable token string. */

@@ -5,6 +5,7 @@ import { sendDiscordWebhook, DISCORD_COLORS } from "./discord.mjs";
 import { loadMonitorSettings } from "./monitor-settings.mjs";
 import { collectProblems } from "./problems.mjs";
 import { describeAutoFix, runQueueAutoFix } from "./queue-autofix.mjs";
+import { runHealthAutoFix } from "./health-autofix.mjs";
 import { loadWatchdogSettings } from "./watchdog-store.mjs";
 
 const STATE_PATH = path.join(DATA_DIR, "problems-state.json");
@@ -208,8 +209,10 @@ export async function runProblemsScan() {
   try {
     const settings = loadMonitorSettings();
     const snapshot = await collectProblems({ includeQueues: true, includeOmbi: true });
-    const fixes = await runQueueAutoFix(snapshot.queues, settings);
-    const fixedKeys = new Set(fixes.filter((f) => f.ok).flatMap((f) => f.keys || [f.key]));
+    const queueFixes = await runQueueAutoFix(snapshot.queues, settings);
+    const healthFixes = await runHealthAutoFix(snapshot, settings);
+    const fixes = [...queueFixes, ...healthFixes.filter((f) => !f.quiet)];
+    const fixedKeys = new Set(queueFixes.filter((f) => f.ok).flatMap((f) => f.keys || [f.key]));
     if (fixedKeys.size) {
       snapshot.problems = snapshot.problems.filter((p) => !fixedKeys.has(p.key));
     }
@@ -233,7 +236,7 @@ export async function runProblemsScan() {
         title:
           fixes.length === 1
             ? `Auto-fixed: ${fixes[0].title}`
-            : `Auto-fixed ${fixes.filter((f) => f.ok).length} stuck download(s)`,
+            : `Auto-fixed ${fixes.filter((f) => f.ok).length} item(s) on your stack`,
         description: formatLines(fixes, (f) => `${f.ok ? "🧹" : "⚠️"} ${describeAutoFix(f)}`),
         color: failed ? DISCORD_COLORS.restartFail : DISCORD_COLORS.restartOk,
       });

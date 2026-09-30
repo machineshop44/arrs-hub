@@ -39,7 +39,8 @@ test("needsManualImport spots the manual-import queue states", () => {
     needsManualImport({ errorMessage: "Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible." }),
     true,
   );
-  assert.equal(needsManualImport({ trackedDownloadState: "importPending" }), true);
+  assert.equal(needsManualImport({ trackedDownloadState: "importPending", errorMessage: "One or more episodes expected" }), true);
+  assert.equal(needsManualImport({ trackedDownloadState: "importPending" }), false, "no message = app imports on its own");
   assert.equal(needsManualImport({ errorMessage: "Downloading" }), false);
 });
 
