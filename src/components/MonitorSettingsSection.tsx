@@ -177,14 +177,14 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
             <span>Drives to watch (blank = all)</span>
             <input
               type="text"
-              placeholder="C:, D:"
+              placeholder="C:, N:"
               value={settings.diskDrives}
               disabled={disabled}
               onChange={(e) => patch({ diskDrives: e.target.value })}
             />
           </label>
           <p className="settings-hint">
-            D: is the StableBit DrivePool, so its free space already covers the
+            N: is the StableBit DrivePool, so its free space already covers the
             pooled disks — listing them separately is redundant.
           </p>
           <label className="toggle">
