@@ -1,5 +1,6 @@
 import { appLabel } from "./problems.mjs";
 import { removeArrQueueItem } from "./queue-actions.mjs";
+import { AUTO_IMPORT_APPS, autoImportDownload, needsManualImport } from "./queue-autoimport.mjs";
 
 /** Extensions that never belong in a media release. */
 const DANGEROUS_EXT = /\.(exe|lnk|scr|bat|cmd|vbs|vbe|msi|pif|ps1|jar|arj|hta|wsf)\b/i;
@@ -54,13 +55,70 @@ const failedAt = new Map();
 export async function runQueueAutoFix(queues, settings, deps = {}) {
   if (settings.autoFixEnabled === false) return [];
   const remove = deps.remove || removeArrQueueItem;
+  const importer = deps.importer || autoImportDownload;
   const now = deps.now ?? Date.now();
   const max = Math.max(1, Number(settings.autoFixMaxPerScan) || 10);
   const results = [];
 
   for (const [app, q] of Object.entries(queues || {})) {
     if (!q?.ok) continue;
+    const importedDownloads = new Set();
+    const importedKeys = new Set();
     for (const issue of q.issues || []) {
+      if (results.length >= max) return results;
+      if (
+        settings.autoFixManualImport === false ||
+        !AUTO_IMPORT_APPS.has(app) ||
+        !issue?.downloadId ||
+        importedDownloads.has(issue.downloadId) ||
+        classifyQueueIssue(issue, settings) ||
+        !needsManualImport(issue)
+      ) {
+        continue;
+      }
+      importedDownloads.add(issue.downloadId);
+      const group = (q.issues || []).filter((i) => i.downloadId === issue.downloadId);
+      const keys = group.map((i) => `queue:${app}:${i.id}`);
+      const dlKey = `import:${app}:${issue.downloadId}`;
+      const lastTry = failedAt.get(dlKey);
+      if (lastTry != null && now - lastTry < RETRY_AFTER_MS) continue;
+      const base = {
+        key: keys[0],
+        keys,
+        app,
+        title: String(issue.title || "Unknown item"),
+        rule: "manualImport",
+        reason: "file name matches the grab",
+        blocklist: false,
+        imported: true,
+        keptSeeding: false,
+        at: new Date(now).toISOString(),
+      };
+      try {
+        const r = await importer(app, {
+          downloadId: issue.downloadId,
+          seriesId: issue.seriesId,
+          movieId: issue.movieId,
+          episodeIds: new Set(
+            group.flatMap((i) => [i.episodeId, ...(i.episodeIds || [])]).map(Number).filter(Boolean),
+          ),
+        });
+        if ("imported" in r) {
+          failedAt.delete(dlKey);
+          for (const k of keys) importedKeys.add(k);
+          results.push({ ...base, reason: `${base.reason} (${r.imported} file${r.imported === 1 ? "" : "s"})`, ok: true });
+        } else {
+          // Not safe to auto-accept (e.g. name mismatch) — leave for a human; re-check hourly.
+          failedAt.set(dlKey, now);
+        }
+      } catch (err) {
+        failedAt.set(dlKey, now);
+        results.push({ ...base, ok: false, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    for (const issue of q.issues || []) {
+      if (importedKeys.has(`queue:${app}:${issue?.id}`)) continue;
       if (results.length >= max) return results;
       const id = Number(issue?.id);
       if (!Number.isInteger(id) || id <= 0) continue;
@@ -105,7 +163,7 @@ export async function runQueueAutoFix(queues, settings, deps = {}) {
 }
 
 export function describeAutoFix(r) {
-  const action = r.blocklist ? "blocklisted, searching again" : "removed";
+  const action = r.imported ? "imported" : r.blocklist ? "blocklisted, searching again" : "removed";
   const seed = r.keptSeeding ? " · still seeding in qBittorrent" : "";
   const status = r.ok ? `${action}${seed}` : `fix failed: ${r.error}`;
   return `${appLabel(r.app)}: ${r.title} — ${r.reason} → ${status}`;

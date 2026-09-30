@@ -209,7 +209,7 @@ export async function runProblemsScan() {
     const settings = loadMonitorSettings();
     const snapshot = await collectProblems({ includeQueues: true, includeOmbi: true });
     const fixes = await runQueueAutoFix(snapshot.queues, settings);
-    const fixedKeys = new Set(fixes.filter((f) => f.ok).map((f) => f.key));
+    const fixedKeys = new Set(fixes.filter((f) => f.ok).flatMap((f) => f.keys || [f.key]));
     if (fixedKeys.size) {
       snapshot.problems = snapshot.problems.filter((p) => !fixedKeys.has(p.key));
     }

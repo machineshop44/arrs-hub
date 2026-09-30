@@ -22,6 +22,7 @@ type MonitorSettings = {
   autoFixSample: boolean;
   autoFixNotUpgrade: boolean;
   autoFixFailed: boolean;
+  autoFixManualImport: boolean;
   keepSeedingIndexers: string;
   discordNotifyAutoFix: boolean;
   backupEnabled: boolean;
@@ -200,8 +201,9 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
           <h4 className="settings-subhead">Auto-fix stuck downloads</h4>
           <p className="settings-hint">
             Each background scan clears known-bad queue items in Sonarr, Radarr,
-            Lidarr, Readarr and Whisparr. Items that need a human (manual
-            import, unmatched series) are left alone.
+            Lidarr, Readarr and Whisparr. Manual imports are only accepted when
+            every file name matches what was grabbed; anything else is left for
+            you.
           </p>
           <label className="toggle">
             <input
@@ -218,6 +220,10 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
               ["autoFixSample", "Sample only / no importable files → blocklist + search again"],
               ["autoFixNotUpgrade", "Not an upgrade / already imported → remove"],
               ["autoFixFailed", "Failed download → blocklist + search again"],
+              [
+                "autoFixManualImport",
+                "Manual import (Sonarr/Radarr) → import when the file name matches the series + SxxEyy / movie + year",
+              ],
             ] as const
           ).map(([key, label]) => (
             <label className="toggle" key={key}>

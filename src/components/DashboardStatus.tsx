@@ -95,6 +95,7 @@ type ProblemsSnapshot = {
       title: string;
       reason: string;
       blocklist: boolean;
+      imported?: boolean;
       keptSeeding: boolean;
       ok: boolean;
       error?: string;
@@ -2095,7 +2096,13 @@ export function DashboardStatus({
                                 <span
                                   className={`dash-queue-issue-badge ${f.ok ? "" : "dash-problem-error"}`}
                                 >
-                                  {f.ok ? (f.blocklist ? "Blocklisted" : "Removed") : "Failed"}
+                                  {!f.ok
+                                    ? "Failed"
+                                    : f.imported
+                                      ? "Imported"
+                                      : f.blocklist
+                                        ? "Blocklisted"
+                                        : "Removed"}
                                 </span>
                                 <span className="dash-queue-issue-title">{f.title}</span>
                                 <span className="dash-queue-issue-msg">

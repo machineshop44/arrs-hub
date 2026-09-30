@@ -92,6 +92,11 @@ function summarizeQueueIssue(record) {
     indexer: record.indexer || "",
     protocol: record.protocol || "",
     downloadClient: record.downloadClient || "",
+    downloadId: record.downloadId || "",
+    seriesId: record.seriesId ?? null,
+    episodeId: record.episodeId ?? null,
+    episodeIds: Array.isArray(record.episodeIds) ? record.episodeIds : [],
+    movieId: record.movieId ?? null,
   };
 }
 

@@ -26,6 +26,8 @@ export function defaultMonitorSettings() {
     autoFixSample: true,
     autoFixNotUpgrade: true,
     autoFixFailed: true,
+    /** Accept Sonarr/Radarr manual imports when every file name matches the grabbed series/episodes or movie. */
+    autoFixManualImport: true,
     /** Private trackers with seed-time rules: remove from the *arr only, never from qBittorrent. */
     keepSeedingIndexers: "TorrentDay, TorrentLeech",
     autoFixMaxPerScan: 10,
@@ -65,6 +67,7 @@ function normalize(raw) {
     autoFixSample: s.autoFixSample !== false,
     autoFixNotUpgrade: s.autoFixNotUpgrade !== false,
     autoFixFailed: s.autoFixFailed !== false,
+    autoFixManualImport: s.autoFixManualImport !== false,
     keepSeedingIndexers:
       typeof s.keepSeedingIndexers === "string" ? s.keepSeedingIndexers.trim() : d.keepSeedingIndexers,
     autoFixMaxPerScan: Math.round(clampNumber(s.autoFixMaxPerScan, d.autoFixMaxPerScan, 1, 50)),
