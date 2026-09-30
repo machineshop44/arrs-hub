@@ -4,6 +4,7 @@ import {
   buildProblemList,
   classifyQbInterface,
   mergeDiskSpace,
+  parseDiskDrives,
 } from "./problems.mjs";
 import { diffProblems } from "./problems-monitor.mjs";
 
@@ -29,6 +30,35 @@ test("mergeDiskSpace dedupes paths across apps and flags low drives", () => {
   assert.equal(low.length, 1);
   assert.equal(low[0].seenBy, "sonarr");
   assert.equal(low[0].freeGb, 10);
+});
+
+test("mergeDiskSpace keeps only watched letters and collapses paths per drive", () => {
+  const { drives, low } = mergeDiskSpace(
+    [
+      {
+        id: "sonarr",
+        drives: [
+          { path: "D:\\Media\\TV", label: "", freeSpace: 900 * GIB, totalSpace: 20000 * GIB },
+          { path: "E:\\", label: "Pool disk 1", freeSpace: 5 * GIB, totalSpace: 4000 * GIB },
+          { path: "\\\\nas\\share", label: "", freeSpace: 1 * GIB, totalSpace: 100 * GIB },
+        ],
+      },
+      {
+        id: "radarr",
+        drives: [
+          { path: "D:\\", label: "DrivePool", freeSpace: 900 * GIB, totalSpace: 20000 * GIB },
+          { path: "c:\\", label: "", freeSpace: 30 * GIB, totalSpace: 500 * GIB },
+        ],
+      },
+    ],
+    { ...settings, diskDrives: "C:, D" },
+  );
+  assert.deepEqual(drives.map((d) => d.path), ["c:\\", "D:\\"]);
+  assert.equal(drives[1].seenBy, "sonarr");
+  assert.equal(low.length, 1);
+  assert.equal(low[0].path, "c:\\");
+  assert.deepEqual(parseDiskDrives(" c:\\ ,d;e "), ["C:", "D:", "E:"]);
+  assert.deepEqual(parseDiskDrives(""), []);
 });
 
 test("classifyQbInterface flags unbound and non-VPN adapters", () => {

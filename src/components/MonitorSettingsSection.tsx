@@ -15,6 +15,7 @@ type MonitorSettings = {
   discordNotifyProblemsResolved: boolean;
   discordNotifyOmbiRequests: boolean;
   diskFreeWarnGb: number;
+  diskDrives: string;
   qbRequireInterfaceBind: boolean;
   backupEnabled: boolean;
   backupDir: string;
@@ -163,6 +164,20 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
               onChange={(e) => patch({ diskFreeWarnGb: Number(e.target.value) })}
             />
           </label>
+          <label className="field">
+            <span>Drives to watch (blank = all)</span>
+            <input
+              type="text"
+              placeholder="C:, D:"
+              value={settings.diskDrives}
+              disabled={disabled}
+              onChange={(e) => patch({ diskDrives: e.target.value })}
+            />
+          </label>
+          <p className="settings-hint">
+            D: is the StableBit DrivePool, so its free space already covers the
+            pooled disks — listing them separately is redundant.
+          </p>
           <label className="toggle">
             <input
               type="checkbox"

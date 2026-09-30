@@ -16,6 +16,8 @@ export function defaultMonitorSettings() {
     diskFreeWarnGb: 50,
     /** Drives smaller than this are ignored (recovery / boot partitions). */
     diskMinTotalGb: 20,
+    /** Only these drive letters are shown/alerted (D: is the StableBit DrivePool). Empty = all. */
+    diskDrives: "C:, D:",
     /** Warn when qBittorrent is not bound to a network interface (VPN leak guard). */
     qbRequireInterfaceBind: true,
     /** Scheduled *arr config backups copied to backupDir. */
@@ -46,6 +48,7 @@ function normalize(raw) {
     discordNotifyOmbiRequests: s.discordNotifyOmbiRequests !== false,
     diskFreeWarnGb: clampNumber(s.diskFreeWarnGb, d.diskFreeWarnGb, 0, 100000),
     diskMinTotalGb: clampNumber(s.diskMinTotalGb, d.diskMinTotalGb, 0, 100000),
+    diskDrives: typeof s.diskDrives === "string" ? s.diskDrives.trim() : d.diskDrives,
     qbRequireInterfaceBind: s.qbRequireInterfaceBind !== false,
     backupEnabled: s.backupEnabled === true,
     backupDir: String(s.backupDir || "").trim(),

@@ -117,16 +117,45 @@ function driveKey(p) {
   return String(p || "").trim().toLowerCase().replace(/[\\/]+$/, "");
 }
 
+function driveLetter(p) {
+  const m = /^([a-z]):/i.exec(String(p || "").trim());
+  return m ? `${m[1].toUpperCase()}:` : "";
+}
+
+/** "C:, D" / ["c:\\", "D:"] → ["C:", "D:"]; empty means watch every drive. */
+export function parseDiskDrives(value) {
+  const parts = Array.isArray(value) ? value : String(value || "").split(/[\s,;]+/);
+  const letters = parts
+    .map((p) => {
+      const s = String(p || "").trim();
+      return driveLetter(s) || (/^[a-z]$/i.test(s) ? `${s.toUpperCase()}:` : "");
+    })
+    .filter(Boolean);
+  return [...new Set(letters)];
+}
+
 /**
  * Merge disk lists from several *arr apps (same pool shows up in each) and flag low ones.
+ * With `diskDrives` set, only those letters are kept and every path on a letter
+ * collapses to one entry (a DrivePool member disk is already counted in the pool).
  * @param {{ id: string, drives: { path: string, label: string, freeSpace: number, totalSpace: number }[] }[]} lists
- * @param {{ diskFreeWarnGb: number, diskMinTotalGb: number }} thresholds
+ * @param {{ diskFreeWarnGb: number, diskMinTotalGb: number, diskDrives?: string | string[] }} thresholds
  */
 export function mergeDiskSpace(lists, thresholds) {
+  const allowed = parseDiskDrives(thresholds.diskDrives);
   const byPath = new Map();
   for (const list of lists) {
     for (const d of list.drives || []) {
-      const key = driveKey(d.path);
+      let key = driveKey(d.path);
+      if (allowed.length) {
+        const letter = driveLetter(d.path);
+        if (!letter || !allowed.includes(letter)) continue;
+        key = letter.toLowerCase();
+        const prev = byPath.get(key);
+        if (prev && driveKey(prev.path).length <= driveKey(d.path).length) continue;
+        byPath.set(key, { ...d, seenBy: prev?.seenBy ?? list.id });
+        continue;
+      }
       if (!key || byPath.has(key)) continue;
       byPath.set(key, { ...d, seenBy: list.id });
     }
