@@ -152,6 +152,7 @@ app.post("/api/restart", requireAuth, async (req, res) => {
       exePath: body.exePath,
       exeArgs: body.exeArgs,
       exeCwd: body.exeCwd,
+      processNames: Array.isArray(body.processNames) ? body.processNames : [],
     });
     res.json({ ok: result.ok, message: result.message });
   } catch (err) {
@@ -172,6 +173,7 @@ app.post("/api/service-status", requireAuth, async (req, res) => {
       exeArgs: body.exeArgs,
       exeCwd: body.exeCwd,
       processHints: Array.isArray(body.processHints) ? body.processHints : [],
+      processNames: Array.isArray(body.processNames) ? body.processNames : [],
     });
     res.json(result);
   } catch (err) {

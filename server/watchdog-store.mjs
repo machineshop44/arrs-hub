@@ -28,12 +28,36 @@ export const DEFAULT_WINDOWS_SERVICES = {
   surfshark: "",
   drivepool: "DrivePoolService",
   "stablebit-scanner": "Scanner",
-  plex: "PlexUpdateService",
+  plex: "",
   calibre: "",
   whisparr: "Whisparr",
   ytarr: "",
   flaresolverr: "",
   "trash-guides": "",
+};
+
+/**
+ * Process names as shown in Task Manager → Details (without ".exe").
+ * Used to confirm an app is really running and to force-close a hung one
+ * before restarting. Newer *arr builds run as "<App>.Console.exe".
+ */
+export const DEFAULT_PROCESS_NAMES = {
+  sonarr: ["Sonarr.Console", "Sonarr"],
+  radarr: ["Radarr.Console", "Radarr"],
+  lidarr: ["Lidarr.Console", "Lidarr"],
+  readarr: ["Readarr.Console", "Readarr"],
+  prowlarr: ["Prowlarr.Console", "Prowlarr"],
+  whisparr: ["Whisparr.Console", "Whisparr"],
+  tautulli: ["Tautulli"],
+  ombi: ["Ombi"],
+  plex: ["Plex Media Server"],
+  flaresolverr: ["flaresolverr"],
+  qbittorrent: ["qbittorrent"],
+  sabnzbd: ["SABnzbd"],
+  surfshark: ["Surfshark"],
+  drivepool: ["DrivePool.Service.Native", "DrivePool.Service"],
+  "stablebit-scanner": ["Scanner.Service.Native", "Scanner.Service"],
+  ytarr: ["ytarr"],
 };
 
 function userProfileDir() {
@@ -86,8 +110,14 @@ export function getDefaultExePaths() {
       "Surfshark",
       "Surfshark.exe",
     ),
+    plex: path.join(
+      process.env["ProgramFiles"] || "C:\\Program Files",
+      "Plex",
+      "Plex Media Server",
+      "Plex Media Server.exe",
+    ),
     // Intentionally empty — leave for user:
-    // plex, ombi, flaresolverr, overseerr, calibre, trash-guides
+    // ombi, flaresolverr, overseerr, calibre, trash-guides
   };
 }
 
@@ -107,6 +137,7 @@ function defaultServiceWatch(id, windowsService) {
     exeArgs: "",
     exeCwd: "",
     restartPcId: "",
+    processNames: DEFAULT_PROCESS_NAMES[id] ? [...DEFAULT_PROCESS_NAMES[id]] : [],
   };
 }
 
@@ -171,7 +202,15 @@ export function loadWatchdogSettings() {
       exePath,
       exeArgs: typeof cfg.exeArgs === "string" ? cfg.exeArgs : "",
       exeCwd: typeof cfg.exeCwd === "string" ? cfg.exeCwd : "",
+      processNames:
+        Array.isArray(cfg.processNames) && cfg.processNames.length
+          ? cfg.processNames.map(String)
+          : base.processNames || [],
     };
+    // Old default: restarting Plex *Update* Service never brought Plex Media Server back.
+    if (id === "plex" && /^PlexUpdateService$/i.test(String(cfg.windowsService || ""))) {
+      mergedServices[id].windowsService = "";
+    }
   }
 
   return {

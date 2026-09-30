@@ -137,8 +137,9 @@ export async function requestCompanionRestart(baseUrl, apiKey, serviceCfg) {
         exePath: serviceCfg.exePath || "",
         exeArgs: serviceCfg.exeArgs || "",
         exeCwd: serviceCfg.exeCwd || "",
+        processNames: serviceCfg.processNames || [],
       }),
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(60000),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -192,6 +193,7 @@ export async function requestCompanionServiceStatus(baseUrl, apiKey, serviceCfg)
         exeArgs: serviceCfg.exeArgs || "",
         exeCwd: serviceCfg.exeCwd || "",
         processHints: serviceCfg.processHints || [],
+        processNames: serviceCfg.processNames || [],
       }),
       signal: AbortSignal.timeout(15000),
     });

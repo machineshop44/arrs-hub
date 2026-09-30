@@ -56,6 +56,81 @@ function runPowerShell(command, timeoutMs = 8000) {
   });
 }
 
+/** Task Manager process names (no ".exe"), cleaned for PowerShell. */
+function cleanProcessNames(names) {
+  return [
+    ...new Set(
+      (Array.isArray(names) ? names : [])
+        .map((n) => sanitizePsLiteral(String(n || "").replace(/\.exe$/i, ""), 80).trim())
+        .filter(Boolean),
+    ),
+  ].slice(0, 8);
+}
+
+/**
+ * Processes currently running under any of `names`.
+ * @returns {Promise<{ ok: boolean, running: { name: string, pid: number }[] }>}
+ */
+export async function findProcessesByName(names) {
+  const list = cleanProcessNames(names);
+  if (process.platform !== "win32" || list.length === 0) return { ok: false, running: [] };
+  const ps = `
+$ErrorActionPreference = 'SilentlyContinue'
+Get-Process -Name @(${list.map((n) => `'${n}'`).join(",")}) | ForEach-Object { Write-Output ("P=" + $_.ProcessName + "|" + $_.Id) }
+Write-Output 'DONE'
+`;
+  const result = await runPowerShell(ps, 8000);
+  const out = String(result.stdout || "");
+  if (!out.includes("DONE")) return { ok: false, running: [] };
+  const running = [...out.matchAll(/^P=(.+)\|(\d+)\s*$/gm)].map((m) => ({
+    name: m[1],
+    pid: Number(m[2]),
+  }));
+  return { ok: true, running };
+}
+
+/** Force-close every process with one of `names` (Task Manager → End task). */
+export async function killProcessesByName(names) {
+  const list = cleanProcessNames(names);
+  if (process.platform !== "win32" || list.length === 0) {
+    return { ok: true, killed: 0, message: "No process names to force-close" };
+  }
+  const ps = `
+$ErrorActionPreference = 'SilentlyContinue'
+$killed = 0
+Get-Process -Name @(${list.map((n) => `'${n}'`).join(",")}) | ForEach-Object {
+  try { Stop-Process -Id $_.Id -Force -ErrorAction Stop; $killed++ } catch {}
+}
+Start-Sleep -Milliseconds 1500
+Write-Output ("KILLED=" + $killed)
+`;
+  const result = await runPowerShell(ps, 20000);
+  const killed = Number(String(result.stdout || "").match(/KILLED=(\d+)/)?.[1] || 0);
+  return {
+    ok: true,
+    killed,
+    message: killed > 0 ? `Force-closed ${killed} process(es) (${list.join(", ")})` : `No ${list.join("/")} process was running`,
+  };
+}
+
+function startServiceOnly(name) {
+  const safe = sanitizePsLiteral(name, 120).replace(/'/g, "");
+  const ps = `
+$ErrorActionPreference = 'Stop'
+try {
+  $s = Get-Service -Name '${safe}' -ErrorAction Stop
+  if ($s.Status -ne 'Running') { Start-Service -Name '${safe}' -ErrorAction Stop }
+  Write-Output 'STARTED'
+} catch { Write-Output ('FAIL=' + $_.Exception.Message) }
+`;
+  return runPowerShell(ps, 45000).then((r) => {
+    const out = String(r.stdout || "").trim();
+    return /STARTED/.test(out)
+      ? { ok: true, message: `Started Windows service "${name}"` }
+      : { ok: false, message: out.replace(/^FAIL=/, "") || `Could not start service "${name}"` };
+  });
+}
+
 /**
  * Prefer Restart-Service when running; Start-Service when stopped.
  * Hung services often look "Running" — Restart-Service is the real recovery.
@@ -194,6 +269,7 @@ async function killMatchingProcesses(serviceCfg, launch) {
   if (exeBase && !/^dotnet$/i.test(exeBase)) {
     names.push(sanitizePsLiteral(exeBase, 80));
   }
+  for (const n of cleanProcessNames(serviceCfg?.processNames)) names.push(n);
 
   const unique = [...new Set(names.filter(Boolean))];
   if (unique.length === 0) {
@@ -378,8 +454,19 @@ export async function restartServiceOrExe(serviceCfg) {
   const exePath = String(launch.exePath || "").trim();
 
   if (serviceName && windowsServiceExists(serviceName)) {
-    const serviceResult = await startWindowsService(serviceName);
+    let serviceResult = await startWindowsService(serviceName);
     if (serviceResult.ok) return serviceResult;
+    // Hung service process: Restart-Service times out or fails — end task, then start.
+    const processNames = serviceCfg.processNames || [];
+    if (processNames.length) {
+      const kill = await killProcessesByName(processNames);
+      const retry = await startServiceOnly(serviceName);
+      serviceResult = {
+        ok: retry.ok,
+        message: `${serviceResult.message}; ${kill.message}; ${retry.message}`,
+      };
+      if (retry.ok) return serviceResult;
+    }
     if (exePath) {
       const kill = await killMatchingProcesses(serviceCfg, launch);
       const exeResult = await startWithFallbacks(serviceCfg, launch);
@@ -537,6 +624,24 @@ try {
         serviceState: null,
         latencyMs,
         message: `Service "${serviceName}" not found`,
+      };
+    }
+  }
+
+  const taskNames = cleanProcessNames(serviceCfg.processNames);
+  if (taskNames.length && !role) {
+    const found = await findProcessesByName(taskNames);
+    if (found.ok) {
+      const hit = found.running[0];
+      return {
+        ok: true,
+        running: Boolean(hit),
+        method: "process",
+        serviceState: null,
+        latencyMs: Date.now() - started,
+        message: hit
+          ? `Process running (${hit.name}.exe pid=${hit.pid})`
+          : `No ${taskNames.join(" / ")} process running`,
       };
     }
   }

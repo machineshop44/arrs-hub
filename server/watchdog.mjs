@@ -17,6 +17,7 @@ import {
 } from "./companion-client.mjs";
 import {
   checkLocalServiceStatus,
+  findProcessesByName,
   restartServiceOrExe,
 } from "./restart-windows.mjs";
 import { windowsServiceExists } from "./fileflows-launch.mjs";
@@ -65,6 +66,18 @@ async function probeLocalService(target, serviceCfg) {
     };
   }
   if (!windowsServiceExists(serviceName)) {
+    // Service name differs on this install — the process list still tells us if it runs.
+    if (Array.isArray(serviceCfg.processNames) && serviceCfg.processNames.length) {
+      const found = await findProcessesByName(serviceCfg.processNames);
+      if (found.ok && found.running.length) {
+        const hit = found.running[0];
+        return {
+          up: true,
+          latencyMs: null,
+          message: `Process running (${hit.name}.exe pid=${hit.pid}); service "${serviceName}" not found`,
+        };
+      }
+    }
     // Not installed on this PC — stay grey instead of alerting / restarting.
     return {
       up: null,
@@ -364,6 +377,48 @@ function checkPort(host, port, timeoutMs = 2500) {
     );
     socket.on("error", (err) => finish(false, humanizeSocketError(err)));
   });
+}
+
+/**
+ * After the TCP port opens, make sure the web UI actually answers. A frozen
+ * app can keep its port open while never replying. Any HTTP status counts as
+ * alive (401/404 included); only a timeout or dropped connection is a fail.
+ */
+export async function checkHttpAlive(rawUrl, timeoutMs = 8000) {
+  let url;
+  try {
+    url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(rawUrl) ? rawUrl : `http://${rawUrl}`);
+  } catch {
+    return { up: true, message: "Port open" };
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return { up: true, message: "Port open" };
+  }
+  const started = Date.now();
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      redirect: "manual",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    res.body?.cancel().catch(() => {});
+    return { up: true, latencyMs: Date.now() - started, message: `Port open · web UI answered (HTTP ${res.status})` };
+  } catch (err) {
+    const name = err?.name || "";
+    if (name === "TimeoutError" || name === "AbortError") {
+      return {
+        up: false,
+        latencyMs: null,
+        message: `Port open but the web UI did not answer within ${Math.round(timeoutMs / 1000)}s — app looks hung`,
+      };
+    }
+    const code = String(err?.cause?.code || "");
+    // TLS / protocol quirks mean something is serving; only treat resets as hung.
+    if (code === "ECONNRESET" || code === "UND_ERR_SOCKET") {
+      return { up: false, latencyMs: null, message: "Port open but the connection dropped before the web UI answered — app looks hung" };
+    }
+    return { up: true, latencyMs: Date.now() - started, message: "Port open" };
+  }
 }
 
 /** Map Node net errors to plain-language Port Watch detail. */
@@ -669,6 +724,14 @@ async function checkOne(target) {
       parsed.port,
       inStartupGrace ? 5000 : 2500,
     );
+    if (result.up) {
+      const web = await checkHttpAlive(target.url, inStartupGrace ? 15000 : 8000);
+      result = {
+        up: web.up,
+        latencyMs: web.up ? (result.latencyMs ?? web.latencyMs ?? null) : null,
+        message: web.message,
+      };
+    }
   }
 
   // First minutes after Hub start: treat hard fails as "still verifying"
