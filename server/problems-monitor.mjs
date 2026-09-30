@@ -18,13 +18,19 @@ let running = false;
 let lastSnapshot = null;
 let lastError = null;
 
-/** @returns {{ active: Record<string, { title: string, severity: string, kind: string, firstSeen: string, misses: number }> }} */
+/**
+ * `dismissed` = problems the user cleared from the dashboard chip; hidden until they resolve.
+ * @returns {{ active: Record<string, { title: string, severity: string, kind: string, firstSeen: string, misses: number }>, dismissed: Record<string, { at: string, misses: number }> }}
+ */
 function loadState() {
   try {
     const raw = JSON.parse(fs.readFileSync(STATE_PATH, "utf8"));
-    return { active: raw && typeof raw.active === "object" ? raw.active : {} };
+    return {
+      active: raw && typeof raw.active === "object" && raw.active ? raw.active : {},
+      dismissed: raw && typeof raw.dismissed === "object" && raw.dismissed ? raw.dismissed : {},
+    };
   } catch {
-    return { active: {} };
+    return { active: {}, dismissed: {} };
   }
 }
 
@@ -77,7 +83,72 @@ export function diffProblems(state, problems, failedSources, now = new Date().to
     }
   }
 
-  return { state: { active }, added, resolved };
+  return { state: { ...state, active }, added, resolved };
+}
+
+/**
+ * Forget dismissals whose problem has been gone RESOLVE_AFTER_MISSES scans, so a
+ * recurrence shows again. Only kinds covered by this scan are aged.
+ * Exported for tests.
+ * @param {Record<string, { at: string, misses: number }>} dismissed
+ * @param {{ key: string }[]} problems
+ * @param {string[]} failedSources
+ * @param {string[] | null} [coveredKinds] null = every kind was scanned
+ */
+export function pruneDismissed(dismissed, problems, failedSources, coveredKinds = null) {
+  const failed = new Set(failedSources);
+  const current = new Set(problems.map((p) => p.key));
+  const next = {};
+  for (const [key, entry] of Object.entries(dismissed || {})) {
+    const kind = key.split(":")[0];
+    if (current.has(key) || failed.has(sourceOfKey(key)) || (coveredKinds && !coveredKinds.includes(kind))) {
+      next[key] = { ...entry, misses: current.has(key) ? 0 : entry.misses || 0 };
+      continue;
+    }
+    const misses = (entry.misses || 0) + 1;
+    if (misses < RESOLVE_AFTER_MISSES) next[key] = { ...entry, misses };
+  }
+  return next;
+}
+
+/**
+ * Hide dismissed problems from a snapshot and age out resolved dismissals.
+ * @template {{ problems: { key: string }[], failedSources: string[] }} T
+ * @param {T} snapshot
+ * @param {string[] | null} [coveredKinds]
+ */
+export function applyDismissals(snapshot, coveredKinds = null) {
+  const state = loadState();
+  const dismissed = pruneDismissed(state.dismissed, snapshot.problems, snapshot.failedSources, coveredKinds);
+  if (JSON.stringify(dismissed) !== JSON.stringify(state.dismissed)) {
+    saveState({ ...state, dismissed });
+  }
+  const visible = snapshot.problems.filter((p) => !dismissed[p.key]);
+  return {
+    ...snapshot,
+    problems: visible,
+    dismissedCount: snapshot.problems.length - visible.length,
+  };
+}
+
+/** @param {string[]} keys */
+export function dismissProblems(keys) {
+  const state = loadState();
+  const now = new Date().toISOString();
+  const dismissed = { ...state.dismissed };
+  for (const key of keys || []) {
+    const k = String(key || "").trim();
+    if (k) dismissed[k] = { at: now, misses: 0 };
+  }
+  saveState({ ...state, dismissed });
+  return Object.keys(dismissed).length;
+}
+
+export function restoreDismissedProblems() {
+  const state = loadState();
+  const count = Object.keys(state.dismissed).length;
+  saveState({ ...state, dismissed: {} });
+  return count;
 }
 
 function formatLines(items, render) {
@@ -142,6 +213,7 @@ export async function runProblemsScan() {
       snapshot.failedSources,
     );
     saveState(state);
+    applyDismissals(snapshot);
     const webhookUrl = loadWatchdogSettings().discordWebhookUrl || "";
     await notify(added, resolved, settings, webhookUrl);
     return snapshot;

@@ -6,7 +6,7 @@ import {
   mergeDiskSpace,
   parseDiskDrives,
 } from "./problems.mjs";
-import { diffProblems } from "./problems-monitor.mjs";
+import { diffProblems, pruneDismissed } from "./problems-monitor.mjs";
 
 const GIB = 1024 ** 3;
 const settings = { diskFreeWarnGb: 50, diskMinTotalGb: 20, qbRequireInterfaceBind: true };
@@ -106,4 +106,18 @@ test("diffProblems alerts once and resolves only after repeated misses", () => {
   r = diffProblems(r.state, [], []);
   assert.equal(r.resolved.length, 1);
   assert.deepEqual(r.state.active, {});
+});
+
+test("pruneDismissed keeps cleared problems hidden until they resolve", () => {
+  const p = { key: "disk:c:" };
+  let d = { "disk:c:": { at: "x", misses: 0 }, "queue:sonarr:1": { at: "x", misses: 0 } };
+  d = pruneDismissed(d, [p], [], ["health", "disk", "vpn"]);
+  assert.ok(d["disk:c:"], "still present → stays dismissed");
+  assert.ok(d["queue:sonarr:1"], "kind not scanned → untouched");
+  d = pruneDismissed(d, [], ["disk"]);
+  assert.ok(d["disk:c:"], "failed source never ages out");
+  d = pruneDismissed(d, [], []);
+  assert.ok(d["disk:c:"]);
+  d = pruneDismissed(d, [], []);
+  assert.deepEqual(d, {}, "gone twice → forgotten so a recurrence shows again");
 });

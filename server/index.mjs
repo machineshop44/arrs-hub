@@ -66,7 +66,10 @@ import {
 import { getChipAppVersions } from "./app-versions.mjs";
 import { collectProblems } from "./problems.mjs";
 import {
+  applyDismissals,
+  dismissProblems,
   getProblemsMonitorStatus,
+  restoreDismissedProblems,
   runProblemsScan,
   startProblemsMonitor,
 } from "./problems-monitor.mjs";
@@ -758,10 +761,23 @@ app.post("/api/status/problems", async (req, res) => {
     const result = await collectProblems({
       resolver: serviceUrlResolverForRequest(req),
     });
-    res.json({ ...result, monitor: getProblemsMonitorStatus() });
+    res.json({
+      ...applyDismissals(result, ["health", "disk", "vpn"]),
+      monitor: getProblemsMonitorStatus(),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message || String(err) });
   }
+});
+
+app.post("/api/status/problems/dismiss", (req, res) => {
+  const keys = Array.isArray(req.body?.keys) ? req.body.keys.map(String).slice(0, 500) : [];
+  if (!keys.length) return res.status(400).json({ error: "keys required" });
+  res.json({ ok: true, dismissed: dismissProblems(keys) });
+});
+
+app.post("/api/status/problems/restore", (_req, res) => {
+  res.json({ ok: true, restored: restoreDismissedProblems() });
 });
 
 app.post("/api/activity/queue/remove", async (req, res) => {

@@ -86,6 +86,8 @@ export type HubProblem = {
 
 type ProblemsSnapshot = {
   problems: HubProblem[];
+  /** Problems the user cleared; hidden until they resolve and recur. */
+  dismissedCount?: number;
   disk?: {
     drives: { path: string; label: string; freeGb: number; totalGb: number; low: boolean }[];
     thresholdGb?: number;
@@ -246,6 +248,7 @@ export function DashboardStatus({
   const [problemsOpen, setProblemsOpen] = useState(false);
   const problemsWrapRef = useRef<HTMLDivElement>(null);
   const problemsFetchedAtRef = useRef(0);
+  const [problemsBusy, setProblemsBusy] = useState(false);
   const [queueBusyKey, setQueueBusyKey] = useState<string | null>(null);
   const [queueActionMsg, setQueueActionMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [chipVersions, setChipVersions] = useState<ChipVersionsPayload | null>(
@@ -882,6 +885,47 @@ export function DashboardStatus({
   const stackProblems = (problemsSnap?.problems ?? []).filter(
     (p) => p.kind !== "queue" && p.kind !== "ombi",
   );
+
+  const dismissProblems = async (keys: string[]) => {
+    if (!keys.length) return;
+    setProblemsBusy(true);
+    try {
+      const res = await fetch("/api/status/problems/dismiss", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keys }),
+      });
+      if (!res.ok) return;
+      const gone = new Set(keys);
+      setProblemsSnap((prev) =>
+        prev
+          ? {
+              ...prev,
+              problems: prev.problems.filter((p) => !gone.has(p.key)),
+              dismissedCount: (prev.dismissedCount ?? 0) + keys.length,
+            }
+          : prev,
+      );
+    } finally {
+      setProblemsBusy(false);
+    }
+  };
+
+  const restoreProblems = async () => {
+    setProblemsBusy(true);
+    try {
+      await fetch("/api/status/problems/restore", { method: "POST" });
+      problemsFetchedAtRef.current = Date.now();
+      const res = await fetch("/api/status/problems", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urls }),
+      });
+      if (res.ok) setProblemsSnap((await res.json()) as ProblemsSnapshot);
+    } finally {
+      setProblemsBusy(false);
+    }
+  };
 
   const arrUpdateCount = chipVersions?.hub?.arrUpdateCount ?? 0;
   const arrStatusRows = chipVersions?.arrs ?? [];
@@ -1960,19 +2004,55 @@ export function DashboardStatus({
                                 <span className="dash-queue-issue-msg">{p.detail}</span>
                               ) : null}
                             </div>
-                            {p.url ? (
-                              <a
-                                className="dash-queue-issue-link"
-                                href={p.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
+                            <div className="dash-ombi-actions">
+                              {p.url ? (
+                                <a
+                                  className="dash-queue-issue-link"
+                                  href={p.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  How to fix
+                                </a>
+                              ) : null}
+                              <button
+                                type="button"
+                                className="dash-ombi-deny"
+                                disabled={problemsBusy}
+                                title="Hide this until it resolves (it shows again if it comes back)"
+                                onClick={() => void dismissProblems([p.key])}
                               >
-                                How to fix
-                              </a>
-                            ) : null}
+                                Clear
+                              </button>
+                            </div>
                           </li>
                         ))}
                       </ul>
+                    )}
+                    {(stackProblems.length > 0 || (problemsSnap?.dismissedCount ?? 0) > 0) && (
+                      <div className="dash-ombi-actions">
+                        {stackProblems.length > 0 ? (
+                          <button
+                            type="button"
+                            className="dash-ombi-deny"
+                            disabled={problemsBusy}
+                            title="Hide all current problems until they resolve"
+                            onClick={() => void dismissProblems(stackProblems.map((p) => p.key))}
+                          >
+                            Clear all
+                          </button>
+                        ) : null}
+                        {(problemsSnap?.dismissedCount ?? 0) > 0 ? (
+                          <button
+                            type="button"
+                            className="dash-ombi-approve"
+                            disabled={problemsBusy}
+                            onClick={() => void restoreProblems()}
+                          >
+                            Show {problemsSnap?.dismissedCount} cleared
+                          </button>
+                        ) : null}
+                      </div>
                     )}
                     {drives.length > 0 && (
                       <>
