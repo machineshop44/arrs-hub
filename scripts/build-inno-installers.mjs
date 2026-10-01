@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { signWindowsArtifacts } from "./sign-windows-artifacts.mjs";
+import { readCompanionVersion } from "./companion-version.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -16,6 +17,7 @@ const pkg = JSON.parse(
   fs.readFileSync(path.join(root, "package.json"), "utf8"),
 );
 const version = pkg.version;
+const companionVersion = readCompanionVersion().version;
 
 const PRODUCTS = [
   {
@@ -24,6 +26,7 @@ const PRODUCTS = [
     iss: path.join(root, "packaging", "arrs-hub.iss"),
     unpacked: path.join(root, "release", "win-unpacked"),
     outputDir: path.join(root, "release"),
+    version,
     installerName: `Arrs Hub-${version}-x64.exe`,
   },
   {
@@ -32,7 +35,8 @@ const PRODUCTS = [
     iss: path.join(root, "packaging", "arrs-hub-companion.iss"),
     unpacked: path.join(root, "release-companion", "win-unpacked"),
     outputDir: path.join(root, "release-companion"),
-    installerName: `Arrs Hub Companion-${version}-x64.exe`,
+    version: companionVersion,
+    installerName: `Arrs Hub Companion-${companionVersion}-x64.exe`,
   },
 ];
 
@@ -68,10 +72,10 @@ function buildOne(iscc, product) {
   }
 
   fs.mkdirSync(product.outputDir, { recursive: true });
-  console.log(`[inno] Compiling ${product.label} ${version} …`);
+  console.log(`[inno] Compiling ${product.label} ${product.version} …`);
   const result = spawnSync(
     iscc,
-    [`/DMyAppVersion=${version}`, product.iss],
+    [`/DMyAppVersion=${product.version}`, product.iss],
     { cwd: root, stdio: "inherit", windowsHide: true },
   );
   if (result.status !== 0) {

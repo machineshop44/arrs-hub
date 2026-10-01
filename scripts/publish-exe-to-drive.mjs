@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { signWindowsArtifacts } from "./sign-windows-artifacts.mjs";
 import { signingStatusLine } from "./signing-env.mjs";
+import { readCompanionVersion } from "./companion-version.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -23,6 +24,7 @@ const pkg = JSON.parse(
   fs.readFileSync(path.join(root, "package.json"), "utf8"),
 );
 const version = pkg.version;
+const companionVersion = readCompanionVersion().version;
 
 function hubArtifact(filename) {
   const dirs = ["release", "release-133", "release-135", "release-137"];
@@ -52,6 +54,7 @@ function companionArtifact(filename) {
 const artifactGroups = [
   {
     prefix: "Arrs Hub",
+    version,
     items: [
       { label: "NSIS/Inno installer", file: `Arrs Hub-${version}-x64.exe` },
       { label: "portable", file: `Arrs Hub-${version}-portable.exe` },
@@ -60,14 +63,15 @@ const artifactGroups = [
   },
   {
     prefix: "Arrs Hub Companion",
+    version: companionVersion,
     items: [
       {
         label: "NSIS/Inno installer",
-        file: `Arrs Hub Companion-${version}-x64.exe`,
+        file: `Arrs Hub Companion-${companionVersion}-x64.exe`,
       },
       {
         label: "portable",
-        file: `Arrs Hub Companion-${version}-portable.exe`,
+        file: `Arrs Hub Companion-${companionVersion}-portable.exe`,
       },
     ],
     resolve: companionArtifact,
@@ -80,22 +84,56 @@ function sha256File(filePath) {
   return hash.digest("hex").toUpperCase();
 }
 
-function pruneOldOnDrive(prefix) {
-  if (!fs.existsSync(driveDir)) return;
+function pruneOldVersions(dir, prefix, keepVersion, extRe, tag) {
+  if (!fs.existsSync(dir)) return;
   const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const keepVer = version.replace(/\./g, "\\.");
-  const re = new RegExp(`^${escaped}-(?!${keepVer})`);
-  for (const name of fs.readdirSync(driveDir)) {
-    if (!re.test(name)) continue;
-    if (!/\.(exe|txt)$/i.test(name)) continue;
-    const full = path.join(driveDir, name);
+  const re = new RegExp(`^${escaped}-(\\d+\\.\\d+\\.\\d+)-`);
+  for (const name of fs.readdirSync(dir)) {
+    const m = re.exec(name);
+    if (!m || m[1] === keepVersion) continue;
+    if (!extRe.test(name)) continue;
     try {
-      fs.unlinkSync(full);
-      console.log(`[publish] Removed old ${name}`);
+      fs.unlinkSync(path.join(dir, name));
+      console.log(`[publish] Removed old ${tag} ${name}`);
     } catch {
-      console.warn(`[publish] Could not remove ${name}`);
+      console.warn(`[publish] Could not remove ${tag} ${name}`);
     }
   }
+}
+
+function pruneLocalReleaseDirs() {
+  pruneOldVersions(
+    path.join(root, "release"),
+    "Arrs Hub",
+    version,
+    /\.(exe|blockmap|txt)$/i,
+    "local",
+  );
+  pruneOldVersions(
+    path.join(root, "release-companion"),
+    "Arrs Hub Companion",
+    companionVersion,
+    /\.(exe|blockmap|txt)$/i,
+    "local",
+  );
+  const notesDir = path.join(root, "release");
+  if (!fs.existsSync(notesDir)) return;
+  for (const name of fs.readdirSync(notesDir)) {
+    const m = /^(?:notes-|RELEASE[-_]NOTES[-_])(\d+\.\d+\.\d+)\.md$/i.exec(name);
+    if (!m || m[1] === version) continue;
+    try {
+      fs.unlinkSync(path.join(notesDir, name));
+      console.log(`[publish] Removed old local ${name}`);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function sameFile(a, b) {
+  if (!fs.existsSync(b)) return false;
+  if (fs.statSync(a).size !== fs.statSync(b).size) return false;
+  return sha256File(a) === sha256File(b);
 }
 
 if (!fs.existsSync(driveDir)) {
@@ -119,28 +157,31 @@ for (const group of artifactGroups) {
       console.warn(`[publish] SKIP ${item.label} — missing ${src}`);
       continue;
     }
-    toSign.push(src);
     const dest = path.join(driveDir, path.basename(src));
-    fs.copyFileSync(src, dest);
     const hash = sha256File(src);
     shaLines.push(`${path.basename(src)}  ${hash}`);
+    if (sameFile(src, dest)) {
+      console.log(`[publish] ${item.label} unchanged on Drive — ${dest}`);
+      continue;
+    }
+    toSign.push(src);
+    fs.copyFileSync(src, dest);
     console.log(`[publish] ${item.label} → ${dest}`);
     copied += 1;
     groupCopied += 1;
   }
 
-  // Only prune older Drive copies after this version actually landed.
-  if (groupCopied > 0) {
-    pruneOldOnDrive(group.prefix);
+  if (shaLines.length > 0) {
+    pruneOldVersions(driveDir, group.prefix, group.version, /\.(exe|txt)$/i, "Drive");
   }
 
-  if (shaLines.length > 0) {
+  if (groupCopied > 0) {
     shaLines.push("");
     shaLines.push(signingStatusLine());
     shaLines.push(
       "Verify: Get-FileHash -Algorithm SHA256 .\\<filename>",
     );
-    const shaName = `${group.prefix}-${version}-SHA256.txt`;
+    const shaName = `${group.prefix}-${group.version}-SHA256.txt`;
     const shaPath = path.join(driveDir, shaName);
     fs.writeFileSync(shaPath, `${shaLines.join("\r\n")}\r\n`, "utf8");
     console.log(`[publish] Checksums → ${shaPath}`);
@@ -164,11 +205,11 @@ if (toSign.length > 0) {
   }
 }
 
+pruneLocalReleaseDirs();
+
 if (copied === 0) {
-  console.error(
-    "[publish] Nothing copied. Run npm run dist:win:all && npm run build:inno first.",
-  );
-  process.exit(1);
+  console.log("[publish] Drive already up to date — nothing copied.");
+  process.exit(0);
 }
 
 console.log(`[publish] Done (${copied} exe(s) + checksums in ${driveDir}).`);

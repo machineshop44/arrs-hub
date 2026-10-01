@@ -21,7 +21,9 @@
     "build:inno": "node scripts/build-inno-installers.mjs",
     "publish:exe": "node scripts/publish-exe-to-drive.mjs",
     "copy:exe": "npm run publish:exe",
-    "dist:win:all": "npm run dist:win && npm run dist:win:companion && npm run publish:exe",
+    "dist:win:all": "node scripts/dist-win-all.mjs",
+    "companion:bump": "node scripts/companion-version.mjs --bump",
+    "companion:status": "node scripts/companion-version.mjs",
     "build:win": "npm run dist:win",
     "pack:win": "npm run predist && npm run build && electron-builder --win --dir"
   },

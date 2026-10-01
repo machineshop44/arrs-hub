@@ -12,6 +12,19 @@ import {
 } from "./tautulli.mjs";
 import { getHubLocalFileFlowsVersions } from "./hub-local-versions.mjs";
 import { createServiceUrlResolver } from "./url-policy.mjs";
+import fs from "node:fs";
+
+let cachedCompanionLatest;
+function latestCompanionVersion() {
+  if (cachedCompanionLatest !== undefined) return cachedCompanionLatest;
+  try {
+    const raw = fs.readFileSync(new URL("./companion-version.json", import.meta.url), "utf8");
+    cachedCompanionLatest = shortAppVersion(JSON.parse(raw).version) || null;
+  } catch {
+    cachedCompanionLatest = null;
+  }
+  return cachedCompanionLatest;
+}
 
 function normalizeBase(url) {
   return String(url || "")
@@ -696,7 +709,7 @@ export async function getChipAppVersions(opts = {}) {
   const liveCompanionVersion = shortAppVersion(companionHealth?.version) || null;
   const companionVersion =
     liveCompanionVersion || shortAppVersion(companionPc?.companionVersion) || null;
-  const hubVersion = shortAppVersion(opts.hubVersion) || null;
+  const latestCompanion = latestCompanionVersion();
   let companionApps = mergeCompanionAppRows(
     [qbit, sab],
     companionLocals?.apps || [],
@@ -724,8 +737,11 @@ export async function getChipAppVersions(opts = {}) {
           /** "live" = answered just now; "registered" = last version it reported when registering. */
           versionSource: liveCompanionVersion ? "live" : companionVersion ? "registered" : null,
           lastRegisterAt: companionPc.lastRegisterAt || null,
+          latestVersion: latestCompanion,
           outdated: Boolean(
-            companionVersion && hubVersion && compareSemver(companionVersion, hubVersion) < 0,
+            companionVersion &&
+              latestCompanion &&
+              compareSemver(companionVersion, latestCompanion) < 0,
           ),
           appUpdateCount: companionUpdatesAvailable.length,
           apps: companionApps,

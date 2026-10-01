@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyElectronBuilderSigningEnv } from "./signing-env.mjs";
+import { readCompanionVersion } from "./companion-version.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -42,11 +43,13 @@ if (product === "hub") {
   run("npm", ["run", "build"]);
   run("npx", ["electron-builder", "--win"]);
 } else {
+  const { version } = readCompanionVersion();
   run("npx", [
     "electron-builder",
     "--win",
     "--config",
     "electron-builder-companion.json",
+    `-c.extraMetadata.version=${version}`,
   ]);
 }
 
