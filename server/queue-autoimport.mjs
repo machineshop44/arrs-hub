@@ -3,7 +3,10 @@ import { createServiceUrlResolver } from "./url-policy.mjs";
 
 /** Queue messages that mean "the app wants a human to confirm the import". */
 const MANUAL_IMPORT_MSG =
-  /manual import|matched to (series|movie) by id|automatic import is not possible|was unexpected considering|unable to determine|not found in grab history|import (is )?blocked/i;
+  /manual import|matched to (series|movie) by id|automatic import is not possible|was unexpected considering|unable to determine|not found in grab history|import (is )?blocked|tba title/i;
+
+/** Sonarr "Episode Title Required" block — safe to approve once the file name matches. */
+const SOFT_REJECTION = /tba title/i;
 
 export const AUTO_IMPORT_APPS = new Set(["sonarr", "radarr"]);
 
@@ -31,29 +34,39 @@ function fileBaseName(p) {
   return String(p || "").split(/[\\/]/).pop() || "";
 }
 
-function hasEpisodeTag(name, season, episode) {
-  const s = Number(season);
-  const e = Number(episode);
+function hasEpisodeTag(name, ep) {
+  const s = Number(ep?.seasonNumber);
+  const e = Number(ep?.episodeNumber);
   if (!Number.isInteger(s) || !Number.isInteger(e)) return false;
   const sxe = new RegExp(`(^|[^a-z0-9])s0*${s}[ ._-]?e0*${e}(?!\\d)`, "i");
   const nxn = new RegExp(`(^|[^0-9])${s}x0*${e}(?!\\d)`, "i");
   // Multi-episode files: S01E01E02 / S01E01-E02 — each extra episode appears as E0n.
   const extra = new RegExp(`(^|[^a-z0-9])s0*${s}(e\\d+[ ._-]?)*[ ._-]?e0*${e}(?!\\d)`, "i");
-  return sxe.test(name) || nxn.test(name) || extra.test(name);
+  // Anime fansub style: "Show S2 - 01 (1080p)".
+  const animeSeason = new RegExp(`(^|[^a-z0-9])s0*${s} - 0*${e}(?!\\d)`, "i");
+  if (sxe.test(name) || nxn.test(name) || extra.test(name) || animeSeason.test(name)) return true;
+  // Anime absolute numbering: "Show - 13 (1080p)".
+  const abs = Number(ep?.absoluteEpisodeNumber);
+  return Number.isInteger(abs) && abs > 0 && new RegExp(` - 0*${abs}(?!\\d)`).test(name);
+}
+
+function seriesTitles(series) {
+  const alts = Array.isArray(series?.alternateTitles) ? series.alternateTitles : [];
+  return [series?.title, ...alts.map((a) => a?.title || a?.sceneName)].map(normTitle).filter(Boolean);
 }
 
 /**
- * File name must contain the series title and every episode's SxxEyy tag.
+ * File name must contain the series title (or a Sonarr alternate title) and every episode's tag.
  * @param {string} filePath
- * @param {{ title?: string }} series
- * @param {{ seasonNumber: number, episodeNumber: number }[]} episodes
+ * @param {{ title?: string, alternateTitles?: { title?: string }[] }} series
+ * @param {{ seasonNumber: number, episodeNumber: number, absoluteEpisodeNumber?: number }[]} episodes
  */
 export function fileMatchesSeries(filePath, series, episodes) {
   const name = fileBaseName(filePath);
-  const title = normTitle(series?.title);
-  if (!title || !normTitle(name).includes(title)) return false;
+  const normName = normTitle(name);
+  if (!seriesTitles(series).some((t) => normName.includes(t))) return false;
   if (!Array.isArray(episodes) || episodes.length === 0) return false;
-  return episodes.every((ep) => hasEpisodeTag(name, ep.seasonNumber, ep.episodeNumber));
+  return episodes.every((ep) => hasEpisodeTag(name, ep));
 }
 
 /**
@@ -86,8 +99,11 @@ export function planAutoImport(app, candidates, expected) {
   if (list.length === 0) return { reason: "no importable files" };
   const files = [];
   for (const c of list) {
-    if (Array.isArray(c.rejections) && c.rejections.length > 0) {
-      return { reason: `rejected: ${String(c.rejections[0]?.reason || c.rejections[0])}` };
+    const hard = (Array.isArray(c.rejections) ? c.rejections : []).filter(
+      (r) => !SOFT_REJECTION.test(String(r?.reason || r || "")),
+    );
+    if (hard.length > 0) {
+      return { reason: `rejected: ${String(hard[0]?.reason || hard[0])}` };
     }
     if (!c.quality) return { reason: "unknown quality" };
     if (app === "sonarr") {
@@ -152,7 +168,15 @@ export async function autoImportDownload(app, group, resolver) {
   const apiKey = getArrApiKey(app);
   if (!base || !apiKey) return { skipped: "not configured" };
   const qs = new URLSearchParams({ downloadId: group.downloadId, filterExistingFiles: "true" });
-  const candidates = await arrFetch(base, apiKey, `/manualimport?${qs}`);
+  let candidates = await arrFetch(base, apiKey, `/manualimport?${qs}`);
+  if (app === "sonarr" && group.seriesId && Array.isArray(candidates)) {
+    const full = await arrFetch(base, apiKey, `/series/${group.seriesId}`).catch(() => null);
+    if (full) {
+      candidates = candidates.map((c) =>
+        c.series?.id === full.id ? { ...c, series: { ...full, ...c.series, alternateTitles: full.alternateTitles } } : c,
+      );
+    }
+  }
   const plan = planAutoImport(app, candidates, group);
   if (!("files" in plan)) return { skipped: plan.reason };
   await arrFetch(base, apiKey, "/command", {

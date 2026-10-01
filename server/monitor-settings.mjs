@@ -28,6 +28,8 @@ export function defaultMonitorSettings() {
     autoFixFailed: true,
     /** Accept Sonarr/Radarr manual imports when every file name matches the grabbed series/episodes or movie. */
     autoFixManualImport: true,
+    /** Same episode/movie downloading twice → keep highest resolution, then custom format score. */
+    autoFixDuplicates: true,
     /** Non-destructive health fixes: nudge imports, re-test clients/indexers/Prowlarr apps, cancel hung refreshes. */
     autoFixHealth: true,
     /** Private trackers with seed-time rules: remove from the *arr only, never from qBittorrent. */
@@ -76,6 +78,7 @@ function normalize(raw) {
     autoFixFailed: s.autoFixFailed !== false,
     autoFixManualImport: s.autoFixManualImport !== false,
     autoFixHealth: s.autoFixHealth !== false,
+    autoFixDuplicates: s.autoFixDuplicates !== false,
     keepSeedingIndexers:
       typeof s.keepSeedingIndexers === "string" ? s.keepSeedingIndexers.trim() : d.keepSeedingIndexers,
     autoFixMaxPerScan: Math.round(clampNumber(s.autoFixMaxPerScan, d.autoFixMaxPerScan, 1, 50)),

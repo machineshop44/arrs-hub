@@ -48,6 +48,54 @@ export function classifyQueueIssue(issue, settings) {
   return null;
 }
 
+/**
+ * Same episode (Sonarr) or movie (Radarr) grabbed by more than one download:
+ * keep the highest resolution, then highest custom format score, then the one
+ * closest to done. Season packs are never removed (they carry other episodes).
+ * @param {string} app
+ * @param {{ id: number, title: string, downloadId: string, episodeId?: number | null, movieId?: number | null, resolution: number, customFormatScore: number, sizeleft: number, indexer?: string, protocol?: string }[]} records
+ * @returns {{ loser: object, winner: object }[]}
+ */
+export function pickDuplicateLosers(app, records) {
+  const keyOf =
+    app === "sonarr" ? (r) => (r.episodeId ? `ep:${r.episodeId}` : "") : app === "radarr" ? (r) => (r.movieId ? `movie:${r.movieId}` : "") : null;
+  if (!keyOf) return [];
+  const list = (records || []).filter((r) => r?.id && r.downloadId);
+  const episodesPerDownload = new Map();
+  for (const r of list) {
+    const set = episodesPerDownload.get(r.downloadId) || new Set();
+    set.add(r.episodeId ?? r.movieId);
+    episodesPerDownload.set(r.downloadId, set);
+  }
+  const groups = new Map();
+  for (const r of list) {
+    const key = keyOf(r);
+    if (!key) continue;
+    const byDownload = groups.get(key) || new Map();
+    if (!byDownload.has(r.downloadId)) byDownload.set(r.downloadId, r);
+    groups.set(key, byDownload);
+  }
+  const out = [];
+  const seenLosers = new Set();
+  for (const byDownload of groups.values()) {
+    if (byDownload.size < 2) continue;
+    const ranked = [...byDownload.values()].sort(
+      (a, b) =>
+        (b.resolution || 0) - (a.resolution || 0) ||
+        (b.customFormatScore || 0) - (a.customFormatScore || 0) ||
+        (a.sizeleft || 0) - (b.sizeleft || 0),
+    );
+    const winner = ranked[0];
+    for (const loser of ranked.slice(1)) {
+      if (seenLosers.has(loser.downloadId)) continue;
+      if ((episodesPerDownload.get(loser.downloadId)?.size || 0) > 1) continue;
+      seenLosers.add(loser.downloadId);
+      out.push({ loser, winner });
+    }
+  }
+  return out;
+}
+
 /** Skip an item for this long after a failed fix attempt. */
 const RETRY_AFTER_MS = 60 * 60 * 1000;
 /** @type {Map<string, number>} */
@@ -72,6 +120,42 @@ export async function runQueueAutoFix(queues, settings, deps = {}) {
     if (!q?.ok) continue;
     const importedDownloads = new Set();
     const importedKeys = new Set();
+
+    if (settings.autoFixDuplicates !== false) {
+      for (const { loser, winner } of pickDuplicateLosers(app, q.records)) {
+        if (results.length >= max) return results;
+        const key = `queue:${app}:${loser.id}`;
+        const lastFail = failedAt.get(key);
+        if (lastFail != null && now - lastFail < RETRY_AFTER_MS) continue;
+        const res = (r) => (r.resolution ? `${r.resolution}p` : "?p");
+        const base = {
+          key,
+          app,
+          title: String(loser.title),
+          rule: "duplicate",
+          reason: `duplicate (${res(loser)}, CF ${loser.customFormatScore}) — kept ${winner.title} (${res(winner)}, CF ${winner.customFormatScore})`,
+          blocklist: false,
+          at: new Date(now).toISOString(),
+        };
+        try {
+          const r = await remove({
+            app,
+            id: loser.id,
+            blocklist: false,
+            removeFromClient: true,
+            indexer: loser.indexer,
+            protocol: loser.protocol,
+          });
+          failedAt.delete(key);
+          importedKeys.add(key);
+          importedDownloads.add(loser.downloadId);
+          results.push({ ...base, keptSeeding: Boolean(r?.keptSeeding), ok: true });
+        } catch (err) {
+          failedAt.set(key, now);
+          results.push({ ...base, keptSeeding: false, ok: false, error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+    }
     for (const issue of q.issues || []) {
       if (results.length >= max) return results;
       if (

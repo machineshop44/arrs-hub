@@ -24,6 +24,7 @@ type MonitorSettings = {
   autoFixFailed: boolean;
   autoFixManualImport: boolean;
   autoFixHealth: boolean;
+  autoFixDuplicates: boolean;
   keepSeedingIndexers: string;
   discordNotifyAutoFix: boolean;
   backupEnabled: boolean;
@@ -223,7 +224,11 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
               ["autoFixFailed", "Failed download → blocklist + search again"],
               [
                 "autoFixManualImport",
-                "Manual import (Sonarr/Radarr) → import when the file name matches the series + SxxEyy / movie + year",
+                "Manual import (Sonarr/Radarr) → import when the file name matches the series + SxxEyy / movie + year (also approves \"TBA title\" blocks)",
+              ],
+              [
+                "autoFixDuplicates",
+                "Same episode / movie downloading twice → keep highest resolution, then custom format score; remove the rest (season packs kept)",
               ],
               [
                 "autoFixHealth",

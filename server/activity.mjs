@@ -100,6 +100,22 @@ function summarizeQueueIssue(record) {
   };
 }
 
+function slimQueueRecord(record) {
+  return {
+    id: record.id ?? null,
+    title: record.title || record.sourceTitle || "Unknown item",
+    downloadId: record.downloadId || "",
+    seriesId: record.seriesId ?? null,
+    episodeId: record.episodeId ?? null,
+    movieId: record.movieId ?? null,
+    resolution: Number(record.quality?.quality?.resolution) || 0,
+    customFormatScore: Number(record.customFormatScore) || 0,
+    sizeleft: Number(record.sizeleft) || 0,
+    indexer: record.indexer || "",
+    protocol: record.protocol || "",
+  };
+}
+
 async function getArrQueue(id, baseUrl, apiKey) {
   const base = normalizeBase(baseUrl);
   if (!base || !apiKey) {
@@ -135,6 +151,8 @@ async function getArrQueue(id, baseUrl, apiKey) {
       total,
       downloading: total,
       issues,
+      /** Slim rows for duplicate detection (same episode / movie grabbed twice). */
+      records: records.map(slimQueueRecord),
     };
   } catch (err) {
     return {

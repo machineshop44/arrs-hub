@@ -7,7 +7,7 @@ import {
   normTitle,
   planAutoImport,
 } from "./queue-autoimport.mjs";
-import { runQueueAutoFix } from "./queue-autofix.mjs";
+import { pickDuplicateLosers, runQueueAutoFix } from "./queue-autofix.mjs";
 
 test("normTitle ignores case, punctuation, years and leading articles", () => {
   assert.equal(normTitle("The Office (US)"), normTitle("office us"));
@@ -25,6 +25,75 @@ test("fileMatchesSeries requires title and every SxxEyy", () => {
   assert.equal(fileMatchesSeries("The.Last.of.Us.S02E03.mkv", series, [ep(1, 3)]), false);
   assert.equal(fileMatchesSeries("abc123.mkv", series, [ep(1, 3)]), false, "obfuscated names stay manual");
   assert.equal(fileMatchesSeries("Last.Kingdom.S01E03.mkv", series, [ep(1, 3)]), false);
+});
+
+test("TBA-title blocks from real Sonarr messages are approved when names match", () => {
+  const tba = "Episode has a TBA title and recently aired";
+  assert.equal(needsManualImport({ errorMessage: tba }), true);
+
+  const smarty = {
+    path: "D:\\dl\\Smartypants.S03E09.Tax.the.Tall.1080p.DRPO.WEB-DL.AAC2.0.H.264-BLOOM.mkv",
+    series: { id: 1, title: "Smartypants" },
+    episodes: [{ id: 309, seasonNumber: 3, episodeNumber: 9 }],
+    quality: {},
+    rejections: [{ reason: tba, type: "permanent" }],
+  };
+  assert.equal(planAutoImport("sonarr", [smarty], { seriesId: 1, episodeIds: new Set([309]) }).files.length, 1);
+
+  const sword = {
+    path: "D:\\dl\\[SubsPlease] Tensei Shitara Ken Deshita S2 - 01 (1080p) [EA337770].mkv",
+    series: {
+      id: 2,
+      title: "Reincarnated as a Sword",
+      alternateTitles: [{ title: "Tensei Shitara Ken Deshita" }],
+    },
+    episodes: [{ id: 201, seasonNumber: 2, episodeNumber: 1, absoluteEpisodeNumber: 13 }],
+    quality: {},
+    rejections: [{ reason: tba }],
+  };
+  assert.equal(planAutoImport("sonarr", [sword], { seriesId: 2, episodeIds: new Set([201]) }).files.length, 1);
+  assert.ok(
+    planAutoImport("sonarr", [{ ...sword, rejections: [{ reason: tba }, { reason: "Not an upgrade" }] }], {
+      seriesId: 2,
+      episodeIds: new Set([201]),
+    }).reason,
+    "a real rejection alongside TBA still blocks",
+  );
+  assert.equal(
+    fileMatchesSeries("[SubsPlease] Tensei Shitara Ken Deshita - 13 (1080p).mkv", sword.series, sword.episodes),
+    true,
+    "absolute numbering",
+  );
+  assert.equal(
+    fileMatchesSeries("[SubsPlease] Tensei Shitara Ken Deshita S2 - 02 (1080p).mkv", sword.series, sword.episodes),
+    false,
+  );
+});
+
+test("pickDuplicateLosers keeps highest resolution, then CF score, and never drops season packs", () => {
+  const rec = (id, dl, ep, resolution, cf, extra = {}) => ({
+    id,
+    title: `T${id}`,
+    downloadId: dl,
+    episodeId: ep,
+    resolution,
+    customFormatScore: cf,
+    sizeleft: 0,
+    ...extra,
+  });
+  let out = pickDuplicateLosers("sonarr", [rec(1, "a", 10, 720, 100), rec(2, "b", 10, 1080, 0), rec(3, "c", 10, 1080, 50)]);
+  assert.deepEqual(out.map((o) => o.loser.id).sort(), [1, 2]);
+  assert.equal(out[0].winner.id, 3);
+
+  out = pickDuplicateLosers("sonarr", [rec(1, "pack", 10, 720, 0), rec(2, "pack", 11, 720, 0), rec(3, "single", 10, 1080, 0)]);
+  assert.deepEqual(out, [], "720p season pack is not removed for a 1080p single");
+
+  out = pickDuplicateLosers("radarr", [
+    { id: 1, title: "M 2160p", downloadId: "x", movieId: 5, resolution: 2160, customFormatScore: 0, sizeleft: 0 },
+    { id: 2, title: "M 1080p", downloadId: "y", movieId: 5, resolution: 1080, customFormatScore: 900, sizeleft: 0 },
+  ]);
+  assert.equal(out[0].loser.id, 2);
+  assert.deepEqual(pickDuplicateLosers("lidarr", [rec(1, "a", 1, 0, 0), rec(2, "b", 1, 0, 0)]), []);
 });
 
 test("fileMatchesMovie requires title and year", () => {
