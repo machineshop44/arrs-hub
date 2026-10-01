@@ -7,6 +7,10 @@ const {
   syncOpenAtLogin,
   toggleOpenAtLogin,
 } = require("./win-login-item.cjs");
+const {
+  checkCompanionFirewall,
+  fixCompanionFirewall,
+} = require("./win-firewall.cjs");
 
 const DEFAULT_PORT = "3901";
 const HEALTH_TIMEOUT_MS = 60000;
@@ -19,6 +23,9 @@ let serverExit = null;
 let serverLog = "";
 let companionPort = DEFAULT_PORT;
 let openAtLoginEnabled = true;
+/** @type {null | { ok: boolean, needsFix: boolean, message: string }} */
+let firewallStatus = null;
+let firewallFixRunning = false;
 
 const LOGIN_SETTINGS_FILE = "companion-desktop-settings.json";
 const APP_DISPLAY_NAME = "Arrs Hub Companion";
@@ -324,7 +331,7 @@ function startServer() {
     throw new Error("Could not start companion (no Node runtime).");
   }
 
-  // Do not inherit NODE_OPTIONS / Electron flags ? they crash ELECTRON_RUN_AS_NODE
+  // Do not inherit NODE_OPTIONS / Electron flags - they crash ELECTRON_RUN_AS_NODE
   // (e.g. SyntaxError: Unexpected token '`') on machines with custom Node env.
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
@@ -541,7 +548,7 @@ async function registerWithHubNow() {
       message: String(err?.message || err),
       detail: settings.hubUrl
         ? `Hub URL: ${settings.hubUrl}\nCheck Arrs Hub is running on the Plex PC and Windows Firewall there allows its port. Companion keeps retrying every minute.`
-        : "No Hub URL set and Arrs Hub was not found on the LAN. Use Set Hub URL? (e.g. http://<Plex-PC-IP>:3000).",
+        : "No Hub URL set and Arrs Hub was not found on the LAN. Use 'Set Arrs Hub URL...' (e.g. http://<Plex-PC-IP>:3000).",
     });
   }
   refreshTrayMenu();
@@ -574,12 +581,12 @@ function toggleStartup() {
 function registrationStatusLabel() {
   const settings = readCompanionSettings();
   if (settings.lastRegisterOk) {
-    return `Hub linked ? ${settings.hubUrl || "LAN"}`;
+    return `Hub linked - ${settings.hubUrl || "LAN"}`;
   }
   if (settings.hubUrl) {
-    return `Hub URL set ? waiting for register?`;
+    return `Hub URL set - waiting to register...`;
   }
-  return "Scanning LAN for Arrs Hub (VPN may require manual URL)?";
+  return "Scanning LAN for Arrs Hub (VPN may require manual URL)...";
 }
 
 function openSetupInfo() {
@@ -603,7 +610,7 @@ function openSetupInfo() {
     "Automatic mode: Companion scans physical LAN adapters (Surfshark/VPN",
     "adapters are skipped). Set Hub URL manually if auto-find fails.",
     "",
-    "Tray ? Start with Windows: launches Companion at login (recommended).",
+    "Tray > Start with Windows: launches Companion at login (recommended).",
     "Hub monitors Surfshark here: app running + VPN tunnel connected.",
     "",
     `Hub URL (optional override): ${hubUrl || "(auto-discover on LAN)"}`,
@@ -616,6 +623,91 @@ function openSetupInfo() {
   const tmp = path.join(app.getPath("temp"), "arrs-hub-companion-setup.txt");
   fs.writeFileSync(tmp, text, "utf8");
   shell.openPath(tmp);
+}
+
+function firewallPromptFile() {
+  return path.join(app.getPath("userData"), "firewall-prompt.json");
+}
+
+function firewallPromptMuted() {
+  try {
+    return JSON.parse(fs.readFileSync(firewallPromptFile(), "utf8")).muted === true;
+  } catch {
+    return false;
+  }
+}
+
+function muteFirewallPrompt() {
+  try {
+    fs.writeFileSync(firewallPromptFile(), JSON.stringify({ muted: true }), "utf8");
+  } catch {
+    // ignore
+  }
+}
+
+async function refreshFirewallStatus() {
+  firewallStatus = await checkCompanionFirewall(companionPort, process.execPath);
+  refreshTrayMenu();
+  return firewallStatus;
+}
+
+function firewallStatusLabel() {
+  if (process.platform !== "win32") return null;
+  if (firewallFixRunning) return "Firewall: updating...";
+  if (!firewallStatus) return "Firewall: checking...";
+  if (!firewallStatus.ok) return "Firewall: couldn't check";
+  return firewallStatus.needsFix
+    ? `Firewall: may block Hub (port ${companionPort})`
+    : `Firewall: port ${companionPort} allowed`;
+}
+
+async function allowThroughFirewall() {
+  if (firewallFixRunning) return;
+  firewallFixRunning = true;
+  refreshTrayMenu();
+  let result;
+  try {
+    result = await fixCompanionFirewall(companionPort, process.execPath);
+  } finally {
+    firewallFixRunning = false;
+  }
+  await refreshFirewallStatus();
+  if (result.cancelled) return;
+  if (result.ok) {
+    dialog.showMessageBox({
+      type: "info",
+      title: APP_DISPLAY_NAME,
+      message: "Windows Firewall updated",
+      detail: `${result.message}\nArrs Hub can now check Surfshark and FileFlows Node on this PC.`,
+    });
+  } else {
+    dialog.showMessageBox({
+      type: "error",
+      title: APP_DISPLAY_NAME,
+      message: "Couldn't update Windows Firewall",
+      detail: result.message,
+    });
+  }
+}
+
+async function offerFirewallFixOnStartup() {
+  if (process.platform !== "win32" || firewallPromptMuted()) return;
+  const status = await refreshFirewallStatus();
+  if (!status.ok || !status.needsFix) return;
+  const { response } = await dialog.showMessageBox({
+    type: "warning",
+    title: APP_DISPLAY_NAME,
+    message: "Windows Firewall may block Arrs Hub",
+    detail:
+      `${status.message}.\n\nArrs Hub on the Plex PC needs to reach port ${companionPort} here to check Surfshark and FileFlows Node. ` +
+      "Allowing it needs one administrator prompt.",
+    buttons: ["Allow (admin)", "Not now", "Don't ask again"],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  });
+  if (response === 0) await allowThroughFirewall();
+  else if (response === 2) muteFirewallPrompt();
 }
 
 function forceQuit() {
@@ -646,12 +738,22 @@ function buildTrayMenu() {
       label: registrationStatusLabel(),
       enabled: false,
     },
+    ...(firewallStatusLabel()
+      ? [
+          { label: firewallStatusLabel(), enabled: false },
+          {
+            label: "Allow through Windows Firewall (admin)",
+            enabled: !firewallFixRunning,
+            click: () => void allowThroughFirewall(),
+          },
+        ]
+      : []),
     {
       label: "Register with Arrs Hub now",
       click: () => void registerWithHubNow(),
     },
     {
-      label: "Set Arrs Hub URL?",
+      label: "Set Arrs Hub URL...",
       click: () => {
         void setHubUrlFromTray();
       },
@@ -687,7 +789,7 @@ function createTray() {
   }
   const icon = trayIcon();
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
-  tray.setToolTip(`${APP_DISPLAY_NAME} v${app.getVersion()} ? :${companionPort}`);
+  tray.setToolTip(`${APP_DISPLAY_NAME} v${app.getVersion()} - port ${companionPort}`);
   tray.setContextMenu(buildTrayMenu());
 }
 
@@ -707,6 +809,7 @@ async function boot() {
   await waitForHealth(companionPort);
   createTray();
   setInterval(() => refreshTrayMenu(), 30_000);
+  void offerFirewallFixOnStartup().catch(() => {});
 }
 
 const gotLock = app.requestSingleInstanceLock();

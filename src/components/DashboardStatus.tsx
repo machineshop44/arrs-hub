@@ -236,6 +236,8 @@ type ChipVersionsPayload = {
     version?: string | null;
     versionSource?: "live" | "registered" | null;
     lastRegisterAt?: string | null;
+    /** Latest Companion release this Hub build knows about (server/companion-version.json). */
+    latestVersion?: string | null;
     outdated?: boolean;
     appUpdateCount?: number;
     apps?: ChipVersionApp[];
@@ -1483,8 +1485,8 @@ export function DashboardStatus({
                             {chipVersions?.companion?.versionSource === "registered"
                               ? " (last reported)"
                               : ""}
-                            {chipVersions?.companion?.outdated && chipVersions?.hub?.version
-                              ? ` · Hub is v${chipVersions.hub.version} — update Companion`
+                            {chipVersions?.companion?.outdated && chipVersions?.companion?.latestVersion
+                              ? ` · v${chipVersions.companion.latestVersion} available — update Companion`
                               : ""}
                           </strong>
                         </span>

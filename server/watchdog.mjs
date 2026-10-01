@@ -628,7 +628,7 @@ async function probeViaCompanion(target, serviceCfg, settings) {
     return unreachable(
       authFail
         ? `Status unknown — Companion rejected the API key (${health.message}). Re-register Companion.`
-        : `Status unknown — can't reach Companion at ${pc.companionUrl} (${health.message}). Is Companion running and allowed through the firewall?`,
+        : `Status unknown — can't reach Companion at ${pc.companionUrl} (${health.message}). Is Companion running? On that PC use tray → "Allow through Windows Firewall".`,
       health.latencyMs,
     );
   }
