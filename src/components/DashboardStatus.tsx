@@ -13,6 +13,7 @@ import {
   companionChipMeta,
 } from "../lib/companionStatus";
 import { usePlexUpdate } from "../hooks/usePlexUpdate";
+import { groupAppsByMachine } from "../lib/appsDown";
 import {
   plexInstallBlockedReason,
   shortPlexVersion,
@@ -281,6 +282,7 @@ export function DashboardStatus({
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [ombiOpen, setOmbiOpen] = useState(false);
   const [plexOpen, setPlexOpen] = useState(false);
+  const [appsDownOpen, setAppsDownOpen] = useState(false);
   const [ombiItems, setOmbiItems] = useState<OmbiPendingItem[]>([]);
   const [ombiLoading, setOmbiLoading] = useState(false);
   const [ombiError, setOmbiError] = useState<string | null>(null);
@@ -304,7 +306,9 @@ export function DashboardStatus({
   const downloadsWrapRef = useRef<HTMLDivElement>(null);
   const ombiWrapRef = useRef<HTMLDivElement>(null);
   const plexWrapRef = useRef<HTMLDivElement>(null);
+  const appsDownWrapRef = useRef<HTMLDivElement>(null);
   const closeAllPopovers = useCallback(() => {
+    setAppsDownOpen(false);
     setHubOpen(false);
     setCompanionOpen(false);
     setQueueOpen(false);
@@ -635,7 +639,8 @@ export function DashboardStatus({
       !queueOpen &&
       !downloadsOpen &&
       !ombiOpen &&
-      !plexOpen
+      !plexOpen &&
+      !appsDownOpen
     )
       return;
     const downOutside = {
@@ -645,9 +650,17 @@ export function DashboardStatus({
       downloads: false,
       ombi: false,
       plex: false,
+      appsDown: false,
     };
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
+      if (
+        appsDownOpen &&
+        appsDownWrapRef.current &&
+        !appsDownWrapRef.current.contains(target)
+      ) {
+        downOutside.appsDown = true;
+      }
       if (hubOpen && hubWrapRef.current && !hubWrapRef.current.contains(target)) {
         downOutside.hub = true;
       }
@@ -689,6 +702,14 @@ export function DashboardStatus({
     };
     const onPointerUp = (event: PointerEvent) => {
       const target = event.target as Node;
+      if (
+        downOutside.appsDown &&
+        appsDownOpen &&
+        appsDownWrapRef.current &&
+        !appsDownWrapRef.current.contains(target)
+      ) {
+        setAppsDownOpen(false);
+      }
       if (
         downOutside.hub &&
         hubOpen &&
@@ -743,6 +764,7 @@ export function DashboardStatus({
       downOutside.downloads = false;
       downOutside.ombi = false;
       downOutside.plex = false;
+      downOutside.appsDown = false;
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") closeAllPopovers();
@@ -762,6 +784,7 @@ export function DashboardStatus({
     downloadsOpen,
     ombiOpen,
     plexOpen,
+    appsDownOpen,
     closeAllPopovers,
   ]);
 
@@ -957,6 +980,28 @@ export function DashboardStatus({
     companionAppVersions.filter((entry) => entry.updateAvailable).length;
   const companionAppUpdates = companionAppVersions.filter(
     (entry) => entry.updateAvailable,
+  );
+
+  const localServiceLabels = Object.fromEntries(
+    LOCAL_SERVICE_CHIPS.map((item) => [item.id, item.label]),
+  );
+  const downGroups = groupAppsByMachine(
+    serviceHealth,
+    services,
+    pcConfigs,
+    watchServices,
+    connectionMode,
+    (entry) => entry.up === false,
+    localServiceLabels,
+  );
+  const unknownGroups = groupAppsByMachine(
+    serviceHealth,
+    services,
+    pcConfigs,
+    watchServices,
+    connectionMode,
+    (entry) => entry.up === null && /status unknown/i.test(entry.message || ""),
+    localServiceLabels,
   );
 
   const chips = [
@@ -2308,6 +2353,80 @@ export function DashboardStatus({
                         to open the web UI.
                       </p>
                     )}
+                  </div>
+                )}
+              </div>
+            );
+          }
+
+          if (chip.id === "down") {
+            const renderGroups = (groups: typeof downGroups) =>
+              groups.map((group) => (
+                <div key={group.machine}>
+                  <p className="dash-chip-popover-subtitle">{group.machine}</p>
+                  <ul className="dash-queue-issues">
+                    {group.apps.map((app) => (
+                      <li key={app.id}>
+                        {app.openUrl ? (
+                          <a
+                            href={app.openUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="dash-queue-issue-title"
+                          >
+                            {app.label}
+                          </a>
+                        ) : (
+                          <span className="dash-queue-issue-title">{app.label}</span>
+                        )}
+                        <span className="dash-queue-issue-msg">{app.message}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ));
+            return (
+              <div key={chip.id} className="dash-chip-wrap" ref={appsDownWrapRef}>
+                <button
+                  type="button"
+                  className={`dash-chip dash-chip-btn tone-${chip.tone}`}
+                  aria-expanded={appsDownOpen}
+                  aria-haspopup="dialog"
+                  title="Click to see which apps are down and on which machine"
+                  onClick={() => {
+                    if (appsDownOpen) {
+                      setAppsDownOpen(false);
+                      return;
+                    }
+                    closeAllPopovers();
+                    setAppsDownOpen(true);
+                  }}
+                >
+                  <span className="dash-chip-value">{chip.value}</span>
+                  <span className="dash-chip-label">{chip.label}</span>
+                </button>
+                {appsDownOpen && (
+                  <div
+                    className="dash-chip-popover"
+                    role="dialog"
+                    aria-label="Apps down by machine"
+                  >
+                    <p className="dash-chip-popover-title">
+                      Apps down{downCount > 0 ? ` · ${downCount}` : ""}
+                    </p>
+                    {downGroups.length === 0 ? (
+                      <p className="dash-chip-popover-empty">
+                        {scanning ? "Still checking…" : "Nothing is down."}
+                      </p>
+                    ) : (
+                      renderGroups(downGroups)
+                    )}
+                    {unknownGroups.length > 0 ? (
+                      <>
+                        <p className="dash-chip-popover-title">Can&apos;t check right now</p>
+                        {renderGroups(unknownGroups)}
+                      </>
+                    ) : null}
                   </div>
                 )}
               </div>

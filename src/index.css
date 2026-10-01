@@ -1126,8 +1126,26 @@ input {
 }
 
 .dash-chip-popover-title + .dash-chip-popover-title,
-.dash-queue-breakdown + .dash-chip-popover-title {
+.dash-queue-breakdown + .dash-chip-popover-title,
+.dash-chip-popover div + .dash-chip-popover-title,
+.dash-chip-popover-empty + .dash-chip-popover-title {
   margin-top: 0.85rem;
+}
+
+.dash-chip-popover-subtitle {
+  margin: 0.55rem 0 0.15rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+a.dash-queue-issue-title {
+  color: inherit;
+  text-decoration: none;
+}
+
+a.dash-queue-issue-title:hover {
+  text-decoration: underline;
 }
 
 .dash-queue-breakdown {
