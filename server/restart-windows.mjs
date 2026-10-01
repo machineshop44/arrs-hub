@@ -726,7 +726,8 @@ foreach ($p in $procs) {
 }
 if ($hit) { Write-Output ("RUNNING=" + $detail) } else { Write-Output 'STOPPED' }
 `;
-  const procResult = await runPowerShell(psProc, 8000);
+  // PowerShell + WMI can take 10s+ on a busy PC or right after Windows Update.
+  const procResult = await runPowerShell(psProc, 25000);
   const out = `${procResult.stdout || ""}`.trim();
   const latencyMs = Date.now() - started;
   const timedOut = procResult.code === -1;

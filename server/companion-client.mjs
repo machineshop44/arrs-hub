@@ -12,7 +12,7 @@ function normalizeBaseUrl(raw) {
  * @param {string} baseUrl
  * @param {string} apiKey
  */
-export async function checkCompanionHealth(baseUrl, apiKey) {
+export async function checkCompanionHealth(baseUrl, apiKey, timeoutMs = 4000) {
   const base = normalizeBaseUrl(baseUrl);
   if (!base) {
     return {
@@ -28,7 +28,7 @@ export async function checkCompanionHealth(baseUrl, apiKey) {
     const res = await fetch(url, {
       method: "GET",
       headers: apiKey ? { "X-Arrs-Companion-Key": apiKey } : {},
-      signal: AbortSignal.timeout(4000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const latencyMs = Date.now() - started;
     if (!res.ok) {
@@ -195,7 +195,8 @@ export async function requestCompanionServiceStatus(baseUrl, apiKey, serviceCfg)
         processHints: serviceCfg.processHints || [],
         processNames: serviceCfg.processNames || [],
       }),
-      signal: AbortSignal.timeout(15000),
+      // Companion's own PowerShell checks may take up to ~25s.
+      signal: AbortSignal.timeout(35000),
     });
     const latencyMs = Date.now() - started;
     const data = await res.json().catch(() => ({}));

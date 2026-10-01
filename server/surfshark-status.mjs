@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-function runPowerShell(command, timeoutMs = 8000) {
+function runPowerShell(command, timeoutMs = 25000) {
   return new Promise((resolve) => {
     const encoded = Buffer.from(String(command || ""), "utf16le").toString(
       "base64",
@@ -26,7 +26,9 @@ function runPowerShell(command, timeoutMs = 8000) {
     );
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
     const timer = setTimeout(() => {
+      timedOut = true;
       try {
         child.kill();
       } catch {
@@ -41,7 +43,7 @@ function runPowerShell(command, timeoutMs = 8000) {
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      resolve({ code, stdout, stderr });
+      resolve({ code, stdout, stderr, timedOut });
     });
     child.on("error", (err) => {
       clearTimeout(timer);
@@ -186,6 +188,23 @@ Write-Output ("ADAPTER=" + $adapter)
   try {
     const result = await runPowerShell(ps);
     const out = `${result.stdout || ""}\n${result.stderr || ""}`;
+    // No PROC=/VPN= lines means PowerShell never finished — that's unknown, not "not running".
+    if (result.timedOut || !/PROC=[01]/i.test(out) || !/VPN=[01]/i.test(out)) {
+      return {
+        ok: false,
+        installed,
+        processRunning: false,
+        vpnConnected: false,
+        running: false,
+        method: null,
+        adapterName: null,
+        exePath: exePath || null,
+        message: result.timedOut
+          ? "Surfshark check timed out (status unknown)"
+          : "Surfshark check returned no result (status unknown)",
+        latencyMs: Date.now() - started,
+      };
+    }
     const processRunning = /PROC=1/i.test(out);
     const vpnConnected = /VPN=1/i.test(out);
     const adapterMatch = out.match(/ADAPTER=(.+)/i);

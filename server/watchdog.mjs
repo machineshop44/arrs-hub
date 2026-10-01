@@ -108,6 +108,24 @@ const state = new Map();
 /** @type {Map<string, { online: boolean|null, lastChecked: string|null, consecutiveFails: number, lastWakeAt: string|null, lastWakeResult: string|null, message: string, method: string|null, downAlertSent: boolean }>} */
 const pcState = new Map();
 
+/** Last successful Companion health per PC id — lets app probes skip a redundant health call. */
+const companionHealthOk = new Map();
+const COMPANION_HEALTH_FRESH_MS = 120_000;
+
+async function companionReachable(pc) {
+  const last = companionHealthOk.get(pc.id);
+  if (last && Date.now() - last < COMPANION_HEALTH_FRESH_MS) {
+    return { online: true, latencyMs: null, message: "Companion online (recent)" };
+  }
+  // Busy check cycle: give Companion a second, longer chance before calling it unreachable.
+  let health = await checkCompanionHealth(pc.companionUrl, pc.companionApiKey);
+  if (!health.online && !/401|403|api key/i.test(String(health.message || ""))) {
+    health = await checkCompanionHealth(pc.companionUrl, pc.companionApiKey, 10_000);
+  }
+  if (health.online) companionHealthOk.set(pc.id, Date.now());
+  return health;
+}
+
 /** @type {ReturnType<typeof setInterval> | null} */
 let timer = null;
 
@@ -622,7 +640,7 @@ async function probeViaCompanion(target, serviceCfg, settings) {
       `Status unknown — Companion API key missing on "${pc.name || "PC"}". Re-register Companion.`,
     );
   }
-  const health = await checkCompanionHealth(pc.companionUrl, pc.companionApiKey);
+  const health = await companionReachable(pc);
   if (!health.online) {
     const authFail = /401|403|api key/i.test(String(health.message || ""));
     return unreachable(
@@ -681,7 +699,20 @@ async function probeViaCompanion(target, serviceCfg, settings) {
   };
 }
 
+/** Targets with a probe still running — overlapping cycles skip them instead of stacking checks. */
+const probesInFlight = new Set();
+
 async function checkOne(target) {
+  if (probesInFlight.has(target.id)) return;
+  probesInFlight.add(target.id);
+  try {
+    await checkOneInner(target);
+  } finally {
+    probesInFlight.delete(target.id);
+  }
+}
+
+async function checkOneInner(target) {
   const settings = loadWatchdogSettings();
   const serviceCfg = settings.services[target.id] ?? {
     monitor: true,
@@ -1027,8 +1058,9 @@ export async function runWatchCycle() {
     checked.add(id);
   }
 
-  await Promise.all(snapshot.map((target) => checkOne(target)));
+  // PCs first so Companion-backed app probes can reuse a fresh Companion health result.
   await checkPcs();
+  await Promise.all(snapshot.map((target) => checkOne(target)));
   return getWatchStatus();
 }
 
@@ -1068,6 +1100,7 @@ async function checkPcs() {
         pc.companionApiKey,
       );
       if (companion.online) {
+        companionHealthOk.set(pc.id, Date.now());
         online = true;
         message = `Companion online (${companion.message})`;
         method =
@@ -1075,10 +1108,12 @@ async function checkPcs() {
             ? `companion:${companion.latencyMs}ms`
             : "companion";
       } else if (!probe.online) {
+        companionHealthOk.delete(pc.id);
         online = false;
         message = companion.message || probe.message || "Offline";
         method = null;
       } else {
+        companionHealthOk.delete(pc.id);
         message = `${probe.message}; companion: ${companion.message}`;
       }
     }
