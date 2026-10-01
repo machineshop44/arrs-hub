@@ -603,30 +603,34 @@ async function probeViaCompanion(target, serviceCfg, settings) {
     };
   }
 
+  // Companion problems mean "can't see the app", not "app is down" — never restart/alert on them.
+  const unreachable = (message, latencyMs = null) => ({
+    up: null,
+    companionUnreachable: true,
+    latencyMs,
+    message,
+  });
+
   const live = pcState.get(pcId);
   if (live?.online === false) {
-    return {
-      up: false,
-      latencyMs: null,
-      message: `Companion PC offline (${pc.name || pc.host})`,
-    };
+    return unreachable(`Status unknown — Companion PC offline (${pc.name || pc.host})`);
   }
 
   // Host ping can look "online" while Companion API key is wrong — verify API first.
   if (!String(pc.companionApiKey || "").trim()) {
-    return {
-      up: false,
-      latencyMs: null,
-      message: `Companion API key missing on "${pc.name || "PC"}" — Clear pairing / re-register Companion.`,
-    };
+    return unreachable(
+      `Status unknown — Companion API key missing on "${pc.name || "PC"}". Re-register Companion.`,
+    );
   }
   const health = await checkCompanionHealth(pc.companionUrl, pc.companionApiKey);
   if (!health.online) {
-    return {
-      up: false,
-      latencyMs: health.latencyMs,
-      message: `Companion API unreachable (${health.message}). Is Companion 1.3.60+ installed with a matching API key?`,
-    };
+    const authFail = /401|403|api key/i.test(String(health.message || ""));
+    return unreachable(
+      authFail
+        ? `Status unknown — Companion rejected the API key (${health.message}). Re-register Companion.`
+        : `Status unknown — can't reach Companion at ${pc.companionUrl} (${health.message}). Is Companion running and allowed through the firewall?`,
+      health.latencyMs,
+    );
   }
 
   const hints = [];
@@ -653,17 +657,15 @@ async function probeViaCompanion(target, serviceCfg, settings) {
     },
   );
 
-  // Auth failures are actionable "down"; transport timeouts stay unknown.
   if (!status.ok && status.running !== true) {
     const msg = String(status.message || "Companion status check failed");
     const authFail = /401|api key|unauthorized|invalid companion/i.test(msg);
-    return {
-      up: authFail ? false : null,
-      latencyMs: status.latencyMs,
-      message: authFail
-        ? `Companion rejected API key — re-register Companion or paste key in Port Watch. ${msg}`
-        : msg,
-    };
+    return unreachable(
+      authFail
+        ? `Status unknown — Companion rejected the API key. Re-register Companion. ${msg}`
+        : `Status unknown — Companion status check failed (${msg})`,
+      status.latencyMs,
+    );
   }
 
   const detailParts = [
@@ -811,12 +813,16 @@ async function checkOne(target) {
   if (result.up === null) {
     state.set(target.id, {
       ...prev,
-      up: prev.up === true || prev.up === false ? prev.up : null,
+      up: result.companionUnreachable
+        ? null
+        : prev.up === true || prev.up === false
+          ? prev.up
+          : null,
       latencyMs: result.latencyMs,
       lastChecked: new Date().toISOString(),
-      consecutiveFails,
+      consecutiveFails: result.companionUnreachable ? 0 : consecutiveFails,
       lastRestartAt,
-      lastRestartResult,
+      lastRestartResult: result.companionUnreachable ? null : lastRestartResult,
       downAlertSent,
       message: result.message || prev.message || "Status unknown",
     });

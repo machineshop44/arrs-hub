@@ -13,14 +13,16 @@ interface ServiceCardProps {
 }
 
 function statusLabel(health?: ServiceHealth | null) {
-  if (!health || health.up === null) return "Unknown";
+  if (!health) return "Unknown";
+  if (health.up === null) return health.message || "Unknown";
   if (health.up) {
     return health.latencyMs != null ? `Up · ${health.latencyMs}ms` : "Up";
   }
-  if (health.lastRestartResult) {
-    return `Down · ${health.lastRestartResult}`;
+  const reason = health.message || "Down";
+  if (health.lastRestartResult && health.lastRestartResult !== health.message) {
+    return `Down · ${reason} · restart: ${health.lastRestartResult}`;
   }
-  return health.message || "Down";
+  return reason.startsWith("Down") ? reason : `Down · ${reason}`;
 }
 
 export function ServiceCard({
@@ -34,6 +36,7 @@ export function ServiceCard({
   const localOnly = isLocalServiceProbe(service);
   const companionOnly =
     service.id === "fileflows-node" ||
+    service.id === "surfshark" ||
     String(activeUrl || "")
       .trim()
       .toLowerCase()

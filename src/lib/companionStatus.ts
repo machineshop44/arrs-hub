@@ -50,6 +50,7 @@ function healthLabel(up: boolean | null, id?: string, message?: string): string 
     return "up";
   }
   if (up === false) return "down";
+  if (/status unknown/i.test(String(message || ""))) return "unknown";
   return "…";
 }
 
