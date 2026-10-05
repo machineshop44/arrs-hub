@@ -22,6 +22,7 @@ const APP_LABELS = {
   whisparr: "Whisparr",
   prowlarr: "Prowlarr",
   qbittorrent: "qBittorrent",
+  sabnzbd: "SABnzbd",
   ombi: "Ombi",
 };
 
@@ -174,7 +175,7 @@ export function mergeDiskSpace(lists, thresholds) {
   return { drives, low: drives.filter((d) => d.low) };
 }
 
-async function qbLogin(base, username, password) {
+export async function qbLogin(base, username, password) {
   const res = await fetch(`${base}/api/v2/auth/login`, {
     method: "POST",
     headers: {

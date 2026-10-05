@@ -29,6 +29,12 @@ type MonitorSettings = {
   autoFixStalled: boolean;
   stalledMetadataMinutes: number;
   stalledNoConnectionsHours: number;
+  autoFixSabResume: boolean;
+  qbCleanupEnabled: boolean;
+  qbSeedRules: string;
+  qbCleanupDeleteFiles: boolean;
+  discordNotifyClientCleanup: boolean;
+  clientAutoFixIntervalHours: number;
   discordNotifyAutoFix: boolean;
   discordNotifyIndexerFixes: boolean;
   problemReannounceHours: number;
@@ -289,6 +295,79 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
               disabled={disabled}
               onChange={(e) => patch({ stalledNoConnectionsHours: Number(e.target.value) })}
             />
+          </label>
+
+          <h4 className="settings-subhead">Download clients</h4>
+          <label className="field">
+            <span>Run SABnzbd / qBittorrent checks every (hours)</span>
+            <input
+              type="number"
+              min={1}
+              max={168}
+              value={settings.clientAutoFixIntervalHours}
+              disabled={disabled}
+              onChange={(e) => patch({ clientAutoFixIntervalHours: Number(e.target.value) })}
+            />
+          </label>
+          <p className="settings-hint">
+            Default once a day, so Sonarr / Radarr get time to work between passes.
+          </p>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={settings.autoFixSabResume}
+              disabled={disabled || !settings.autoFixEnabled}
+              onChange={(e) => patch({ autoFixSabResume: e.target.checked })}
+            />
+            <span className="toggle-label">
+              SABnzbd: resume a paused queue and paused items (not during a timed pause or with under 1 GB free)
+            </span>
+          </label>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={settings.qbCleanupEnabled}
+              disabled={disabled || !settings.autoFixEnabled}
+              onChange={(e) => patch({ qbCleanupEnabled: e.target.checked })}
+            />
+            <span className="toggle-label">
+              qBittorrent: remove finished torrents once an *arr has imported them and the tracker&apos;s seed time is met
+            </span>
+          </label>
+          <label className="field">
+            <span>Seed time per tracker (tracker host = days, one per line)</span>
+            <textarea
+              rows={3}
+              placeholder={"td-peers.com = 3.5\ntleechreload.org = 3.5"}
+              value={settings.qbSeedRules}
+              disabled={disabled}
+              onChange={(e) => patch({ qbSeedRules: e.target.value })}
+            />
+          </label>
+          <p className="settings-hint">
+            Matched against each torrent&apos;s tracker URL, using qBittorrent&apos;s
+            active seeding time. Trackers not listed are removed right after
+            import. Torrents no *arr imported (manual downloads) are never touched.
+          </p>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={settings.qbCleanupDeleteFiles}
+              disabled={disabled}
+              onChange={(e) => patch({ qbCleanupDeleteFiles: e.target.checked })}
+            />
+            <span className="toggle-label">
+              Also delete the downloaded files (the imported library copy is kept)
+            </span>
+          </label>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={settings.discordNotifyClientCleanup}
+              disabled={disabled}
+              onChange={(e) => patch({ discordNotifyClientCleanup: e.target.checked })}
+            />
+            <span className="toggle-label">Discord: each finished torrent removed (off = Hub list only)</span>
           </label>
           <label className="toggle">
             <input

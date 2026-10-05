@@ -38,6 +38,16 @@ export function defaultMonitorSettings() {
     autoFixStalled: true,
     stalledMetadataMinutes: 60,
     stalledNoConnectionsHours: 6,
+    /** SABnzbd: resume a paused queue / paused items (skipped during a timed pause). */
+    autoFixSabResume: true,
+    /** qBittorrent: delete torrents an *arr imported once their tracker's seed time is met. */
+    qbCleanupEnabled: true,
+    /** "tracker host = days", one per line. Trackers not listed have no minimum. */
+    qbSeedRules: "td-peers.com = 3.5\ntleechreload.org = 3.5",
+    qbCleanupDeleteFiles: true,
+    discordNotifyClientCleanup: false,
+    /** SABnzbd / qBittorrent passes run at most this often so the *arrs can work in between. */
+    clientAutoFixIntervalHours: 24,
     autoFixMaxPerScan: 10,
     discordNotifyAutoFix: true,
     /** "Indexer back in rotation" re-tests: Hub list only unless this is on. */
@@ -92,6 +102,12 @@ function normalize(raw) {
     autoFixStalled: s.autoFixStalled !== false,
     stalledMetadataMinutes: Math.round(clampNumber(s.stalledMetadataMinutes, d.stalledMetadataMinutes, 15, 24 * 60)),
     stalledNoConnectionsHours: clampNumber(s.stalledNoConnectionsHours, d.stalledNoConnectionsHours, 1, 24 * 14),
+    autoFixSabResume: s.autoFixSabResume !== false,
+    qbCleanupEnabled: s.qbCleanupEnabled !== false,
+    qbSeedRules: typeof s.qbSeedRules === "string" ? s.qbSeedRules.trim() : d.qbSeedRules,
+    qbCleanupDeleteFiles: s.qbCleanupDeleteFiles !== false,
+    discordNotifyClientCleanup: s.discordNotifyClientCleanup === true,
+    clientAutoFixIntervalHours: clampNumber(s.clientAutoFixIntervalHours, d.clientAutoFixIntervalHours, 1, 24 * 7),
     autoFixMaxPerScan: Math.round(clampNumber(s.autoFixMaxPerScan, d.autoFixMaxPerScan, 1, 50)),
     discordNotifyAutoFix: s.discordNotifyAutoFix !== false,
     discordNotifyIndexerFixes: s.discordNotifyIndexerFixes === true,

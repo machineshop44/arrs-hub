@@ -299,11 +299,14 @@ export async function runQueueAutoFix(queues, settings, deps = {}) {
   return results;
 }
 
-const HEALTH_RULES = new Set(["nudgeImport", "testClients", "testIndexer", "testApp", "cancelHung"]);
+const HEALTH_RULES = new Set(["nudgeImport", "testClients", "testIndexer", "testApp", "cancelHung", "sabResume"]);
 
 export function describeAutoFix(r) {
   if (HEALTH_RULES.has(r.rule)) {
     return `${appLabel(r.app)}: ${r.title} — ${r.ok ? r.reason : `fix failed: ${r.error}`}`;
+  }
+  if (r.rule === "qbCleanup") {
+    return `${appLabel(r.app)}: ${r.title} — ${r.reason} → ${r.ok ? "removed (done seeding)" : `fix failed: ${r.error}`}`;
   }
   const action = r.imported ? "imported" : r.blocklist ? "blocklisted, searching again" : "removed";
   const seed = r.keptSeeding ? " · still seeding in qBittorrent" : "";
