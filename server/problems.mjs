@@ -24,6 +24,7 @@ const APP_LABELS = {
   qbittorrent: "qBittorrent",
   sabnzbd: "SABnzbd",
   ombi: "Ombi",
+  plex: "Plex",
 };
 
 const GIB = 1024 ** 3;

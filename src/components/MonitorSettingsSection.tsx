@@ -35,6 +35,16 @@ type MonitorSettings = {
   qbCleanupDeleteFiles: boolean;
   discordNotifyClientCleanup: boolean;
   clientAutoFixIntervalHours: number;
+  autoFixSabRetry: boolean;
+  autoFixQbRecheck: boolean;
+  autoFixQbSlots: boolean;
+  autoFixQbReannounce: boolean;
+  autoFixScanUnimported: boolean;
+  autoFixVanished: boolean;
+  autoFixSearchNeverSearched: boolean;
+  autoFixSeasonPack: boolean;
+  autoFixOmbiAvailable: boolean;
+  autoFixPlexRefresh: boolean;
   discordNotifyAutoFix: boolean;
   discordNotifyIndexerFixes: boolean;
   problemReannounceHours: number;
@@ -299,7 +309,7 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
 
           <h4 className="settings-subhead">Download clients</h4>
           <label className="field">
-            <span>Run SABnzbd / qBittorrent checks every (hours)</span>
+            <span>Run SABnzbd / qBittorrent / *arr housekeeping every (hours)</span>
             <input
               type="number"
               min={1}
@@ -360,6 +370,30 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
               Also delete the downloaded files (the imported library copy is kept)
             </span>
           </label>
+          {(
+            [
+              ["autoFixSabRetry", "SABnzbd: retry a failed download once when it looks repairable (missing articles / repair failed; never password or disk-full failures)"],
+              ["autoFixQbRecheck", "qBittorrent: torrents showing \"missing files\" → recheck and resume (never deleted)"],
+              ["autoFixQbSlots", "qBittorrent: dead torrents filling every active slot while others wait → turn on \"Do not count slow torrents\""],
+              ["autoFixQbReannounce", "qBittorrent: stalled torrents → ask the trackers for peers again"],
+              ["autoFixScanUnimported", "Finished in the last 2 days but no *arr picked it up → ask that *arr to scan the download"],
+              ["autoFixVanished", "*arr queue item whose download is gone from qBittorrent / SABnzbd → clear it from the queue"],
+              ["autoFixSearchNeverSearched", "Monitored and missing but never searched → search (max 8 episodes, 3 movies, 2 albums per pass; paused while a drive is low)"],
+              ["autoFixSeasonPack", "Season pack imported only some episodes → search just the missing ones"],
+              ["autoFixOmbiAvailable", "Approved Ombi request the *arrs already have files for → mark available"],
+              ["autoFixPlexRefresh", "Every scan: new import → scan just that folder in Plex (needs Plex sign-in)"],
+            ] as const
+          ).map(([key, label]) => (
+            <label className="toggle" key={key}>
+              <input
+                type="checkbox"
+                checked={settings[key]}
+                disabled={disabled || !settings.autoFixEnabled}
+                onChange={(e) => patch({ [key]: e.target.checked })}
+              />
+              <span className="toggle-label">{label}</span>
+            </label>
+          ))}
           <label className="toggle">
             <input
               type="checkbox"
@@ -367,7 +401,9 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
               disabled={disabled}
               onChange={(e) => patch({ discordNotifyClientCleanup: e.target.checked })}
             />
-            <span className="toggle-label">Discord: each finished torrent removed (off = Hub list only)</span>
+            <span className="toggle-label">
+              Discord: routine housekeeping (finished torrents removed, re-announces, Plex folder scans) — off = Hub list only
+            </span>
           </label>
           <label className="toggle">
             <input

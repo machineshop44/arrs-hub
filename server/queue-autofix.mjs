@@ -299,7 +299,23 @@ export async function runQueueAutoFix(queues, settings, deps = {}) {
   return results;
 }
 
-const HEALTH_RULES = new Set(["nudgeImport", "testClients", "testIndexer", "testApp", "cancelHung", "sabResume"]);
+const HEALTH_RULES = new Set([
+  "nudgeImport",
+  "testClients",
+  "testIndexer",
+  "testApp",
+  "cancelHung",
+  "sabResume",
+  "sabRetry",
+  "qbRecheck",
+  "qbSlots",
+  "qbReannounce",
+  "scanUnimported",
+  "searchMissing",
+  "seasonPack",
+  "ombiAvailable",
+  "plexRefresh",
+]);
 
 export function describeAutoFix(r) {
   if (HEALTH_RULES.has(r.rule)) {

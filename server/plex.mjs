@@ -362,6 +362,27 @@ export async function listLibraries(settings = getWorkoutConfig()) {
   }));
 }
 
+/** Libraries with their folders, last scan time (epoch s) and whether a scan is running. */
+export async function listLibraryLocations(settings = getWorkoutConfig()) {
+  requireToken(settings);
+  const json = await plexFetch(settings.plexBaseUrl, settings.plexToken.trim(), "/library/sections");
+  return asArray(mediaContainer(json).Directory).map((dir) => ({
+    id: String(dir.key),
+    title: String(dir.title || ""),
+    scannedAt: Number(dir.scannedAt) || 0,
+    refreshing: dir.refreshing === true || dir.refreshing === "1" || dir.refreshing === 1,
+    locations: asArray(dir.Location).map((l) => String(l.path || "")).filter(Boolean),
+  }));
+}
+
+/** Scan one folder of a library (not the whole library). */
+export async function refreshLibraryPath(sectionId, folder, settings = getWorkoutConfig()) {
+  requireToken(settings);
+  await plexFetch(settings.plexBaseUrl, settings.plexToken.trim(), `/library/sections/${encodeURIComponent(sectionId)}/refresh`, {
+    query: { path: folder },
+  });
+}
+
 export const LOCAL_CLIENT_ID = "arrs-hub-local";
 
 /**

@@ -7,6 +7,8 @@ import { collectProblems } from "./problems.mjs";
 import { describeAutoFix, runQueueAutoFix } from "./queue-autofix.mjs";
 import { runHealthAutoFix } from "./health-autofix.mjs";
 import { runClientAutoFix } from "./client-autofix.mjs";
+import { runPlexRefresh } from "./stack-autofix.mjs";
+import { createServiceUrlResolver } from "./url-policy.mjs";
 import { loadWatchdogSettings } from "./watchdog-store.mjs";
 
 const STATE_PATH = path.join(DATA_DIR, "problems-state.json");
@@ -229,6 +231,9 @@ async function notify(added, resolved, settings, webhookUrl) {
   }
 }
 
+/** Routine, successful housekeeping: Hub list only unless Discord is turned on for it. */
+const HOUSEKEEPING_RULES = new Set(["qbCleanup", "qbReannounce", "plexRefresh"]);
+
 export async function runProblemsScan() {
   if (running) return lastSnapshot;
   running = true;
@@ -237,8 +242,12 @@ export async function runProblemsScan() {
     const snapshot = await collectProblems({ includeQueues: true, includeOmbi: true });
     const queueFixes = await runQueueAutoFix(snapshot.queues, settings);
     const healthFixes = await runHealthAutoFix(snapshot, settings);
-    const clientFixes = await runClientAutoFix(settings);
-    const fixes = [...queueFixes, ...healthFixes.filter((f) => !f.quiet), ...clientFixes];
+    const clientFixes = await runClientAutoFix(settings, { snapshot });
+    const plexFixes = await runPlexRefresh(createServiceUrlResolver({ urls: {} }), settings).catch((err) => {
+      console.warn("[plex-refresh]", err instanceof Error ? err.message : err);
+      return [];
+    });
+    const fixes = [...queueFixes, ...healthFixes.filter((f) => !f.quiet), ...clientFixes, ...plexFixes];
     const fixedKeys = new Set(queueFixes.filter((f) => f.ok).flatMap((f) => f.keys || [f.key]));
     if (fixedKeys.size) {
       snapshot.problems = snapshot.problems.filter((p) => !fixedKeys.has(p.key));
@@ -263,7 +272,7 @@ export async function runProblemsScan() {
     const discordFixes = fixes.filter(
       (f) =>
         !(f.rule === "testIndexer" && f.ok && !settings.discordNotifyIndexerFixes) &&
-        !(f.rule === "qbCleanup" && f.ok && !settings.discordNotifyClientCleanup),
+        !(HOUSEKEEPING_RULES.has(f.rule) && f.ok && !settings.discordNotifyClientCleanup),
     );
     if (webhookUrl && settings.discordNotifyAutoFix && discordFixes.length) {
       const failed = discordFixes.some((f) => !f.ok);
