@@ -26,7 +26,12 @@ type MonitorSettings = {
   autoFixHealth: boolean;
   autoFixDuplicates: boolean;
   keepSeedingIndexers: string;
+  autoFixStalled: boolean;
+  stalledMetadataMinutes: number;
+  stalledNoConnectionsHours: number;
   discordNotifyAutoFix: boolean;
+  discordNotifyIndexerFixes: boolean;
+  problemReannounceHours: number;
   backupEnabled: boolean;
   backupDir: string;
   backupIntervalHours: number;
@@ -228,7 +233,11 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
               ],
               [
                 "autoFixDuplicates",
-                "Same episode / movie downloading twice → keep highest resolution, then custom format score; remove the rest (season packs kept)",
+                "Same episode / movie downloading twice → keep a healthy copy over a stalled one, then highest resolution, then custom format score; remove the rest (season packs kept)",
+              ],
+              [
+                "autoFixStalled",
+                "Stuck torrents → blocklist + search again: magnet stuck on \"downloading metadata\" or torrent \"stalled with no connections\" past the waits below",
               ],
               [
                 "autoFixHealth",
@@ -261,6 +270,26 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
             Remove / Blocklist buttons. Torrents with no indexer name are kept
             seeding to be safe.
           </p>
+          <label className="field">
+            <span>Stuck on metadata — wait (minutes)</span>
+            <input
+              type="number"
+              min={15}
+              value={settings.stalledMetadataMinutes}
+              disabled={disabled}
+              onChange={(e) => patch({ stalledMetadataMinutes: Number(e.target.value) })}
+            />
+          </label>
+          <label className="field">
+            <span>Stalled with no connections — wait (hours)</span>
+            <input
+              type="number"
+              min={1}
+              value={settings.stalledNoConnectionsHours}
+              disabled={disabled}
+              onChange={(e) => patch({ stalledNoConnectionsHours: Number(e.target.value) })}
+            />
+          </label>
           <label className="toggle">
             <input
               type="checkbox"
@@ -270,6 +299,31 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
             />
             <span className="toggle-label">Discord: auto-fixes</span>
           </label>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={settings.discordNotifyIndexerFixes}
+              disabled={disabled}
+              onChange={(e) => patch({ discordNotifyIndexerFixes: e.target.checked })}
+            />
+            <span className="toggle-label">
+              Discord: &quot;indexer back in rotation&quot; re-tests (off = Hub list only)
+            </span>
+          </label>
+          <label className="field">
+            <span>Re-announce a problem that clears and comes back after (hours)</span>
+            <input
+              type="number"
+              min={0}
+              value={settings.problemReannounceHours}
+              disabled={disabled}
+              onChange={(e) => patch({ problemReannounceHours: Number(e.target.value) })}
+            />
+          </label>
+          <p className="settings-hint">
+            Stops flapping alerts (e.g. a public tracker going up and down). A
+            failing indexer is one problem no matter how many *arr apps report it.
+          </p>
 
           <h4 className="settings-subhead">Scheduled *arr config backups</h4>
           <p className="settings-hint">

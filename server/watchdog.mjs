@@ -126,6 +126,61 @@ async function companionReachable(pc) {
   return health;
 }
 
+function companionPcFor(serviceCfg, settings) {
+  const pcId = String(serviceCfg?.restartPcId || "").trim();
+  if (!pcId) return null;
+  const pc = (settings.pcs || []).find((item) => item.id === pcId);
+  return pc && String(pc.companionUrl || "").trim() && String(pc.companionApiKey || "").trim() ? pc : null;
+}
+
+/** Per PC: apps that went silent together with Companion this cycle, and whether we already alerted. */
+/** @type {Map<string, { pc: object, apps: Set<string>, alerted: boolean }>} */
+const pcOutages = new Map();
+/** @type {Set<string>} */
+let pcUnreachableThisCycle = new Set();
+
+function notePcUnreachable(pc, appName) {
+  pcUnreachableThisCycle.add(pc.id);
+  const entry = pcOutages.get(pc.id) || { pc, apps: new Set(), alerted: false };
+  entry.pc = pc;
+  entry.apps.add(appName);
+  pcOutages.set(pc.id, entry);
+}
+
+/** One Discord alert per outage instead of one per app (and no app restarts). */
+async function flushPcOutages(settings) {
+  for (const [pcId, entry] of pcOutages) {
+    const name = entry.pc.name || entry.pc.host || "Companion PC";
+    if (!pcUnreachableThisCycle.has(pcId)) {
+      const last = companionHealthOk.get(pcId);
+      // Only call it recovered once Companion actually answered again (not just a skipped probe).
+      if (!last || Date.now() - last > COMPANION_HEALTH_FRESH_MS) continue;
+      if (entry.alerted && settings.discordNotifyRecovered !== false) {
+        await notifyDiscord(settings, {
+          title: `${name} is responding again`,
+          description: `Companion and the apps on \`${entry.pc.host || name}\` are answering again.`,
+          color: DISCORD_COLORS.recovered,
+        });
+      }
+      pcOutages.delete(pcId);
+      continue;
+    }
+    // Ping also failed → checkPcs already sends "appears offline".
+    if (entry.alerted || pcState.get(pcId)?.online === false) continue;
+    entry.alerted = true;
+    if (settings.discordNotifyDown === false) continue;
+    await notifyDiscord(settings, {
+      title: `${name} not responding`,
+      description: [
+        `${[...entry.apps].join(", ")} and the Companion app on \`${entry.pc.host || name}\` all stopped answering at once.`,
+        "Reason: the PC or its network looks down (sleep, VPN reconnect, network drop) — not the apps themselves.",
+        "Not restarting apps. You'll get a message when it responds again.",
+      ].join("\n"),
+      color: DISCORD_COLORS.down,
+    });
+  }
+}
+
 /** @type {ReturnType<typeof setInterval> | null} */
 let timer = null;
 
@@ -143,11 +198,23 @@ function startupGraceRemainingMs(settings) {
   return Math.max(0, graceSec * 1000 - (Date.now() - watchdogStartedAt));
 }
 
-function failThresholdFor(target, settings) {
+const HUNG_UI_MSG = /did not answer within/i;
+
+function failThresholdFor(target, settings, result) {
   const base = Math.max(1, Number(settings?.failThreshold) || 2);
   // FileFlows Node is a flaky process probe (dotnet.dll) — need more misses.
   if (target?.id === "fileflows-node") return Math.max(4, base);
+  // Port open but the web UI is slow (SABnzbd unpacking/repairing, *arr busy) — wait ~2 min before restarting.
+  if (HUNG_UI_MSG.test(String(result?.message || ""))) {
+    return Math.max(Number(settings?.hungFailThreshold) || 4, base);
+  }
   return base;
+}
+
+/** Web UI answer limit: SABnzbd freezes its UI during big unpack/repair jobs. */
+function webUiTimeoutMs(target, inStartupGrace) {
+  if (inStartupGrace) return 15000;
+  return target?.id === "sabnzbd" ? 20000 : 8000;
 }
 
 function maskWebhook(url) {
@@ -526,10 +593,16 @@ async function explainDownReason({
         status.serviceState != null
           ? ` (Windows service: ${status.serviceState})`
           : "";
+      if (HUNG_UI_MSG.test(probeMsg)) {
+        return `${probeMsg}\nReason: The port is open but the app's process wasn't found${svc} — it may be shutting down or hung.`;
+      }
       return `${probeMsg}\nReason: Process/service is not running${svc} — likely closed, crashed, or stopped.`;
     }
 
     if (status.running === true) {
+      if (HUNG_UI_MSG.test(probeMsg)) {
+        return `${probeMsg}\nReason: Process is running (${status.message || "running"}) and the port is open, but the web UI isn't answering — hung or very busy.`;
+      }
       return `${probeMsg}\nReason: Process is still running (${status.message || "running"}) but the port is not accepting connections — hung, still starting, or wrong port.`;
     }
   } catch {
@@ -760,12 +833,30 @@ async function checkOneInner(target) {
       inStartupGrace ? 5000 : 2500,
     );
     if (result.up) {
-      const web = await checkHttpAlive(target.url, inStartupGrace ? 15000 : 8000);
+      const web = await checkHttpAlive(target.url, webUiTimeoutMs(target, inStartupGrace));
       result = {
         up: web.up,
         latencyMs: web.up ? (result.latencyMs ?? web.latencyMs ?? null) : null,
         message: web.message,
       };
+    }
+  }
+
+  // App on a Companion PC failed: only call it "down" if Companion still answers.
+  // App port AND Companion both silent = the PC / its network is down, not the app.
+  if (result.up === false && !serviceProbe) {
+    const pc = companionPcFor(serviceCfg, settings);
+    if (pc) {
+      const health = await companionReachable(pc);
+      if (!health.online) {
+        notePcUnreachable(pc, target.name || target.id);
+        result = {
+          up: null,
+          companionUnreachable: true,
+          latencyMs: null,
+          message: `Status unknown — ${pc.name || "Companion PC"} not responding (${result.message}; Companion also unreachable). Not restarting.`,
+        };
+      }
     }
   }
 
@@ -801,7 +892,7 @@ async function checkOneInner(target) {
     up: null,
   };
 
-  const threshold = failThresholdFor(target, settings);
+  const threshold = failThresholdFor(target, settings, result);
   const lastRestartAtPrev = prev.lastRestartAt ?? null;
   const recentlyRestarted =
     lastRestartAtPrev &&
@@ -1060,7 +1151,9 @@ export async function runWatchCycle() {
 
   // PCs first so Companion-backed app probes can reuse a fresh Companion health result.
   await checkPcs();
+  pcUnreachableThisCycle = new Set();
   await Promise.all(snapshot.map((target) => checkOne(target)));
+  await flushPcOutages(loadWatchdogSettings());
   return getWatchStatus();
 }
 

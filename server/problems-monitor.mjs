@@ -14,6 +14,8 @@ const RESOLVE_AFTER_MISSES = 2;
 const FIRST_SCAN_DELAY_MS = 90_000;
 const MAX_LINES_PER_EMBED = 15;
 const AUTOFIX_LOG_LIMIT = 25;
+const HOUR_MS = 60 * 60 * 1000;
+const DEFAULT_REANNOUNCE_HOURS = 6;
 
 let timer = null;
 let running = false;
@@ -32,9 +34,10 @@ function loadState() {
       active: raw && typeof raw.active === "object" && raw.active ? raw.active : {},
       dismissed: raw && typeof raw.dismissed === "object" && raw.dismissed ? raw.dismissed : {},
       autoFixLog: Array.isArray(raw?.autoFixLog) ? raw.autoFixLog : [],
+      announced: raw && typeof raw.announced === "object" && raw.announced ? raw.announced : {},
     };
   } catch {
-    return { active: {}, dismissed: {}, autoFixLog: [] };
+    return { active: {}, dismissed: {}, autoFixLog: [], announced: {} };
   }
 }
 
@@ -53,10 +56,22 @@ function sourceOfKey(key) {
  * Diff this scan against tracked problems.
  * Exported for tests.
  */
-export function diffProblems(state, problems, failedSources, now = new Date().toISOString()) {
+export function diffProblems(
+  state,
+  problems,
+  failedSources,
+  now = new Date().toISOString(),
+  reannounceHours = DEFAULT_REANNOUNCE_HOURS,
+) {
   const failed = new Set(failedSources);
   const current = new Map(problems.map((p) => [p.key, p]));
   const active = { ...state.active };
+  const nowMs = Date.parse(now);
+  const quietMs = Math.max(0, Number(reannounceHours) || 0) * HOUR_MS;
+  const announced = {};
+  for (const [key, at] of Object.entries(state.announced || {})) {
+    if (nowMs - Date.parse(at) < Math.max(quietMs, 24 * HOUR_MS)) announced[key] = at;
+  }
   const added = [];
   const resolved = [];
 
@@ -71,7 +86,12 @@ export function diffProblems(state, problems, failedSources, now = new Date().to
         firstSeen: now,
         misses: 0,
       };
-      added.push(p);
+      // Flapping problems (e.g. a public tracker going up and down) only alert once per window.
+      const last = announced[p.key] ? Date.parse(announced[p.key]) : 0;
+      if (p.kind === "ombi" || !last || nowMs - last >= quietMs) {
+        added.push(p);
+        announced[p.key] = now;
+      }
     }
   }
 
@@ -87,7 +107,12 @@ export function diffProblems(state, problems, failedSources, now = new Date().to
     }
   }
 
-  return { state: { ...state, active }, added, resolved };
+  // Resolved notices for problems we stayed quiet about would just be noise.
+  const resolvedToNotify = resolved.filter((r) => {
+    const at = announced[r.key];
+    return !at || Date.parse(at) >= Date.parse(r.firstSeen || now);
+  });
+  return { state: { ...state, active, announced }, added, resolved: resolvedToNotify };
 }
 
 /**
@@ -222,6 +247,8 @@ export async function runProblemsScan() {
       loadState(),
       snapshot.problems,
       snapshot.failedSources,
+      new Date().toISOString(),
+      settings.problemReannounceHours,
     );
     if (fixes.length) {
       state.autoFixLog = [...fixes, ...(state.autoFixLog || [])].slice(0, AUTOFIX_LOG_LIMIT);
@@ -230,14 +257,18 @@ export async function runProblemsScan() {
     applyDismissals(snapshot);
     const webhookUrl = loadWatchdogSettings().discordWebhookUrl || "";
     await notify(added, resolved, settings, webhookUrl);
-    if (webhookUrl && settings.discordNotifyAutoFix && fixes.length) {
-      const failed = fixes.some((f) => !f.ok);
+    // Indexer re-tests stay in the Hub's auto-fix list unless Discord is turned on for them.
+    const discordFixes = fixes.filter(
+      (f) => !(f.rule === "testIndexer" && f.ok && !settings.discordNotifyIndexerFixes),
+    );
+    if (webhookUrl && settings.discordNotifyAutoFix && discordFixes.length) {
+      const failed = discordFixes.some((f) => !f.ok);
       await sendDiscordWebhook(webhookUrl, {
         title:
-          fixes.length === 1
-            ? `Auto-fixed: ${fixes[0].title}`
-            : `Auto-fixed ${fixes.filter((f) => f.ok).length} item(s) on your stack`,
-        description: formatLines(fixes, (f) => `${f.ok ? "🧹" : "⚠️"} ${describeAutoFix(f)}`),
+          discordFixes.length === 1
+            ? `Auto-fixed: ${discordFixes[0].title}`
+            : `Auto-fixed ${discordFixes.filter((f) => f.ok).length} item(s) on your stack`,
+        description: formatLines(discordFixes, (f) => `${f.ok ? "🧹" : "⚠️"} ${describeAutoFix(f)}`),
         color: failed ? DISCORD_COLORS.restartFail : DISCORD_COLORS.restartOk,
       });
     }

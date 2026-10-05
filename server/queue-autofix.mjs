@@ -50,8 +50,9 @@ export function classifyQueueIssue(issue, settings) {
 
 /**
  * Same episode (Sonarr) or movie (Radarr) grabbed by more than one download:
- * keep the highest resolution, then highest custom format score, then the one
- * closest to done. Season packs are never removed (they carry other episodes).
+ * keep a healthy copy over a stalled / warning one, then the highest resolution,
+ * then highest custom format score, then the one closest to done.
+ * Season packs are never removed (they carry other episodes).
  * @param {string} app
  * @param {{ id: number, title: string, downloadId: string, episodeId?: number | null, movieId?: number | null, resolution: number, customFormatScore: number, sizeleft: number, indexer?: string, protocol?: string }[]} records
  * @returns {{ loser: object, winner: object }[]}
@@ -81,6 +82,7 @@ export function pickDuplicateLosers(app, records) {
     if (byDownload.size < 2) continue;
     const ranked = [...byDownload.values()].sort(
       (a, b) =>
+        Number(Boolean(a.trouble)) - Number(Boolean(b.trouble)) ||
         (b.resolution || 0) - (a.resolution || 0) ||
         (b.customFormatScore || 0) - (a.customFormatScore || 0) ||
         (a.sizeleft || 0) - (b.sizeleft || 0),
@@ -101,6 +103,32 @@ const RETRY_AFTER_MS = 60 * 60 * 1000;
 /** @type {Map<string, number>} */
 const failedAt = new Map();
 
+const METADATA_MSG = /downloading metadata/i;
+const NO_CONNECTIONS_MSG = /stalled with no connections|stalled.*no (peers|seeds)/i;
+/** First scan each queue item was seen stuck (Hub restart restarts the clock — errs on the side of waiting). */
+/** @type {Map<string, number>} */
+const stuckSince = new Map();
+
+/**
+ * Magnet stuck fetching metadata, or torrent stalled with nobody to download from,
+ * for longer than the configured wait → blocklist and search for another release.
+ * Exported for tests.
+ * @returns {{ rule: "stalled", blocklist: true, reason: string } | null}
+ */
+export function classifyStalled(issue, settings, stuckForMs) {
+  if (settings.autoFixStalled === false) return null;
+  const msg = String(issue?.errorMessage || "");
+  const metadataMs = Math.max(15, Number(settings.stalledMetadataMinutes) || 60) * 60_000;
+  const noPeersMs = Math.max(1, Number(settings.stalledNoConnectionsHours) || 6) * 3_600_000;
+  if (METADATA_MSG.test(msg) && stuckForMs >= metadataMs) {
+    return { rule: "stalled", blocklist: true, reason: `stuck downloading metadata for ${Math.round(stuckForMs / 60_000)} min` };
+  }
+  if (NO_CONNECTIONS_MSG.test(msg) && stuckForMs >= noPeersMs) {
+    return { rule: "stalled", blocklist: true, reason: `stalled with no connections for ${Math.round(stuckForMs / 3_600_000)} h` };
+  }
+  return null;
+}
+
 /**
  * Apply auto-fix rules to the queues from a problems snapshot.
  * @param {Record<string, { ok?: boolean, issues?: object[] }>} queues
@@ -116,6 +144,21 @@ export async function runQueueAutoFix(queues, settings, deps = {}) {
   const max = Math.max(1, Number(settings.autoFixMaxPerScan) || 10);
   const results = [];
 
+  const seenStuck = new Set();
+  for (const [app, q] of Object.entries(queues || {})) {
+    if (!q?.ok) continue;
+    for (const issue of q.issues || []) {
+      const msg = String(issue?.errorMessage || "");
+      if (!METADATA_MSG.test(msg) && !NO_CONNECTIONS_MSG.test(msg)) continue;
+      const k = `queue:${app}:${issue.id}`;
+      seenStuck.add(k);
+      if (!stuckSince.has(k)) stuckSince.set(k, now);
+    }
+  }
+  for (const k of [...stuckSince.keys()]) {
+    if (!seenStuck.has(k)) stuckSince.delete(k);
+  }
+
   for (const [app, q] of Object.entries(queues || {})) {
     if (!q?.ok) continue;
     const importedDownloads = new Set();
@@ -127,7 +170,7 @@ export async function runQueueAutoFix(queues, settings, deps = {}) {
         const key = `queue:${app}:${loser.id}`;
         const lastFail = failedAt.get(key);
         if (lastFail != null && now - lastFail < RETRY_AFTER_MS) continue;
-        const res = (r) => (r.resolution ? `${r.resolution}p` : "?p");
+        const res = (r) => `${r.resolution ? `${r.resolution}p` : "?p"}${r.trouble ? ", stalled" : ""}`;
         const base = {
           key,
           app,
@@ -217,7 +260,9 @@ export async function runQueueAutoFix(queues, settings, deps = {}) {
       const key = `queue:${app}:${id}`;
       const lastFail = failedAt.get(key);
       if (lastFail != null && now - lastFail < RETRY_AFTER_MS) continue;
-      const fix = classifyQueueIssue(issue, settings);
+      const fix =
+        classifyQueueIssue(issue, settings) ||
+        classifyStalled(issue, settings, stuckSince.has(key) ? now - stuckSince.get(key) : 0);
       if (!fix) continue;
 
       const base = {

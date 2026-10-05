@@ -97,11 +97,23 @@ function summarizeQueueIssue(record) {
     episodeId: record.episodeId ?? null,
     episodeIds: Array.isArray(record.episodeIds) ? record.episodeIds : [],
     movieId: record.movieId ?? null,
+    added: record.added || null,
   };
+}
+
+/** Stuck magnet / dead torrent / client warning — never the copy worth keeping. */
+const QUEUE_TROUBLE_MSG = /downloading metadata|stalled|no connections|no seeds|not seeding/i;
+
+function queueRecordTrouble(record) {
+  const status = String(record.status || "").toLowerCase();
+  const tracked = String(record.trackedDownloadStatus || "").toLowerCase();
+  if (status === "warning" || status === "failed" || tracked === "warning" || tracked === "error") return true;
+  return QUEUE_TROUBLE_MSG.test(summarizeQueueIssue(record).errorMessage);
 }
 
 function slimQueueRecord(record) {
   return {
+    trouble: queueRecordTrouble(record),
     id: record.id ?? null,
     title: record.title || record.sourceTitle || "Unknown item",
     downloadId: record.downloadId || "",

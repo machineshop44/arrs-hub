@@ -7,7 +7,7 @@ import {
   normTitle,
   planAutoImport,
 } from "./queue-autoimport.mjs";
-import { pickDuplicateLosers, runQueueAutoFix } from "./queue-autofix.mjs";
+import { classifyStalled, pickDuplicateLosers, runQueueAutoFix } from "./queue-autofix.mjs";
 
 test("normTitle ignores case, punctuation, years and leading articles", () => {
   assert.equal(normTitle("The Office (US)"), normTitle("office us"));
@@ -94,6 +94,51 @@ test("pickDuplicateLosers keeps highest resolution, then CF score, and never dro
   ]);
   assert.equal(out[0].loser.id, 2);
   assert.deepEqual(pickDuplicateLosers("lidarr", [rec(1, "a", 1, 0, 0), rec(2, "b", 1, 0, 0)]), []);
+});
+
+test("pickDuplicateLosers keeps a healthy 720p over a stalled 1080p (Graham Norton case)", () => {
+  const out = pickDuplicateLosers("sonarr", [
+    { id: 1, title: "GN 1080p", downloadId: "a", episodeId: 7, resolution: 1080, customFormatScore: 119, sizeleft: 9, trouble: true },
+    { id: 2, title: "GN 720p", downloadId: "b", episodeId: 7, resolution: 720, customFormatScore: 103, sizeleft: 5 },
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].loser.id, 1);
+  assert.equal(out[0].winner.id, 2);
+});
+
+test("classifyStalled waits the configured time and respects the toggle", () => {
+  const settings = { stalledMetadataMinutes: 60, stalledNoConnectionsHours: 6 };
+  const meta = { errorMessage: "qBittorrent is downloading metadata" };
+  const dead = { errorMessage: "The download is stalled with no connections" };
+  assert.equal(classifyStalled(meta, settings, 30 * 60_000), null);
+  assert.equal(classifyStalled(meta, settings, 61 * 60_000)?.blocklist, true);
+  assert.equal(classifyStalled(dead, settings, 5 * 3_600_000), null);
+  assert.equal(classifyStalled(dead, settings, 6 * 3_600_000)?.rule, "stalled");
+  assert.equal(classifyStalled(dead, { ...settings, autoFixStalled: false }, 9 * 3_600_000), null);
+  assert.equal(classifyStalled({ errorMessage: "Downloading" }, settings, 99 * 3_600_000), null);
+});
+
+test("runQueueAutoFix removes a magnet only after it has been stuck past the wait", async () => {
+  const removed = [];
+  const remove = async (b) => {
+    removed.push(b);
+    return { keptSeeding: false };
+  };
+  const queues = {
+    radarr: {
+      ok: true,
+      records: [],
+      issues: [{ id: 42, title: "hash123", errorMessage: "qBittorrent is downloading metadata", downloadId: "H" }],
+    },
+  };
+  const settings = { stalledMetadataMinutes: 60, autoFixManualImport: false };
+  const t0 = 1_000_000_000;
+  let res = await runQueueAutoFix(queues, settings, { remove, now: t0 });
+  assert.equal(res.length, 0);
+  res = await runQueueAutoFix(queues, settings, { remove, now: t0 + 61 * 60_000 });
+  assert.equal(res.length, 1);
+  assert.equal(res[0].rule, "stalled");
+  assert.equal(removed[0].blocklist, true);
 });
 
 test("fileMatchesMovie requires title and year", () => {

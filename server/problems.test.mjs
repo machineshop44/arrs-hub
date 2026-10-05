@@ -5,6 +5,7 @@ import {
   classifyQbInterface,
   mergeDiskSpace,
   parseDiskDrives,
+  parseFailingIndexers,
 } from "./problems.mjs";
 import { diffProblems, pruneDismissed } from "./problems-monitor.mjs";
 
@@ -106,6 +107,46 @@ test("diffProblems alerts once and resolves only after repeated misses", () => {
   r = diffProblems(r.state, [], []);
   assert.equal(r.resolved.length, 1);
   assert.deepEqual(r.state.active, {});
+});
+
+test("diffProblems does not re-announce a flapping problem inside the cooldown", () => {
+  const p = { key: "health:indexer:eztv", kind: "health", severity: "warning", title: "t", detail: "d" };
+  const at = (h) => new Date(Date.UTC(2026, 0, 1) + h * 3_600_000).toISOString();
+  let r = diffProblems({ active: {} }, [p], [], at(0), 6);
+  assert.equal(r.added.length, 1);
+  r = diffProblems(r.state, [], [], at(1), 6);
+  r = diffProblems(r.state, [], [], at(1.1), 6);
+  assert.equal(r.resolved.length, 1);
+  r = diffProblems(r.state, [p], [], at(2), 6);
+  assert.equal(r.added.length, 0, "back within 6h → quiet");
+  assert.ok(r.state.active[p.key], "still tracked as active");
+  r = diffProblems(r.state, [], [], at(3), 6);
+  r = diffProblems(r.state, [], [], at(3.1), 6);
+  r = diffProblems(r.state, [p], [], at(7), 6);
+  assert.equal(r.added.length, 1, "after 6h it is announced again");
+});
+
+test("indexer health items group into one problem per tracker across apps", () => {
+  assert.deepEqual(parseFailingIndexers("Indexers unavailable due to failures: EZTV, LimeTorrents (Prowlarr)"), [
+    "EZTV",
+    "LimeTorrents",
+  ]);
+  const msg = (names) => ({ type: "warning", source: "IndexerStatusCheck", message: `Indexers unavailable due to failures: ${names}` });
+  const { problems } = buildProblemList({
+    health: [
+      { id: "sonarr", ok: true, configured: true, items: [msg("EZTV (Prowlarr), YTS (Prowlarr)")] },
+      { id: "radarr", ok: true, configured: true, items: [msg("YTS (Prowlarr)")] },
+      { id: "prowlarr", ok: true, configured: true, items: [{ ...msg("EZTV"), source: "IndexerStatusCheck" }] },
+    ],
+    disk: { low: [] },
+    qb: { ok: true, configured: false },
+    queues: {},
+    ombi: { ok: true, configured: false, items: [] },
+    settings,
+  });
+  const idx = problems.filter((p) => p.key.startsWith("health:indexer:"));
+  assert.equal(idx.length, 2);
+  assert.ok(idx.find((p) => p.title === "Indexer failing: EZTV"));
 });
 
 test("pruneDismissed keeps cleared problems hidden until they resolve", () => {

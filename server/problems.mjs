@@ -238,6 +238,21 @@ export async function getQbInterfaceStatus(baseUrl, username, password) {
   }
 }
 
+const INDEXER_SOURCES = new Set(["IndexerStatusCheck", "IndexerLongTermStatusCheck"]);
+
+/**
+ * "Indexers unavailable due to failures: Nyaa.si (Prowlarr), Tokyo Toshokan" → ["Nyaa.si", "Tokyo Toshokan"].
+ * Exported for tests.
+ */
+export function parseFailingIndexers(message) {
+  const m = /failures?(?: for more than \d+ hours?)?\s*:\s*(.+)$/i.exec(String(message || ""));
+  if (!m) return [];
+  return m[1]
+    .split(",")
+    .map((s) => s.replace(/\(prowlarr\)/i, "").replace(/\.$/, "").trim())
+    .filter(Boolean);
+}
+
 /**
  * Flatten every source into alertable problems with stable keys.
  * `failedSources` lists sources that could not be read this round, so the
@@ -249,9 +264,23 @@ export function buildProblemList({ health = [], disk = { low: [] }, qb = null, q
   /** @type {string[]} */
   const failedSources = [];
 
+  /** One problem per failing indexer, no matter how many *arr apps report it. */
+  const indexerFailures = new Map();
   for (const h of health) {
     if (h.configured && !h.ok) failedSources.push(`health:${h.id}`);
     for (const item of h.items || []) {
+      const names = INDEXER_SOURCES.has(item.source) ? parseFailingIndexers(item.message) : [];
+      if (names.length) {
+        for (const name of names) {
+          const k = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+          const entry = indexerFailures.get(k) || { name, apps: new Set(), error: false, url: undefined };
+          entry.apps.add(h.id);
+          if (item.type === "error") entry.error = true;
+          entry.url ||= item.wikiUrl || undefined;
+          indexerFailures.set(k, entry);
+        }
+        continue;
+      }
       problems.push({
         key: `health:${h.id}:${item.source}`,
         kind: "health",
@@ -262,6 +291,18 @@ export function buildProblemList({ health = [], disk = { low: [] }, qb = null, q
         url: item.wikiUrl || undefined,
       });
     }
+  }
+  for (const [k, entry] of indexerFailures) {
+    const apps = [...entry.apps].sort((a, b) => (a === "prowlarr" ? -1 : b === "prowlarr" ? 1 : a.localeCompare(b)));
+    problems.push({
+      key: `health:indexer:${k}`,
+      kind: "health",
+      severity: entry.error ? "error" : "warning",
+      app: apps.includes("prowlarr") ? "prowlarr" : apps[0],
+      title: `Indexer failing: ${entry.name}`,
+      detail: `Unavailable due to failures — reported by ${apps.map(appLabel).join(", ")}`,
+      url: entry.url,
+    });
   }
 
   if (disk.failed) failedSources.push("disk");

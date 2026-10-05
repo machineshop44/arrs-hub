@@ -34,8 +34,16 @@ export function defaultMonitorSettings() {
     autoFixHealth: true,
     /** Private trackers with seed-time rules: remove from the *arr only, never from qBittorrent. */
     keepSeedingIndexers: "TorrentDay, TorrentLeech",
+    /** Magnet stuck on metadata / torrent stalled with no connections → blocklist + search again. */
+    autoFixStalled: true,
+    stalledMetadataMinutes: 60,
+    stalledNoConnectionsHours: 6,
     autoFixMaxPerScan: 10,
     discordNotifyAutoFix: true,
+    /** "Indexer back in rotation" re-tests: Hub list only unless this is on. */
+    discordNotifyIndexerFixes: false,
+    /** A problem that clears and comes back is only announced again after this many hours. */
+    problemReannounceHours: 6,
     /** Scheduled *arr config backups copied to backupDir. */
     backupEnabled: false,
     backupDir: "",
@@ -81,8 +89,13 @@ function normalize(raw) {
     autoFixDuplicates: s.autoFixDuplicates !== false,
     keepSeedingIndexers:
       typeof s.keepSeedingIndexers === "string" ? s.keepSeedingIndexers.trim() : d.keepSeedingIndexers,
+    autoFixStalled: s.autoFixStalled !== false,
+    stalledMetadataMinutes: Math.round(clampNumber(s.stalledMetadataMinutes, d.stalledMetadataMinutes, 15, 24 * 60)),
+    stalledNoConnectionsHours: clampNumber(s.stalledNoConnectionsHours, d.stalledNoConnectionsHours, 1, 24 * 14),
     autoFixMaxPerScan: Math.round(clampNumber(s.autoFixMaxPerScan, d.autoFixMaxPerScan, 1, 50)),
     discordNotifyAutoFix: s.discordNotifyAutoFix !== false,
+    discordNotifyIndexerFixes: s.discordNotifyIndexerFixes === true,
+    problemReannounceHours: clampNumber(s.problemReannounceHours, d.problemReannounceHours, 0, 168),
     backupEnabled: s.backupEnabled === true,
     backupDir: String(s.backupDir || "").trim(),
     backupIntervalHours: clampNumber(s.backupIntervalHours, d.backupIntervalHours, 1, 24 * 90),
