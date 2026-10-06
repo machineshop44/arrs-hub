@@ -19,6 +19,8 @@ const MAX_LINES_PER_EMBED = 15;
 const AUTOFIX_LOG_LIMIT = 25;
 const HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_REANNOUNCE_HOURS = 6;
+/** Public indexers flap all day; a failing tracker is re-announced at most daily. */
+const INDEXER_REANNOUNCE_MS = 24 * HOUR_MS;
 
 let timer = null;
 let running = false;
@@ -78,9 +80,24 @@ export function diffProblems(
   const added = [];
   const resolved = [];
 
+  const tryAnnounce = (p) => {
+    // Flapping problems (e.g. a public tracker going up and down) only alert once per window.
+    const window = p.key.startsWith("health:indexer:") ? Math.max(quietMs, INDEXER_REANNOUNCE_MS) : quietMs;
+    const last = announced[p.key] ? Date.parse(announced[p.key]) : 0;
+    if (p.kind === "ombi" || !last || nowMs - last >= window) {
+      added.push(p);
+      announced[p.key] = now;
+    }
+  };
   for (const p of problems) {
+    const waitMs = Math.max(0, Number(p.announceAfterMinutes) || 0) * 60_000;
     if (active[p.key]) {
-      active[p.key] = { ...active[p.key], misses: 0, title: p.title };
+      const entry = { ...active[p.key], misses: 0, title: p.title };
+      if (entry.pendingAnnounce && nowMs - Date.parse(entry.firstSeen) >= waitMs) {
+        delete entry.pendingAnnounce;
+        tryAnnounce(p);
+      }
+      active[p.key] = entry;
     } else {
       active[p.key] = {
         title: p.title,
@@ -89,12 +106,8 @@ export function diffProblems(
         firstSeen: now,
         misses: 0,
       };
-      // Flapping problems (e.g. a public tracker going up and down) only alert once per window.
-      const last = announced[p.key] ? Date.parse(announced[p.key]) : 0;
-      if (p.kind === "ombi" || !last || nowMs - last >= quietMs) {
-        added.push(p);
-        announced[p.key] = now;
-      }
+      if (waitMs > 0) active[p.key].pendingAnnounce = true;
+      else tryAnnounce(p);
     }
   }
 
@@ -112,6 +125,7 @@ export function diffProblems(
 
   // Resolved notices for problems we stayed quiet about would just be noise.
   const resolvedToNotify = resolved.filter((r) => {
+    if (r.pendingAnnounce) return false;
     const at = announced[r.key];
     return !at || Date.parse(at) >= Date.parse(r.firstSeen || now);
   });

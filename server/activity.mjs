@@ -101,6 +101,32 @@ function summarizeQueueIssue(record) {
   };
 }
 
+/**
+ * A season pack shows up as one queue row per episode. Merge rows of the same
+ * download into one issue (first row's id, every episode id) so it is one
+ * problem and one fix. Exported for tests.
+ */
+export function collapseByDownload(issues) {
+  const byDownload = new Map();
+  const out = [];
+  for (const issue of issues) {
+    const dl = String(issue.downloadId || "");
+    const first = dl ? byDownload.get(dl) : null;
+    if (!first) {
+      const copy = { ...issue, episodeIds: [...(issue.episodeIds || [])], rowCount: 1 };
+      if (issue.episodeId && !copy.episodeIds.includes(issue.episodeId)) copy.episodeIds.push(issue.episodeId);
+      if (dl) byDownload.set(dl, copy);
+      out.push(copy);
+      continue;
+    }
+    first.rowCount += 1;
+    for (const id of [issue.episodeId, ...(issue.episodeIds || [])]) {
+      if (id && !first.episodeIds.includes(id)) first.episodeIds.push(id);
+    }
+  }
+  return out;
+}
+
 /** Stuck magnet / dead torrent / client warning — never the copy worth keeping. */
 const QUEUE_TROUBLE_MSG = /downloading metadata|stalled|no connections|no seeds|not seeding/i;
 
@@ -142,7 +168,7 @@ async function getArrQueue(id, baseUrl, apiKey) {
   const version = arrApiVersion(id);
   // Fetch a page of records so the chip popover can list stuck / manual-import items.
   // totalRecords still drives the chip count.
-  const url = `${base}/api/${version}/queue?page=1&pageSize=50&includeUnknownSeriesItems=true&includeUnknownMovieItems=true`;
+  const url = `${base}/api/${version}/queue?page=1&pageSize=250&includeUnknownSeriesItems=true&includeUnknownMovieItems=true`;
   try {
     const data = await fetchJson(url, {
       headers: { "X-Api-Key": apiKey, Accept: "application/json" },
@@ -153,10 +179,7 @@ async function getArrQueue(id, baseUrl, apiKey) {
         ? data
         : [];
     const total = Number(data?.totalRecords ?? records.length) || records.length;
-    const issues = records
-      .filter(isQueueIssue)
-      .map(summarizeQueueIssue)
-      .slice(0, 25);
+    const issues = collapseByDownload(records.filter(isQueueIssue).map(summarizeQueueIssue)).slice(0, 25);
     return {
       ok: true,
       configured: true,

@@ -8,6 +8,7 @@ import {
   planAutoImport,
 } from "./queue-autoimport.mjs";
 import { classifyStalled, pickDuplicateLosers, runQueueAutoFix } from "./queue-autofix.mjs";
+import { collapseByDownload } from "./activity.mjs";
 
 test("normTitle ignores case, punctuation, years and leading articles", () => {
   assert.equal(normTitle("The Office (US)"), normTitle("office us"));
@@ -133,12 +134,51 @@ test("runQueueAutoFix removes a magnet only after it has been stuck past the wai
   };
   const settings = { stalledMetadataMinutes: 60, autoFixManualImport: false };
   const t0 = 1_000_000_000;
-  let res = await runQueueAutoFix(queues, settings, { remove, now: t0 });
+  const stuck = new Map();
+  let res = await runQueueAutoFix(queues, settings, { remove, now: t0, stuck });
   assert.equal(res.length, 0);
-  res = await runQueueAutoFix(queues, settings, { remove, now: t0 + 61 * 60_000 });
+  res = await runQueueAutoFix(queues, settings, { remove, now: t0 + 61 * 60_000, stuck });
   assert.equal(res.length, 1);
   assert.equal(res[0].rule, "stalled");
   assert.equal(removed[0].blocklist, true);
+});
+
+test("runQueueAutoFix keeps the stall clock when an item drops out of one scan", async () => {
+  const remove = async () => ({ keptSeeding: false });
+  const issue = { id: 9, title: "Pack", errorMessage: "The download is stalled with no connections", downloadId: "P" };
+  const withIssue = { sonarr: { ok: true, records: [], issues: [issue] } };
+  const without = { sonarr: { ok: true, records: [], issues: [] } };
+  const settings = { stalledNoConnectionsHours: 6, autoFixManualImport: false };
+  const h = 3_600_000;
+  let stuck = new Map();
+  await runQueueAutoFix(withIssue, settings, { remove, now: 0, stuck });
+  await runQueueAutoFix(without, settings, { remove, now: 1 * h, stuck });
+  let res = await runQueueAutoFix(withIssue, settings, { remove, now: 6.5 * h, stuck });
+  assert.equal(res.length, 1, "a 1h gap keeps the clock");
+
+  stuck = new Map();
+  await runQueueAutoFix(withIssue, settings, { remove, now: 0, stuck });
+  await runQueueAutoFix(without, settings, { remove, now: 3 * h, stuck });
+  res = await runQueueAutoFix(withIssue, settings, { remove, now: 6.5 * h, stuck });
+  assert.equal(res.length, 0, "gone over 2h → clock restarted");
+});
+
+test("collapseByDownload merges a season pack's rows into one issue", () => {
+  const rows = [1, 2, 3].map((n) => ({ id: n, downloadId: "PACK", episodeId: 100 + n, episodeIds: [], title: "NCIS S08" }));
+  const out = collapseByDownload([...rows, { id: 9, downloadId: "OTHER", episodeId: 5, episodeIds: [] }]);
+  assert.equal(out.length, 2);
+  assert.equal(out[0].id, 1);
+  assert.equal(out[0].rowCount, 3);
+  assert.deepEqual(out[0].episodeIds, [101, 102, 103]);
+});
+
+test("runQueueAutoFix treats a 404 on removal as already gone, not a failure", async () => {
+  const remove = async () => {
+    throw Object.assign(new Error("NotFound"), { status: 404 });
+  };
+  const queues = { sonarr: { ok: true, records: [], issues: [{ id: 5, title: "X", errorMessage: "Not an upgrade for existing episode file(s)", downloadId: "D" }] } };
+  const res = await runQueueAutoFix(queues, { autoFixManualImport: false }, { remove, now: 0, stuck: new Map() });
+  assert.deepEqual(res, []);
 });
 
 test("fileMatchesMovie requires title and year", () => {

@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+import { DATA_DIR, ensureDataDirs } from "./config.mjs";
 import { appLabel } from "./problems.mjs";
 import { removeArrQueueItem } from "./queue-actions.mjs";
 import { AUTO_IMPORT_APPS, autoImportDownload, needsManualImport } from "./queue-autoimport.mjs";
@@ -105,9 +108,30 @@ const failedAt = new Map();
 
 const METADATA_MSG = /downloading metadata/i;
 const NO_CONNECTIONS_MSG = /stalled with no connections|stalled.*no (peers|seeds)/i;
-/** First scan each queue item was seen stuck (Hub restart restarts the clock — errs on the side of waiting). */
-/** @type {Map<string, number>} */
-const stuckSince = new Map();
+/** A stuck download that drops out of view this long has its clock reset. */
+const STUCK_FORGET_MS = 2 * 60 * 60 * 1000;
+const STUCK_FILE = path.join(DATA_DIR, "queue-stuck.json");
+
+/** app:download → { since, seen } (epoch ms). Saved so Hub restarts don't restart the wait. */
+function loadStuck() {
+  try {
+    const data = JSON.parse(fs.readFileSync(STUCK_FILE, "utf8"));
+    return new Map(Object.entries(data && typeof data === "object" ? data : {}));
+  } catch {
+    return new Map();
+  }
+}
+
+function saveStuck(map) {
+  try {
+    ensureDataDirs();
+    fs.writeFileSync(STUCK_FILE, JSON.stringify(Object.fromEntries(map)));
+  } catch {
+    /* clock just restarts after a Hub restart */
+  }
+}
+
+const stuckKey = (app, issue) => `${app}:${issue.downloadId || issue.id}`;
 
 /**
  * Magnet stuck fetching metadata, or torrent stalled with nobody to download from,
@@ -144,20 +168,25 @@ export async function runQueueAutoFix(queues, settings, deps = {}) {
   const max = Math.max(1, Number(settings.autoFixMaxPerScan) || 10);
   const results = [];
 
-  const seenStuck = new Set();
+  const stuck = deps.stuck || loadStuck();
   for (const [app, q] of Object.entries(queues || {})) {
     if (!q?.ok) continue;
     for (const issue of q.issues || []) {
       const msg = String(issue?.errorMessage || "");
       if (!METADATA_MSG.test(msg) && !NO_CONNECTIONS_MSG.test(msg)) continue;
-      const k = `queue:${app}:${issue.id}`;
-      seenStuck.add(k);
-      if (!stuckSince.has(k)) stuckSince.set(k, now);
+      const k = stuckKey(app, issue);
+      const prev = stuck.get(k);
+      stuck.set(k, { since: prev?.since ?? now, seen: now });
     }
   }
-  for (const k of [...stuckSince.keys()]) {
-    if (!seenStuck.has(k)) stuckSince.delete(k);
+  for (const [k, v] of [...stuck]) {
+    if (now - (v?.seen || 0) > STUCK_FORGET_MS) stuck.delete(k);
   }
+  if (!deps.stuck) saveStuck(stuck);
+  const stuckFor = (app, issue) => {
+    const v = stuck.get(stuckKey(app, issue));
+    return v && v.seen === now ? now - v.since : 0;
+  };
 
   for (const [app, q] of Object.entries(queues || {})) {
     if (!q?.ok) continue;
@@ -194,6 +223,7 @@ export async function runQueueAutoFix(queues, settings, deps = {}) {
           importedDownloads.add(loser.downloadId);
           results.push({ ...base, keptSeeding: Boolean(r?.keptSeeding), ok: true });
         } catch (err) {
+          if (err?.status === 404) continue;
           failedAt.set(key, now);
           results.push({ ...base, keptSeeding: false, ok: false, error: err instanceof Error ? err.message : String(err) });
         }
@@ -254,16 +284,16 @@ export async function runQueueAutoFix(queues, settings, deps = {}) {
 
     for (const issue of q.issues || []) {
       if (importedKeys.has(`queue:${app}:${issue?.id}`)) continue;
+      if (issue?.downloadId && importedDownloads.has(issue.downloadId)) continue;
       if (results.length >= max) return results;
       const id = Number(issue?.id);
       if (!Number.isInteger(id) || id <= 0) continue;
       const key = `queue:${app}:${id}`;
       const lastFail = failedAt.get(key);
       if (lastFail != null && now - lastFail < RETRY_AFTER_MS) continue;
-      const fix =
-        classifyQueueIssue(issue, settings) ||
-        classifyStalled(issue, settings, stuckSince.has(key) ? now - stuckSince.get(key) : 0);
+      const fix = classifyQueueIssue(issue, settings) || classifyStalled(issue, settings, stuckFor(app, issue));
       if (!fix) continue;
+      if (issue.downloadId) importedDownloads.add(issue.downloadId);
 
       const base = {
         key,
@@ -286,6 +316,8 @@ export async function runQueueAutoFix(queues, settings, deps = {}) {
         failedAt.delete(key);
         results.push({ ...base, keptSeeding: Boolean(r?.keptSeeding), ok: true });
       } catch (err) {
+        // 404: already gone (the *arr cleared it, or it was another row of a download just removed).
+        if (err?.status === 404) continue;
         failedAt.set(key, now);
         results.push({
           ...base,

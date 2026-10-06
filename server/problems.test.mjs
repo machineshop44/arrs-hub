@@ -110,7 +110,7 @@ test("diffProblems alerts once and resolves only after repeated misses", () => {
 });
 
 test("diffProblems does not re-announce a flapping problem inside the cooldown", () => {
-  const p = { key: "health:indexer:eztv", kind: "health", severity: "warning", title: "t", detail: "d" };
+  const p = { key: "health:sonarr:DownloadClientCheck", kind: "health", severity: "warning", title: "t", detail: "d" };
   const at = (h) => new Date(Date.UTC(2026, 0, 1) + h * 3_600_000).toISOString();
   let r = diffProblems({ active: {} }, [p], [], at(0), 6);
   assert.equal(r.added.length, 1);
@@ -124,6 +124,33 @@ test("diffProblems does not re-announce a flapping problem inside the cooldown",
   r = diffProblems(r.state, [], [], at(3.1), 6);
   r = diffProblems(r.state, [p], [], at(7), 6);
   assert.equal(r.added.length, 1, "after 6h it is announced again");
+});
+
+test("diffProblems: failing indexers re-announce daily, stuck queue items only after they linger", () => {
+  const at = (m) => new Date(Date.UTC(2026, 0, 1) + m * 60_000).toISOString();
+  const idx = { key: "health:indexer:torrentdownloads", kind: "health", severity: "warning", title: "t", detail: "d" };
+  let r = diffProblems({ active: {} }, [idx], [], at(0), 6);
+  assert.equal(r.added.length, 1);
+  r = diffProblems(r.state, [], [], at(60), 6);
+  r = diffProblems(r.state, [], [], at(61), 6);
+  r = diffProblems(r.state, [idx], [], at(7 * 60), 6);
+  assert.equal(r.added.length, 0, "back after 7h → still quiet (daily for indexers)");
+
+  const q = { key: "queue:sonarr:1", kind: "queue", severity: "warning", title: "q", detail: "importPending", announceAfterMinutes: 60 };
+  r = diffProblems({ active: {} }, [q], [], at(0), 6);
+  assert.equal(r.added.length, 0);
+  r = diffProblems(r.state, [q], [], at(30), 6);
+  assert.equal(r.added.length, 0);
+  r = diffProblems(r.state, [q], [], at(61), 6);
+  assert.equal(r.added.length, 1, "announced once it lingered an hour");
+  r = diffProblems(r.state, [q], [], at(90), 6);
+  assert.equal(r.added.length, 0);
+
+  const brief = { ...q, key: "queue:sonarr:2" };
+  r = diffProblems({ active: {} }, [brief], [], at(0), 6);
+  r = diffProblems(r.state, [], [], at(5), 6);
+  r = diffProblems(r.state, [], [], at(10), 6);
+  assert.equal(r.added.length + r.resolved.length, 0, "cleared on its own → never mentioned");
 });
 
 test("indexer health items group into one problem per tracker across apps", () => {

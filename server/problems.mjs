@@ -340,13 +340,17 @@ export function buildProblemList({ health = [], disk = { low: [] }, qb = null, q
       continue;
     }
     for (const issue of q.issues || []) {
+      const rows = Number(issue.rowCount) || 1;
+      const quietPending = !issue.errorMessage && /importpending/i.test(issue.trackedDownloadState || "");
       problems.push({
         key: `queue:${id}:${issue.id ?? issue.title}`,
         kind: "queue",
         severity: "warning",
         app: id,
-        title: `${appLabel(id)} stuck: ${issue.title}`,
+        title: `${appLabel(id)} stuck: ${issue.title}${rows > 1 ? ` (${rows} episodes)` : ""}`,
         detail: issue.errorMessage || issue.trackedDownloadState || issue.status || "Needs attention",
+        // Most stuck downloads clear on their own or get auto-fixed; only alert if they linger.
+        announceAfterMinutes: quietPending ? 60 : 30,
       });
     }
   }
