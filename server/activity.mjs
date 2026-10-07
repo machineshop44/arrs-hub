@@ -148,6 +148,7 @@ function slimQueueRecord(record) {
     movieId: record.movieId ?? null,
     resolution: Number(record.quality?.quality?.resolution) || 0,
     customFormatScore: Number(record.customFormatScore) || 0,
+    size: Number(record.size) || 0,
     sizeleft: Number(record.sizeleft) || 0,
     indexer: record.indexer || "",
     protocol: record.protocol || "",

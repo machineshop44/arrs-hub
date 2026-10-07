@@ -69,11 +69,13 @@ export async function removeArrQueueItem(body = {}, resolver) {
   let removeFromClient = body.removeFromClient !== false;
   let keptSeeding = false;
   if (removeFromClient) {
-    const item = (await fetchQueueItem(base, app, id, apiKey)) || {
-      indexer: body.indexer,
-      protocol: body.protocol,
-    };
-    if (mustKeepSeeding(item, loadMonitorSettings().keepSeedingIndexers)) {
+    const fetched = await fetchQueueItem(base, app, id, apiKey);
+    const item = fetched || { indexer: body.indexer, protocol: body.protocol };
+    // A dead torrent that never downloaded anything has nothing to seed.
+    const size = Number(fetched?.size) || 0;
+    const nothingDownloaded =
+      body.dropIfUnstarted === true && fetched != null && (size === 0 || Number(fetched.sizeleft) / size >= 0.99);
+    if (!nothingDownloaded && mustKeepSeeding(item, loadMonitorSettings().keepSeedingIndexers)) {
       removeFromClient = false;
       keptSeeding = true;
     }

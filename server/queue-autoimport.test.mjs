@@ -107,6 +107,15 @@ test("pickDuplicateLosers keeps a healthy 720p over a stalled 1080p (Graham Nort
   assert.equal(out[0].winner.id, 2);
 });
 
+test("pickDuplicateLosers waits while the copy being dropped is further along than the keeper", () => {
+  const rec = (id, cf, size, left, extra = {}) => ({
+    id, title: `T${id}`, downloadId: `d${id}`, episodeId: 7, resolution: 1080, customFormatScore: cf, size, sizeleft: left, ...extra,
+  });
+  assert.deepEqual(pickDuplicateLosers("sonarr", [rec(1, 17, 100, 20), rec(2, 119, 100, 95)]), [], "CBFM 80% done vs MeGusta 5% → wait");
+  assert.equal(pickDuplicateLosers("sonarr", [rec(1, 17, 100, 60), rec(2, 119, 100, 30)])[0].loser.id, 1, "keeper is ahead → remove");
+  assert.equal(pickDuplicateLosers("sonarr", [rec(1, 17, 100, 20, { trouble: true }), rec(2, 119, 100, 95)])[0].loser.id, 1, "stalled copy always goes");
+});
+
 test("classifyStalled waits the configured time and respects the toggle", () => {
   const settings = { stalledMetadataMinutes: 60, stalledNoConnectionsHours: 6 };
   const meta = { errorMessage: "qBittorrent is downloading metadata" };

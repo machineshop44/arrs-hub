@@ -304,6 +304,8 @@ export function buildProblemList({ health = [], disk = { low: [] }, qb = null, q
       title: `Indexer failing: ${entry.name}`,
       detail: `Unavailable due to failures — reported by ${apps.map(appLabel).join(", ")}`,
       url: entry.url,
+      // Public trackers drop out for minutes at a time; only alert when one stays down.
+      announceAfterMinutes: 120,
     });
   }
 

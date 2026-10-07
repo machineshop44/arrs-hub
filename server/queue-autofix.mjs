@@ -60,6 +60,17 @@ export function classifyQueueIssue(issue, settings) {
  * @param {{ id: number, title: string, downloadId: string, episodeId?: number | null, movieId?: number | null, resolution: number, customFormatScore: number, sizeleft: number, indexer?: string, protocol?: string }[]} records
  * @returns {{ loser: object, winner: object }[]}
  */
+/** 0–1 downloaded, or null when the size is unknown. */
+function doneFraction(r) {
+  return r.size > 0 ? 1 - Math.min(r.size, r.sizeleft || 0) / r.size : null;
+}
+
+function aheadOf(loser, winner) {
+  const l = doneFraction(loser);
+  const w = doneFraction(winner);
+  return l != null && w != null && l > w;
+}
+
 export function pickDuplicateLosers(app, records) {
   const keyOf =
     app === "sonarr" ? (r) => (r.episodeId ? `ep:${r.episodeId}` : "") : app === "radarr" ? (r) => (r.movieId ? `movie:${r.movieId}` : "") : null;
@@ -94,6 +105,8 @@ export function pickDuplicateLosers(app, records) {
     for (const loser of ranked.slice(1)) {
       if (seenLosers.has(loser.downloadId)) continue;
       if ((episodesPerDownload.get(loser.downloadId)?.size || 0) > 1) continue;
+      // Don't kill a healthy copy that's further along than the keeper; recheck next scan.
+      if (!loser.trouble && aheadOf(loser, winner)) continue;
       seenLosers.add(loser.downloadId);
       out.push({ loser, winner });
     }
@@ -310,6 +323,7 @@ export async function runQueueAutoFix(queues, settings, deps = {}) {
           id,
           blocklist: fix.blocklist,
           removeFromClient: true,
+          dropIfUnstarted: fix.rule === "stalled",
           indexer: issue.indexer,
           protocol: issue.protocol,
         });
