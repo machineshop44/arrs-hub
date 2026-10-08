@@ -63,6 +63,8 @@ export function defaultMonitorSettings() {
     discordNotifyAutoFix: true,
     /** "Indexer back in rotation" re-tests: Hub list only unless this is on. */
     discordNotifyIndexerFixes: false,
+    /** Failing indexers (mostly public trackers coming and going): Hub dashboard only unless this is on. */
+    discordNotifyIndexerFailures: false,
     /** A problem that clears and comes back is only announced again after this many hours. */
     problemReannounceHours: 6,
     /** Scheduled *arr config backups copied to backupDir. */
@@ -136,6 +138,7 @@ function normalize(raw) {
     autoFixMaxPerScan: Math.round(clampNumber(s.autoFixMaxPerScan, d.autoFixMaxPerScan, 1, 50)),
     discordNotifyAutoFix: s.discordNotifyAutoFix !== false,
     discordNotifyIndexerFixes: s.discordNotifyIndexerFixes === true,
+    discordNotifyIndexerFailures: s.discordNotifyIndexerFailures === true,
     problemReannounceHours: clampNumber(s.problemReannounceHours, d.problemReannounceHours, 0, 168),
     backupEnabled: s.backupEnabled === true,
     backupDir: String(s.backupDir || "").trim(),

@@ -210,7 +210,9 @@ const SEVERITY_ICON = { error: "🔴", warning: "🟠", info: "🔵" };
 async function notify(added, resolved, settings, webhookUrl) {
   if (!webhookUrl) return;
   const ombi = added.filter((p) => p.kind === "ombi");
-  const issues = added.filter((p) => p.kind !== "ombi");
+  const issues = added.filter(
+    (p) => p.kind !== "ombi" && (settings.discordNotifyIndexerFailures || !p.key.startsWith("health:indexer:")),
+  );
 
   if (settings.discordNotifyProblems && issues.length) {
     const worst = issues.some((p) => p.severity === "error") ? DISCORD_COLORS.down : DISCORD_COLORS.restartFail;
@@ -235,7 +237,9 @@ async function notify(added, resolved, settings, webhookUrl) {
     });
   }
 
-  const fixed = resolved.filter((p) => p.kind !== "ombi");
+  const fixed = resolved.filter(
+    (p) => p.kind !== "ombi" && (settings.discordNotifyIndexerFailures || !p.key.startsWith("health:indexer:")),
+  );
   if (settings.discordNotifyProblemsResolved && fixed.length) {
     await sendDiscordWebhook(webhookUrl, {
       title: fixed.length === 1 ? `Resolved: ${fixed[0].title}` : `${fixed.length} problems resolved`,

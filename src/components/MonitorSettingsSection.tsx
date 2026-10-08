@@ -47,6 +47,7 @@ type MonitorSettings = {
   autoFixPlexRefresh: boolean;
   discordNotifyAutoFix: boolean;
   discordNotifyIndexerFixes: boolean;
+  discordNotifyIndexerFailures: boolean;
   problemReannounceHours: number;
   backupEnabled: boolean;
   backupDir: string;
@@ -423,6 +424,17 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
             />
             <span className="toggle-label">
               Discord: &quot;indexer back in rotation&quot; re-tests (off = Hub list only)
+            </span>
+          </label>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={settings.discordNotifyIndexerFailures}
+              disabled={disabled}
+              onChange={(e) => patch({ discordNotifyIndexerFailures: e.target.checked })}
+            />
+            <span className="toggle-label">
+              Discord: failing indexers (off = Hub dashboard only)
             </span>
           </label>
           <label className="field">
