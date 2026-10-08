@@ -8,7 +8,24 @@ import {
   planAutoImport,
 } from "./queue-autoimport.mjs";
 import { classifyStalled, pickDuplicateLosers, runQueueAutoFix } from "./queue-autofix.mjs";
-import { collapseByDownload } from "./activity.mjs";
+import { collapseByDownload, decodeTitle } from "./activity.mjs";
+
+test("decodeTitle unescapes indexer HTML entities", () => {
+  assert.equal(decodeTitle("Mr.&amp;.Mrs.Smith.2024.S01E04"), "Mr.&.Mrs.Smith.2024.S01E04");
+});
+
+test("not-an-upgrade removal blocklists without a new search", async () => {
+  const calls = [];
+  const remove = async (b) => {
+    calls.push(b);
+    return { keptSeeding: false };
+  };
+  const queues = { sonarr: { ok: true, records: [], issues: [{ id: 3, title: "Re:Zero Vol.3", errorMessage: "Not a Custom Format upgrade for existing episode file(s)", downloadId: "R" }] } };
+  const res = await runQueueAutoFix(queues, { autoFixManualImport: false }, { remove, now: 0, stuck: new Map() });
+  assert.equal(res[0].rule, "notUpgrade");
+  assert.equal(calls[0].blocklist, true);
+  assert.equal(calls[0].skipRedownload, true);
+});
 
 test("normTitle ignores case, punctuation, years and leading articles", () => {
   assert.equal(normTitle("The Office (US)"), normTitle("office us"));

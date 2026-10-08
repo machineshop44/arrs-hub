@@ -20,7 +20,9 @@ test("classifyQueueIssue picks the right rule and leaves manual-import cases alo
   assert.equal(classifyQueueIssue({ errorMessage: "Show.S01E01.mkv.lnk" }, on).rule, "dangerous");
   assert.equal(classifyQueueIssue({ errorMessage: "No files found are eligible for import in C:\\dl" }, on).rule, "sample");
   assert.equal(classifyQueueIssue({ errorMessage: "Not an upgrade for existing episode file(s)" }, on).rule, "notUpgrade");
-  assert.equal(classifyQueueIssue({ errorMessage: "Not an upgrade for existing episode file(s)" }, on).blocklist, false);
+  const notUpgrade = classifyQueueIssue({ errorMessage: "Not an upgrade for existing episode file(s)" }, on);
+  assert.equal(notUpgrade.blocklist, true, "blocklisted so the same release isn't grabbed in a loop");
+  assert.equal(notUpgrade.search, false);
   assert.equal(classifyQueueIssue({ trackedDownloadState: "failedPending" }, on).rule, "failed");
   assert.equal(
     classifyQueueIssue({ errorMessage: "Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible." }, on),

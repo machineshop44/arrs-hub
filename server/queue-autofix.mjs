@@ -24,7 +24,7 @@ const NOT_UPGRADE_MSG =
  * (manual import / unparseable / unmatched series).
  * @param {{ errorMessage?: string, status?: string, trackedDownloadState?: string }} issue
  * @param {Record<string, unknown>} settings monitor settings
- * @returns {{ rule: "dangerous" | "sample" | "notUpgrade" | "failed", blocklist: boolean, reason: string } | null}
+ * @returns {{ rule: "dangerous" | "sample" | "notUpgrade" | "failed", blocklist: boolean, search?: boolean, reason: string } | null}
  */
 export function classifyQueueIssue(issue, settings) {
   const msg = String(issue?.errorMessage || "");
@@ -40,7 +40,8 @@ export function classifyQueueIssue(issue, settings) {
     return { rule: "sample", blocklist: true, reason: "sample / no importable files" };
   }
   if (settings.autoFixNotUpgrade !== false && NOT_UPGRADE_MSG.test(msg)) {
-    return { rule: "notUpgrade", blocklist: false, reason: "not an upgrade / already imported" };
+    // Blocklisted so the *arr doesn't grab the same release again; no new search (the existing file is fine).
+    return { rule: "notUpgrade", blocklist: true, search: false, reason: "not an upgrade / already imported" };
   }
   if (
     settings.autoFixFailed !== false &&
@@ -315,6 +316,7 @@ export async function runQueueAutoFix(queues, settings, deps = {}) {
         rule: fix.rule,
         reason: fix.reason,
         blocklist: fix.blocklist,
+        ...(fix.search === false ? { search: false } : {}),
         at: new Date(now).toISOString(),
       };
       try {
@@ -322,6 +324,7 @@ export async function runQueueAutoFix(queues, settings, deps = {}) {
           app,
           id,
           blocklist: fix.blocklist,
+          skipRedownload: fix.search === false,
           removeFromClient: true,
           dropIfUnstarted: fix.rule === "stalled",
           indexer: issue.indexer,
@@ -370,7 +373,13 @@ export function describeAutoFix(r) {
   if (r.rule === "qbCleanup") {
     return `${appLabel(r.app)}: ${r.title} — ${r.reason} → ${r.ok ? "removed (done seeding)" : `fix failed: ${r.error}`}`;
   }
-  const action = r.imported ? "imported" : r.blocklist ? "blocklisted, searching again" : "removed";
+  const action = r.imported
+    ? "imported"
+    : r.blocklist
+      ? r.search === false
+        ? "removed + blocklisted (won't be grabbed again)"
+        : "blocklisted, searching again"
+      : "removed";
   const seed = r.keptSeeding ? " · still seeding in qBittorrent" : "";
   const status = r.ok ? `${action}${seed}` : `fix failed: ${r.error}`;
   return `${appLabel(r.app)}: ${r.title} — ${r.reason} → ${status}`;

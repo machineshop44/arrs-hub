@@ -83,7 +83,7 @@ function summarizeQueueIssue(record) {
   }
   return {
     id: record.id ?? null,
-    title: record.title || record.sourceTitle || "Unknown item",
+    title: decodeTitle(record.title || record.sourceTitle) || "Unknown item",
     status: record.status || "",
     trackedDownloadStatus: record.trackedDownloadStatus || "",
     trackedDownloadState: record.trackedDownloadState || "",
@@ -127,6 +127,16 @@ export function collapseByDownload(issues) {
   return out;
 }
 
+/** Indexers sometimes hand over HTML-escaped titles ("Mr.&amp;.Mrs.Smith"). */
+export function decodeTitle(s) {
+  return String(s || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;|&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
 /** Stuck magnet / dead torrent / client warning — never the copy worth keeping. */
 const QUEUE_TROUBLE_MSG = /downloading metadata|stalled|no connections|no seeds|not seeding/i;
 
@@ -141,7 +151,7 @@ function slimQueueRecord(record) {
   return {
     trouble: queueRecordTrouble(record),
     id: record.id ?? null,
-    title: record.title || record.sourceTitle || "Unknown item",
+    title: decodeTitle(record.title || record.sourceTitle) || "Unknown item",
     downloadId: record.downloadId || "",
     seriesId: record.seriesId ?? null,
     episodeId: record.episodeId ?? null,

@@ -84,7 +84,7 @@ export async function removeArrQueueItem(body = {}, resolver) {
     removeFromClient: String(removeFromClient),
     blocklist: String(blocklist),
   });
-  if (blocklist) qs.set("skipRedownload", "false");
+  if (blocklist) qs.set("skipRedownload", String(body.skipRedownload === true));
   const res = await fetch(`${base}/api/${arrApiVersion(app)}/queue/${id}?${qs}`, {
     method: "DELETE",
     headers: { "X-Api-Key": apiKey },
