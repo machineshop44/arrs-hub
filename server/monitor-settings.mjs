@@ -43,7 +43,7 @@ export function defaultMonitorSettings() {
     /** qBittorrent: delete torrents an *arr imported once their tracker's seed time is met. */
     qbCleanupEnabled: true,
     /** "tracker host = days", one per line. Trackers not listed have no minimum. */
-    qbSeedRules: "td-peers.com = 3.5\ntleechreload.org = 3.5",
+    qbSeedRules: "td-peers.com = 3.5\ntleechreload.org = 8.5",
     qbCleanupDeleteFiles: true,
     discordNotifyClientCleanup: false,
     autoFixSabRetry: true,
@@ -75,6 +75,11 @@ export function defaultMonitorSettings() {
     lastBackupAt: null,
     lastBackupResults: [],
   };
+}
+
+/** 1.3.83–1.3.88 shipped TorrentLeech at 3.5 days. Only TorrentDay is 3.5; TorrentLeech is 8.5. */
+export function upgradeTorrentLeechSeedDays(rules) {
+  return String(rules || "").replace(/(tleechreload\.org)\s*[=:]\s*3\.5\b/gi, "$1 = 8.5");
 }
 
 function clampNumber(value, fallback, min, max) {
@@ -117,7 +122,7 @@ function normalize(raw) {
     stalledNoConnectionsHours: clampNumber(s.stalledNoConnectionsHours, d.stalledNoConnectionsHours, 1, 24 * 14),
     autoFixSabResume: s.autoFixSabResume !== false,
     qbCleanupEnabled: s.qbCleanupEnabled !== false,
-    qbSeedRules: typeof s.qbSeedRules === "string" ? s.qbSeedRules.trim() : d.qbSeedRules,
+    qbSeedRules: upgradeTorrentLeechSeedDays(typeof s.qbSeedRules === "string" ? s.qbSeedRules.trim() : d.qbSeedRules),
     qbCleanupDeleteFiles: s.qbCleanupDeleteFiles !== false,
     discordNotifyClientCleanup: s.discordNotifyClientCleanup === true,
     ...Object.fromEntries(

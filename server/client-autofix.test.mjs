@@ -1,6 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { upgradeTorrentLeechSeedDays } from "./monitor-settings.mjs";
 import { parseSeedRules, pickQbRemovals, pickSabRetries, planSabResume } from "./client-autofix.mjs";
+
+test("saved TorrentLeech 3.5 day rule is raised to 8.5; TorrentDay stays 3.5", () => {
+  assert.equal(
+    upgradeTorrentLeechSeedDays("td-peers.com = 3.5\ntleechreload.org = 3.5"),
+    "td-peers.com = 3.5\ntleechreload.org = 8.5",
+  );
+  assert.equal(upgradeTorrentLeechSeedDays("tleechreload.org = 10"), "tleechreload.org = 10");
+});
 import { pickNeverSearched, pickVanished, planPlexRefreshes } from "./stack-autofix.mjs";
 
 test("pickSabRetries retries repairable failures once, never password / disk ones", () => {
@@ -75,10 +84,11 @@ test("parseSeedRules reads host = days lines", () => {
 });
 
 test("pickQbRemovals honors import, queue and per-tracker seed time", () => {
-  const rules = parseSeedRules("td-peers.com = 3.5\ntleechreload.org = 3.5");
+  const rules = parseSeedRules("td-peers.com = 3.5\ntleechreload.org = 8.5");
   const importedBy = new Map([
     ["a", "sonarr"],
     ["b", "radarr"],
+    ["b2", "radarr"],
     ["c", "sonarr"],
     ["d", "sonarr"],
     ["e", "radarr"],
@@ -95,7 +105,8 @@ test("pickQbRemovals honors import, queue and per-tracker seed time", () => {
   const picks = pickQbRemovals(
     [
       t("a", "https://sync.td-peers.com/announce?pk=x", 3), // TorrentDay, too soon
-      t("b", "https://tracker.tleechreload.org/a/123/announce", 4), // TorrentLeech, done
+      t("b", "https://tracker.tleechreload.org/a/123/announce", 9), // TorrentLeech, done
+      t("b2", "https://tracker.tleechreload.org/a/123/announce", 4), // TorrentLeech, too soon
       t("c", "udp://tracker.opentrackr.org:1337/announce", 0), // public, no minimum
       t("d", "udp://tracker.opentrackr.org:1337/announce", 0), // still in an *arr queue
       t("e", "", 99), // tracker unknown → keep
@@ -105,7 +116,7 @@ test("pickQbRemovals honors import, queue and per-tracker seed time", () => {
     { importedBy, activeHashes: new Set(["d"]), rules, nowSec: 0 },
   );
   assert.deepEqual(picks.map((p) => p.hash), ["b", "c"]);
-  assert.match(picks[0].reason, /tleechreload\.org needs 3\.5 d/);
+  assert.match(picks[0].reason, /tleechreload\.org needs 8\.5 d/);
 });
 
 test("planSabResume resumes paused queue + items but respects timed pauses and full disks", () => {

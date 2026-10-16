@@ -349,7 +349,7 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
             <span>Seed time per tracker (tracker host = days, one per line)</span>
             <textarea
               rows={3}
-              placeholder={"td-peers.com = 3.5\ntleechreload.org = 3.5"}
+              placeholder={"td-peers.com = 3.5\ntleechreload.org = 8.5"}
               value={settings.qbSeedRules}
               disabled={disabled}
               onChange={(e) => patch({ qbSeedRules: e.target.value })}

@@ -31,7 +31,7 @@ const SCAN_COMMAND = { sonarr: "DownloadedEpisodesScan", radarr: "DownloadedMovi
 const CATEGORY_FIELD = { sonarr: "tvCategory", radarr: "movieCategory", lidarr: "musicCategory" };
 
 /**
- * "td-peers.com = 3.5\ntleechreload.org = 3.5" → [{ match: "td-peers.com", days: 3.5 }, …]
+ * "td-peers.com = 3.5\ntleechreload.org = 8.5" → [{ match: "td-peers.com", days: 3.5 }, …]
  * @param {string} value
  */
 export function parseSeedRules(value) {
