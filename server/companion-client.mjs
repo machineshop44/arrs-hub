@@ -278,12 +278,14 @@ export async function requestCompanionWol(baseUrl, apiKey, mac, host = "") {
  * @param {string} baseUrl
  * @param {string} apiKey
  * @param {string} appId
+ * @param {{ targetVersion?: string|null }} [opts]
  */
-export async function requestCompanionAppUpdate(baseUrl, apiKey, appId) {
+export async function requestCompanionAppUpdate(baseUrl, apiKey, appId, opts = {}) {
   const base = normalizeBaseUrl(baseUrl);
   if (!base) {
     return { ok: false, message: "No companion URL configured" };
   }
+  const targetVersion = String(opts.targetVersion || "").replace(/^v/i, "").trim();
   try {
     const res = await fetch(`${base}/api/app-update`, {
       method: "POST",
@@ -291,7 +293,10 @@ export async function requestCompanionAppUpdate(baseUrl, apiKey, appId) {
         "Content-Type": "application/json",
         "X-Arrs-Companion-Key": apiKey,
       },
-      body: JSON.stringify({ id: appId }),
+      body: JSON.stringify({
+        id: appId,
+        ...(targetVersion ? { targetVersion } : {}),
+      }),
       signal: AbortSignal.timeout(15000),
     });
     const data = await res.json().catch(() => ({}));

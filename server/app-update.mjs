@@ -381,7 +381,7 @@ function pickCompanionPc(pcId) {
   return withUrl;
 }
 
-async function runCompanionWingetUpdate(appId, pcId) {
+async function runCompanionWingetUpdate(appId, pcId, targetVersion = null) {
   const pc = pickCompanionPc(pcId);
   const url = String(pc.companionUrl || "").trim();
   const key = String(pc.companionApiKey || "").trim();
@@ -392,7 +392,9 @@ async function runCompanionWingetUpdate(appId, pcId) {
     );
   }
 
-  const started = await requestCompanionAppUpdate(url, key, appId);
+  const started = await requestCompanionAppUpdate(url, key, appId, {
+    targetVersion,
+  });
   if (!started.ok) {
     throw new Error(
       started.message ||
@@ -436,7 +438,7 @@ async function runCompanionWingetUpdate(appId, pcId) {
 }
 
 /**
- * @param {{ id: string, urls?: Record<string, string>, baseUrl?: string, pcId?: string }} body
+ * @param {{ id: string, urls?: Record<string, string>, baseUrl?: string, pcId?: string, targetVersion?: string }} body
  * @param {{ requestHost?: string }} [ctx]
  */
 export function startAppUpdate(body = {}, ctx = {}) {
@@ -479,6 +481,9 @@ export function startAppUpdate(body = {}, ctx = {}) {
     requestHost: ctx.requestHost,
   });
   const pcId = String(body.pcId || "").trim();
+  const targetVersion = String(body.targetVersion || "")
+    .replace(/^v/i, "")
+    .trim();
 
   jobSeq += 1;
   /** @type {AppUpdateJob} */
@@ -488,7 +493,7 @@ export function startAppUpdate(body = {}, ctx = {}) {
     label: LABELS[appId] || appId,
     phase: "running",
     message: COMPANION_UPDATE_IDS.includes(appId)
-      ? `Asking Companion to update ${LABELS[appId] || appId}…`
+      ? `Asking Companion to update ${LABELS[appId] || appId}${targetVersion ? ` to v${targetVersion}` : ""}…`
       : `Starting ${LABELS[appId] || appId} update…`,
     error: null,
     startedAt: new Date().toISOString(),
@@ -501,7 +506,11 @@ export function startAppUpdate(body = {}, ctx = {}) {
     try {
       let message;
       if (COMPANION_UPDATE_IDS.includes(appId)) {
-        message = await runCompanionWingetUpdate(appId, pcId);
+        message = await runCompanionWingetUpdate(
+          appId,
+          pcId,
+          targetVersion || null,
+        );
       } else if (appId === "tautulli") {
         message = await runTautulliUpdate(resolveTautulliBaseUrl(resolver));
       } else {

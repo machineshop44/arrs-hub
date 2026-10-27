@@ -406,7 +406,7 @@ export function DashboardStatus({
   }, [services, connectionMode, serverUp]);
 
   const startStackAppUpdate = useCallback(
-    async (appId: string, pcId?: string) => {
+    async (appId: string, pcId?: string, targetVersion?: string | null) => {
       if (!CLICK_UPDATE_APP_IDS.has(appId)) return;
       const urls = urlMap(services, connectionMode);
       setAppUpdateNotice(null);
@@ -429,6 +429,7 @@ export function DashboardStatus({
             urls,
             baseUrl: urls[appId] || undefined,
             pcId: pcId || undefined,
+            targetVersion: targetVersion || undefined,
           }),
         });
         const json = (await res.json()) as {
@@ -1373,7 +1374,11 @@ export function DashboardStatus({
                                         openApp();
                                         return;
                                       }
-                                      void startStackAppUpdate(app.id);
+                                      void startStackAppUpdate(
+                                        app.id,
+                                        undefined,
+                                        app.latestVersion,
+                                      );
                                     }}
                                     onAuxClick={(event) => {
                                       if (event.button === 1) {
@@ -1660,6 +1665,10 @@ export function DashboardStatus({
                               value = "updating…";
                             } else if (job?.phase === "error") {
                               value = "err";
+                            } else if (job?.phase === "done") {
+                              value = verInfo?.updateAvailable
+                                ? "upd?"
+                                : "ok";
                             } else if (verInfo?.updateAvailable) {
                               value = `upd → ${verInfo.latestVersion || "?"}`;
                             } else if (verInfo?.version) {
@@ -1682,7 +1691,10 @@ export function DashboardStatus({
                               COMPANION_CLICK_UPDATE_IDS.has(app.id) &&
                               !updating;
                             const rowClass = [
-                              hasUpdate || updating
+                              hasUpdate ||
+                              updating ||
+                              job?.phase === "error" ||
+                              job?.phase === "done"
                                 ? "dash-queue-app-link dash-queue-app-update"
                                 : "dash-queue-app-link",
                               updating ? "dash-queue-app-updating" : "",
@@ -1719,12 +1731,16 @@ export function DashboardStatus({
                             };
                             return (
                               <li key={app.id}>
-                                {canClickUpdate || updating || job?.phase === "error" ? (
+                                {canClickUpdate ||
+                                updating ||
+                                job?.phase === "error" ||
+                                job?.phase === "done" ? (
                                   <button
                                     type="button"
                                     className={`${rowClass} dash-queue-app-btn`}
                                     title={
                                       job?.error ||
+                                      job?.message ||
                                       (updating
                                         ? `Updating ${app.label} on ${pc.name}…`
                                         : `Update ${app.label} on ${pc.name} via Companion (Ctrl+click to open)`)
@@ -1735,7 +1751,11 @@ export function DashboardStatus({
                                         openApp();
                                         return;
                                       }
-                                      void startStackAppUpdate(app.id, pc.id);
+                                      void startStackAppUpdate(
+                                        app.id,
+                                        pc.id,
+                                        verInfo?.latestVersion,
+                                      );
                                     }}
                                   >
                                     {row}

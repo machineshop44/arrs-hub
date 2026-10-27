@@ -2,6 +2,10 @@
  * Background app updates on the Companion PC.
  * Prefer winget; if the app was not installed via winget or needs admin, fall back
  * to an elevated winget install, then to a silent GitHub/SourceForge installer.
+ *
+ * Important: website installs are often invisible to `winget upgrade`, and winget may
+ * report "already up to date" while the Hub still sees a newer GitHub/SourceForge
+ * release. We always re-check the local EXE version against targetVersion.
  */
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -9,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
+import { getLocalAppVersions } from "./local-app-versions.mjs";
 
 const WINGET_IDS = {
   qbittorrent: "qBittorrent.qBittorrent",
@@ -19,6 +24,39 @@ const LABELS = {
   qbittorrent: "qBittorrent",
   sabnzbd: "SABnzbd",
 };
+
+/** @param {string} raw */
+function shortVer(raw) {
+  const text = String(raw || "").trim().replace(/^v/i, "");
+  if (!text) return "";
+  const match = text.match(/(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)/);
+  return match ? match[1] : text.slice(0, 16);
+}
+
+/** Exported for tests. */
+export function compareSemver(a, b) {
+  const pa = String(a || "")
+    .split(/[.+-]/)
+    .map((n) => Number.parseInt(n, 10) || 0);
+  const pb = String(b || "")
+    .split(/[.+-]/)
+    .map((n) => Number.parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length, 3); i += 1) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+async function readLocalVersion(appId) {
+  try {
+    const data = await getLocalAppVersions();
+    const row = (data?.apps || []).find((a) => a.id === appId);
+    return shortVer(row?.version) || null;
+  } catch {
+    return null;
+  }
+}
 
 /** @type {Map<string, object>} */
 const jobsById = new Map();
@@ -123,7 +161,15 @@ export function interpretWingetOutput(result) {
   const combined = String(result?.message || "");
   const lower = combined.toLowerCase();
   if (result?.ok || result?.code === 0) {
-    return { ok: true, message: combined.slice(0, 400) || "Upgrade finished" };
+    const already =
+      lower.includes("already installed") ||
+      lower.includes("no applicable update") ||
+      lower.includes("no newer package versions");
+    return {
+      ok: true,
+      alreadyCurrent: already,
+      message: already ? "Already up to date" : combined.slice(0, 400) || "Upgrade finished",
+    };
   }
   // APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE / already current
   if (
@@ -133,23 +179,31 @@ export function interpretWingetOutput(result) {
     lower.includes("no available upgrade") ||
     lower.includes("already installed")
   ) {
-    return { ok: true, message: "Already up to date" };
+    return { ok: true, alreadyCurrent: true, message: "Already up to date" };
   }
   if (
     lower.includes("no installed package found") ||
-    lower.includes("no package found matching") ||
-    lower.includes("no available upgrade")
+    lower.includes("no package found matching")
   ) {
-    return { ok: false, retryInstall: true, message: combined.slice(0, 400) || "Package not tracked by winget" };
+    return {
+      ok: false,
+      retryInstall: true,
+      message: combined.slice(0, 400) || "Package not tracked by winget",
+    };
   }
   if (
     lower.includes("administrator") ||
     lower.includes("elevation") ||
     lower.includes("access is denied") ||
     lower.includes("requires interactive") ||
+    lower.includes("uac cancelled") ||
     result?.code === -1978335215
   ) {
-    return { ok: false, needsElevation: true, message: combined.slice(0, 400) || "Needs administrator approval" };
+    return {
+      ok: false,
+      needsElevation: true,
+      message: combined.slice(0, 400) || "Needs administrator approval",
+    };
   }
   return {
     ok: false,
@@ -159,7 +213,8 @@ export function interpretWingetOutput(result) {
   };
 }
 
-function wingetArgs(mode, packageId) {
+function wingetArgs(mode, packageId, { version = null } = {}) {
+  const ver = shortVer(version);
   return [
     mode,
     "--id",
@@ -169,13 +224,19 @@ function wingetArgs(mode, packageId) {
     "--accept-package-agreements",
     "--accept-source-agreements",
     "--disable-interactivity",
+    ...(ver ? ["--version", ver] : []),
     ...(mode === "upgrade" ? ["--include-unknown"] : ["--force"]),
   ];
 }
 
-async function runWinget(mode, packageId, { elevated = false } = {}) {
+async function refreshWingetSource() {
   const winget = resolveWingetPath();
-  const args = wingetArgs(mode, packageId);
+  await spawnCapture(winget, ["source", "update", "--disable-interactivity"]);
+}
+
+async function runWinget(mode, packageId, { elevated = false, version = null } = {}) {
+  const winget = resolveWingetPath();
+  const args = wingetArgs(mode, packageId, { version });
   if (!elevated) {
     const raw = await spawnCapture(winget, args);
     return { ...interpretWingetOutput(raw), raw };
@@ -187,7 +248,13 @@ $p = Start-Process -FilePath ${JSON.stringify(winget)} -ArgumentList ${JSON.stri
 if (-not $p) { Write-Error 'UAC cancelled or Start-Process failed'; exit 1 }
 exit $p.ExitCode
 `;
-  const raw = await spawnCapture("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps]);
+  const raw = await spawnCapture("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    ps,
+  ]);
   return { ...interpretWingetOutput(raw), raw };
 }
 
@@ -267,6 +334,17 @@ async function githubLatestSetup(repo) {
   return asset;
 }
 
+/** Exported for tests — official Windows x64 NSIS setup on SourceForge. */
+export function qbitSourceForgeSetup(version) {
+  const ver = shortVer(version);
+  if (!ver) return null;
+  const name = `qbittorrent_${ver}_x64_setup.exe`;
+  return {
+    name,
+    url: `https://sourceforge.net/projects/qbittorrent/files/qbittorrent-win32/qbittorrent-${ver}/${name}/download`,
+  };
+}
+
 async function runGithubInstallerFallback(appId) {
   const repos = {
     qbittorrent: "qbittorrent/qBittorrent",
@@ -291,49 +369,130 @@ async function runGithubInstallerFallback(appId) {
   }
 }
 
-async function upgradeApp(appId) {
-  const packageId = WINGET_IDS[appId];
-  const label = LABELS[appId] || appId;
-
-  let result = await runWinget("upgrade", packageId);
-  if (result.ok) {
-    return { ok: true, message: `${label}: ${result.message}` };
+async function runSourceForgeQbitFallback(version) {
+  const asset = qbitSourceForgeSetup(version);
+  if (!asset) {
+    return { ok: false, message: "No qBittorrent version for SourceForge download" };
   }
-
-  if (result.retryInstall) {
-    result = await runWinget("install", packageId);
-    if (result.ok) return { ok: true, message: `${label}: ${result.message}` };
-  }
-
-  if (result.needsElevation || result.retryInstall) {
-    result = await runWinget(result.retryInstall ? "install" : "upgrade", packageId, { elevated: true });
-    if (result.ok) {
-      return { ok: true, message: `${label}: ${result.message} (admin)` };
+  try {
+    const exe = await downloadToTemp(asset.url, asset.name);
+    try {
+      return await runSilentInstaller(exe);
+    } finally {
+      try {
+        fs.rmSync(path.dirname(exe), { recursive: true, force: true });
+      } catch {
+        /* temp cleanup best-effort */
+      }
     }
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
   }
+}
 
-  // Last resort: pull the vendor installer (SAB publishes win setup on GitHub; qBit often does not).
-  const fallback = await runGithubInstallerFallback(appId);
-  if (fallback.ok) {
-    return { ok: true, message: `${label}: ${fallback.message} via vendor installer` };
+async function localStillBehind(appId, targetVersion) {
+  const target = shortVer(targetVersion);
+  if (!target) return false;
+  const local = await readLocalVersion(appId);
+  if (!local) return true;
+  return compareSemver(local, target) < 0;
+}
+
+async function finalizeSuccess(appId, label, targetVersion, result) {
+  const local = await readLocalVersion(appId);
+  const target = shortVer(targetVersion);
+  if (target && local && compareSemver(local, target) < 0) {
+    return {
+      ok: false,
+      message: `${label} still reports v${local} after update (want v${target}). Approve UAC on this PC if prompted, then retry.`,
+    };
   }
-
+  if (target && !local) {
+    return {
+      ok: false,
+      message: `${label} update claimed success but the installed EXE version could not be read.`,
+    };
+  }
   return {
-    ok: false,
-    message:
-      [
-        result.message,
-        fallback.message && fallback.message !== result.message ? `Fallback: ${fallback.message}` : "",
-        "If the app was installed from the website, approve the UAC prompt or reinstall once with winget so future updates work.",
-      ]
-        .filter(Boolean)
-        .join(" — ")
-        .slice(0, 500),
+    ok: true,
+    message: local
+      ? `${label} is now v${local}`
+      : `${label}: ${result.message || "Update finished"}`,
   };
 }
 
 /**
- * @param {{ id?: string }} body
+ * @param {string} appId
+ * @param {{ targetVersion?: string|null }} [opts]
+ */
+async function upgradeApp(appId, opts = {}) {
+  const packageId = WINGET_IDS[appId];
+  const label = LABELS[appId] || appId;
+  const targetVersion = shortVer(opts.targetVersion) || null;
+
+  try {
+    await refreshWingetSource();
+  } catch {
+    /* source refresh is best-effort */
+  }
+
+  let result = await runWinget("upgrade", packageId, { version: targetVersion });
+  if (result.ok && !(result.alreadyCurrent && (await localStillBehind(appId, targetVersion)))) {
+    return finalizeSuccess(appId, label, targetVersion, result);
+  }
+
+  // Website installs (or stale winget) often need a forced install of the target version.
+  const forceVersion = targetVersion || undefined;
+  result = await runWinget("install", packageId, { version: forceVersion });
+  if (result.ok && !(result.alreadyCurrent && (await localStillBehind(appId, targetVersion)))) {
+    return finalizeSuccess(appId, label, targetVersion, result);
+  }
+
+  result = await runWinget("install", packageId, {
+    elevated: true,
+    version: forceVersion,
+  });
+  if (result.ok && !(result.alreadyCurrent && (await localStillBehind(appId, targetVersion)))) {
+    const finalized = await finalizeSuccess(appId, label, targetVersion, result);
+    if (finalized.ok) {
+      return { ...finalized, message: `${finalized.message} (admin)` };
+    }
+    result = { ...result, ok: false, message: finalized.message };
+  }
+
+  let fallback = { ok: false, message: "" };
+  if (appId === "qbittorrent") {
+    fallback = await runSourceForgeQbitFallback(targetVersion);
+  } else {
+    fallback = await runGithubInstallerFallback(appId);
+  }
+  if (fallback.ok) {
+    return finalizeSuccess(appId, label, targetVersion, {
+      message: `${fallback.message} via vendor installer`,
+    });
+  }
+
+  const local = await readLocalVersion(appId);
+  return {
+    ok: false,
+    message: [
+      result.message,
+      local && targetVersion
+        ? `Installed v${local}, Hub wants v${targetVersion}.`
+        : "",
+      fallback.message && fallback.message !== result.message
+        ? `Fallback: ${fallback.message}`
+        : "",
+      "Approve the UAC prompt on this PC if one appeared, or reinstall once with winget so future updates work.",
+    ]
+      .filter(Boolean)
+      .join(" — ")
+      .slice(0, 500),
+  };
+}
+
+/**
+ * @param {{ id?: string, targetVersion?: string }} body
  */
 export function startCompanionAppUpdate(body = {}) {
   const appId = String(body.id || "").trim();
@@ -351,12 +510,15 @@ export function startCompanionAppUpdate(body = {}) {
     throw err;
   }
 
+  const targetVersion = shortVer(body.targetVersion) || null;
   const job = {
     id: `companion-app-update-${Date.now()}-${++jobSeq}`,
     appId,
     label: LABELS[appId] || appId,
     phase: "running",
-    message: `Starting ${LABELS[appId] || appId} update via winget…`,
+    message: targetVersion
+      ? `Updating ${LABELS[appId] || appId} toward v${targetVersion}…`
+      : `Starting ${LABELS[appId] || appId} update via winget…`,
     error: null,
     startedAt: new Date().toISOString(),
     finishedAt: null,
@@ -366,7 +528,7 @@ export function startCompanionAppUpdate(body = {}) {
 
   void (async () => {
     try {
-      const result = await upgradeApp(appId);
+      const result = await upgradeApp(appId, { targetVersion });
       const next = {
         ...job,
         phase: result.ok ? "done" : "error",
