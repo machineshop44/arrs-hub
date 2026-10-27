@@ -137,19 +137,26 @@ async function runArrApplicationUpdate(appId, baseUrl, apiKey) {
     );
   }
   const apiVer = arrApiVersion(appId);
-  await fetchJson(
-    `${base}/api/${apiVer}/command`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Api-Key": apiKey,
-        Accept: "application/json",
+  try {
+    await fetchJson(
+      `${base}/api/${apiVer}/command`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Api-Key": apiKey,
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ name: "ApplicationUpdate" }),
       },
-      body: JSON.stringify({ name: "ApplicationUpdate" }),
-    },
-    30000,
-  );
+      30000,
+    );
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `${LABELS[appId] || appId} refused ApplicationUpdate (${detail}). Check the API key and that the app's built-in updater is enabled.`,
+    );
+  }
   return `${LABELS[appId] || appId} update command accepted — the app will download and restart itself.`;
 }
 
@@ -209,12 +216,27 @@ async function runCompanionWingetUpdate(appId, pcId) {
 
   const started = await requestCompanionAppUpdate(url, key, appId);
   if (!started.ok) {
-    throw new Error(started.message || "Companion refused the update.");
+    throw new Error(
+      started.message ||
+        `Companion on ${pc.name || "the downloader PC"} refused the update. Is Companion running and paired?`,
+    );
   }
 
+  let statusFailures = 0;
   for (let i = 0; i < 150; i++) {
     await new Promise((r) => setTimeout(r, 2000));
     const status = await requestCompanionAppUpdateStatus(url, key, appId);
+    if (!status.ok) {
+      statusFailures += 1;
+      if (statusFailures >= 5) {
+        throw new Error(
+          status.message ||
+            `Lost contact with Companion on ${pc.name || "the downloader PC"} while updating.`,
+        );
+      }
+      continue;
+    }
+    statusFailures = 0;
     const phase = status.job?.phase;
     if (phase === "done") {
       return (
@@ -231,9 +253,8 @@ async function runCompanionWingetUpdate(appId, pcId) {
     }
   }
   throw new Error(
-    `${LABELS[appId] || appId} update is still running on Companion — check that PC.`,
+    `${LABELS[appId] || appId} update is still running on Companion — check that PC (winget may be waiting for a UAC prompt).`,
   );
-}
 
 /**
  * @param {{ id: string, urls?: Record<string, string>, baseUrl?: string, pcId?: string }} body

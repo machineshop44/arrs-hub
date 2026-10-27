@@ -1716,11 +1716,16 @@ export function DashboardStatus({
                             };
                             return (
                               <li key={app.id}>
-                                {canClickUpdate ? (
+                                {canClickUpdate || updating || job?.phase === "error" ? (
                                   <button
                                     type="button"
                                     className={`${rowClass} dash-queue-app-btn`}
-                                    title={`Update ${app.label} in the background via Companion (Ctrl+click to open)`}
+                                    title={
+                                      job?.error ||
+                                      (updating
+                                        ? `Updating ${app.label} on ${pc.name}…`
+                                        : `Update ${app.label} on ${pc.name} via Companion (Ctrl+click to open)`)
+                                    }
                                     disabled={updating}
                                     onClick={(event) => {
                                       if (event.ctrlKey || event.metaKey) {
@@ -1763,12 +1768,17 @@ export function DashboardStatus({
                         </ul>
                       );
                     })()}
+                    {appUpdateNotice ? (
+                      <p className="dash-chip-popover-hint dash-chip-popover-hint-warn">
+                        {appUpdateNotice}
+                      </p>
+                    ) : null}
                     {companionAppUpdates.length > 0 ? (
                       <p className="dash-chip-popover-hint dash-chip-popover-hint-warn">
                         {companionAppUpdates.some((a) =>
                           COMPANION_CLICK_UPDATE_IDS.has(a.id),
                         )
-                          ? "Yellow qBit/SAB rows: click to update in the background on this PC (winget)."
+                          ? `Yellow qBit/SAB rows: click to update on ${pc.name} via Companion (winget). A UAC prompt may appear on that PC.`
                           : `${companionAppUpdates.map((a) => a.label).join(", ")} have updates — install on ${pc.name}.`}
                       </p>
                     ) : (
