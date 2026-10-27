@@ -1319,13 +1319,15 @@ export function DashboardStatus({
                                         ? `${app.version} → upd ${app.latestVersion || "?"}`
                                         : `upd → ${app.latestVersion || "?"}`
                                       : app.version || "—";
-                            const rowTitle = app.error
-                              ? app.error
-                              : canClickUpdate
-                                ? `Update ${app.label} in the background (Ctrl+click to open app)`
-                                : app.openUrl
-                                  ? `Open ${app.label}`
-                                  : undefined;
+                            const rowTitle = job?.error
+                              ? job.error
+                              : app.error
+                                ? app.error
+                                : canClickUpdate
+                                  ? `Update ${app.label} via its built-in updater (Ctrl+click to open app)`
+                                  : app.openUrl
+                                    ? `Open ${app.label}`
+                                    : undefined;
                             const rowClass = [
                               app.updateAvailable || updating
                                 ? "dash-queue-app-link dash-queue-app-update"
@@ -1360,7 +1362,7 @@ export function DashboardStatus({
                             };
                             return (
                               <li key={app.id}>
-                                {canClickUpdate ? (
+                                {canClickUpdate || updating || job?.phase === "error" ? (
                                   <button
                                     type="button"
                                     className={`${rowClass} dash-queue-app-btn`}
@@ -1410,9 +1412,10 @@ export function DashboardStatus({
                         ) : null}
                         {arrUpdates.length > 0 ? (
                           <p className="dash-chip-popover-hint dash-chip-popover-hint-warn">
-                            Click a yellow *arr / Tautulli row to update in the
-                            background. Ctrl+click or middle-click opens the
-                            app.
+                            Click a yellow *arr / Tautulli row to update. The Hub
+                            checks for an installable build, starts the app&apos;s
+                            own updater, and waits for it (the app may restart).
+                            Ctrl+click or middle-click opens the app.
                           </p>
                         ) : (
                           <p className="dash-chip-popover-hint">

@@ -128,25 +128,148 @@ async function fetchJson(url, options = {}, timeoutMs = 20000) {
   return data;
 }
 
+function arrHeaders(apiKey) {
+  return {
+    "X-Api-Key": apiKey,
+    Accept: "application/json",
+    "Content-Type": "application/json",
+  };
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function isRestartDisconnect(err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /fetch failed|ECONNREFUSED|ECONNRESET|socket|aborted|timeout|HTTP 502|HTTP 503|HTTP 504/i.test(
+    msg,
+  );
+}
+
+/**
+ * Decide whether *arr can be updated from the Hub.
+ * Exported for tests.
+ * @param {{ updateMechanism?: string } | null} host
+ * @param {object[]} updates
+ */
+export function planArrUpdate(host, updates) {
+  const mechanism = String(host?.updateMechanism || "BuiltIn");
+  // Docker / NAS packages cannot be updated by ApplicationUpdate.
+  if (/^(docker|external|apt)$/i.test(mechanism)) {
+    return {
+      ok: false,
+      message: `uses update mechanism "${mechanism}" — update that host manually, not from the Hub`,
+    };
+  }
+  const list = Array.isArray(updates) ? updates : [];
+  const installable =
+    list.find((u) => u?.installable && !u?.installed) ||
+    list.find((u) => u?.latest && u?.installable);
+  if (installable) {
+    return {
+      ok: true,
+      version: String(installable.version || "").trim() || null,
+      mechanism,
+    };
+  }
+  const latest = list.find((u) => u?.latest);
+  if (latest?.installed) {
+    return {
+      ok: true,
+      alreadyCurrent: true,
+      version: String(latest.version || "").trim() || null,
+      mechanism,
+    };
+  }
+  return {
+    ok: false,
+    message:
+      "has no installable update via its built-in updater (open System → Updates in the app)",
+  };
+}
+
+/**
+ * Tautulli update_check payload → whether cmd=update should run.
+ * Exported for tests.
+ */
+export function planTautulliUpdate(checkResponse) {
+  const resp = checkResponse?.response || checkResponse || {};
+  const result = String(resp?.result || "").toLowerCase();
+  const data = resp?.data && typeof resp.data === "object" ? resp.data : {};
+  const updateFlag =
+    resp?.update === true ||
+    resp?.update === 1 ||
+    resp?.update === "true" ||
+    data.update === true ||
+    data.update === 1 ||
+    data.update === "true";
+  const latest =
+    String(
+      resp?.latest_release ||
+        resp?.latest_version ||
+        data.latest_release ||
+        data.latest_version ||
+        "",
+    )
+      .replace(/^v/i, "")
+      .trim() || null;
+
+  if (result === "error") {
+    return {
+      ok: false,
+      message: resp?.message || data?.message || "Tautulli update_check failed",
+    };
+  }
+  if (!updateFlag) {
+    return { ok: true, alreadyCurrent: true, latest };
+  }
+  return { ok: true, alreadyCurrent: false, latest };
+}
+
 async function runArrApplicationUpdate(appId, baseUrl, apiKey) {
+  const label = LABELS[appId] || appId;
   const base = normalizeBase(baseUrl);
-  if (!base) throw new Error(`No URL configured for ${LABELS[appId] || appId}.`);
+  if (!base) throw new Error(`No URL configured for ${label}.`);
   if (!apiKey) {
     throw new Error(
-      `No API key saved for ${LABELS[appId] || appId}. Add it in Settings → Apps & monitoring.`,
+      `No API key saved for ${label}. Add it in Settings → Apps & monitoring.`,
     );
   }
   const apiVer = arrApiVersion(appId);
+  const headers = arrHeaders(apiKey);
+
+  let host = null;
   try {
-    await fetchJson(
+    host = await fetchJson(`${base}/api/${apiVer}/config/host`, { headers }, 15000);
+  } catch {
+    host = null;
+  }
+
+  let updates = [];
+  try {
+    const raw = await fetchJson(`${base}/api/${apiVer}/update`, { headers }, 20000);
+    updates = Array.isArray(raw) ? raw : [];
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `${label} could not list updates (${detail}). Check the URL/API key.`,
+    );
+  }
+
+  const plan = planArrUpdate(host, updates);
+  if (!plan.ok) throw new Error(`${label} ${plan.message}.`);
+  if (plan.alreadyCurrent) {
+    return `${label} is already on the latest version${plan.version ? ` (${plan.version})` : ""}.`;
+  }
+
+  let command;
+  try {
+    command = await fetchJson(
       `${base}/api/${apiVer}/command`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Api-Key": apiKey,
-          Accept: "application/json",
-        },
+        headers,
         body: JSON.stringify({ name: "ApplicationUpdate" }),
       },
       30000,
@@ -154,10 +277,42 @@ async function runArrApplicationUpdate(appId, baseUrl, apiKey) {
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `${LABELS[appId] || appId} refused ApplicationUpdate (${detail}). Check the API key and that the app's built-in updater is enabled.`,
+      `${label} refused ApplicationUpdate (${detail}). Check the API key and that BuiltIn updates are enabled.`,
     );
   }
-  return `${LABELS[appId] || appId} update command accepted — the app will download and restart itself.`;
+
+  const commandId = Number(command?.id);
+  const target = plan.version ? ` ${plan.version}` : "";
+  if (!Number.isFinite(commandId) || commandId <= 0) {
+    return `${label} update to${target} accepted — the app will download and restart itself.`;
+  }
+
+  for (let i = 0; i < 45; i++) {
+    await sleep(2000);
+    try {
+      const status = await fetchJson(
+        `${base}/api/${apiVer}/command/${commandId}`,
+        { headers: { "X-Api-Key": apiKey, Accept: "application/json" } },
+        10000,
+      );
+      const state = String(status?.status || "").toLowerCase();
+      if (state === "completed") {
+        return `${label} updated to${target} and finished its update command.`;
+      }
+      if (state === "failed") {
+        throw new Error(
+          status?.message || status?.result || `${label} update command failed.`,
+        );
+      }
+    } catch (err) {
+      // App often kills its HTTP server while restarting into the new build.
+      if (isRestartDisconnect(err)) {
+        return `${label} stopped responding while updating to${target} — that usually means the restart worked. Refresh versions in a minute.`;
+      }
+      throw err;
+    }
+  }
+  return `${label} update to${target} is still running — it may finish after a restart.`;
 }
 
 async function runTautulliUpdate(baseUrl) {
@@ -170,19 +325,42 @@ async function runTautulliUpdate(baseUrl) {
       "No Tautulli API key saved. Add it in Settings → Apps & monitoring.",
     );
   }
-  const data = await fetchJson(
-    `${base}/api/v2?apikey=${encodeURIComponent(apiKey)}&cmd=update`,
-    {},
-    60000,
-  );
-  const resp = data?.response || data || {};
-  if (resp.result === "error") {
-    throw new Error(resp.message || "Tautulli update failed.");
+  const api = (cmd, timeoutMs = 30000) =>
+    fetchJson(
+      `${base}/api/v2?apikey=${encodeURIComponent(apiKey)}&cmd=${encodeURIComponent(cmd)}`,
+      {},
+      timeoutMs,
+    );
+
+  let check;
+  try {
+    check = await api("update_check", 20000);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`Tautulli update_check failed (${detail}).`);
   }
-  return (
-    resp.message ||
-    "Tautulli update started — it may restart shortly."
-  );
+  const plan = planTautulliUpdate(check);
+  if (!plan.ok) throw new Error(plan.message);
+  if (plan.alreadyCurrent) {
+    return `Tautulli is already up to date${plan.latest ? ` (${plan.latest})` : ""}.`;
+  }
+
+  try {
+    const data = await api("update", 120000);
+    const resp = data?.response || data || {};
+    if (String(resp.result || "").toLowerCase() === "error") {
+      throw new Error(resp.message || "Tautulli update failed.");
+    }
+    return (
+      resp.message ||
+      `Tautulli update${plan.latest ? ` to ${plan.latest}` : ""} started — it may restart shortly.`
+    );
+  } catch (err) {
+    if (isRestartDisconnect(err)) {
+      return `Tautulli stopped responding while updating${plan.latest ? ` to ${plan.latest}` : ""} — that usually means the restart worked.`;
+    }
+    throw err instanceof Error ? err : new Error(String(err));
+  }
 }
 
 function pickCompanionPc(pcId) {
@@ -255,6 +433,7 @@ async function runCompanionWingetUpdate(appId, pcId) {
   throw new Error(
     `${LABELS[appId] || appId} update is still running on Companion — check that PC (winget may be waiting for a UAC prompt).`,
   );
+}
 
 /**
  * @param {{ id: string, urls?: Record<string, string>, baseUrl?: string, pcId?: string }} body
