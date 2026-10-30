@@ -213,7 +213,7 @@ export function interpretWingetOutput(result) {
   };
 }
 
-function wingetArgs(mode, packageId, { version = null } = {}) {
+function wingetArgs(mode, packageId, { version = null, interactiveOk = false } = {}) {
   const ver = shortVer(version);
   return [
     mode,
@@ -223,7 +223,8 @@ function wingetArgs(mode, packageId, { version = null } = {}) {
     "--silent",
     "--accept-package-agreements",
     "--accept-source-agreements",
-    "--disable-interactivity",
+    // Elevated installs need a real UAC prompt; --disable-interactivity blocks that.
+    ...(interactiveOk ? [] : ["--disable-interactivity"]),
     ...(ver ? ["--version", ver] : []),
     ...(mode === "upgrade" ? ["--include-unknown"] : ["--force"]),
   ];
@@ -236,15 +237,18 @@ async function refreshWingetSource() {
 
 async function runWinget(mode, packageId, { elevated = false, version = null } = {}) {
   const winget = resolveWingetPath();
-  const args = wingetArgs(mode, packageId, { version });
+  const args = wingetArgs(mode, packageId, {
+    version,
+    interactiveOk: elevated,
+  });
   if (!elevated) {
     const raw = await spawnCapture(winget, args);
     return { ...interpretWingetOutput(raw), raw };
   }
-  // One UAC prompt — same pattern as Companion's firewall fix.
+  // One UAC prompt on the Companion PC — leave the window visible so Andrew sees it.
   const argLine = args.map((a) => `"${String(a).replace(/"/g, '\\"')}"`).join(" ");
   const ps = `
-$p = Start-Process -FilePath ${JSON.stringify(winget)} -ArgumentList ${JSON.stringify(argLine)} -Verb RunAs -Wait -PassThru -WindowStyle Hidden
+$p = Start-Process -FilePath ${JSON.stringify(winget)} -ArgumentList ${JSON.stringify(argLine)} -Verb RunAs -Wait -PassThru
 if (-not $p) { Write-Error 'UAC cancelled or Start-Process failed'; exit 1 }
 exit $p.ExitCode
 `;
@@ -258,18 +262,134 @@ exit $p.ExitCode
   return { ...interpretWingetOutput(raw), raw };
 }
 
+function assertWindowsExe(filePath) {
+  const size = fs.statSync(filePath).size;
+  if (size < 1_000_000) {
+    throw new Error(`Download too small (${size} bytes) — not a real installer`);
+  }
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const buf = Buffer.alloc(2);
+    fs.readSync(fd, buf, 0, 2, 0);
+    if (buf[0] !== 0x4d || buf[1] !== 0x5a) {
+      throw new Error(
+        `Download was not a Windows EXE (got "${buf.toString("utf8") || "??"}")`,
+      );
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+async function downloadWithCurl(url, dest) {
+  const raw = await spawnCapture("curl.exe", [
+    "-L",
+    "--retry",
+    "3",
+    "--connect-timeout",
+    "30",
+    "-A",
+    "Mozilla/5.0 Arrs-Hub-Companion",
+    "-o",
+    dest,
+    url,
+  ]);
+  if (!raw.ok && raw.code !== 0) {
+    throw new Error(raw.message.slice(0, 200) || `curl exited ${raw.code}`);
+  }
+  assertWindowsExe(dest);
+  return dest;
+}
+
 async function downloadToTemp(url, filename) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "arrs-hub-update-"));
   const dest = path.join(dir, filename);
-  const res = await fetch(url, {
-    redirect: "follow",
-    headers: { "User-Agent": "Arrs-Hub-Companion" },
-    signal: AbortSignal.timeout(180_000),
-  });
-  if (!res.ok) throw new Error(`Download failed HTTP ${res.status} for ${url}`);
-  if (!res.body) throw new Error("Download returned an empty body");
-  await pipeline(res.body, createWriteStream(dest));
-  return dest;
+  let fetchErr = null;
+  try {
+    const res = await fetch(url, {
+      redirect: "follow",
+      headers: { "User-Agent": "Mozilla/5.0 Arrs-Hub-Companion" },
+      signal: AbortSignal.timeout(180_000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.body) throw new Error("empty body");
+    await pipeline(res.body, createWriteStream(dest));
+    assertWindowsExe(dest);
+    return dest;
+  } catch (err) {
+    fetchErr = err instanceof Error ? err.message : String(err);
+    try {
+      fs.unlinkSync(dest);
+    } catch {
+      /* ignore */
+    }
+  }
+  try {
+    return await downloadWithCurl(url, dest);
+  } catch (err) {
+    const curlErr = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Download failed (${fetchErr || "fetch"}); curl also failed (${curlErr})`,
+    );
+  }
+}
+
+/** Prefer winget's own downloader (uses Windows cert store), then run the EXE. */
+async function wingetDownloadAndInstall(packageId, version) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "arrs-hub-winget-dl-"));
+  const winget = resolveWingetPath();
+  const ver = shortVer(version);
+  const args = [
+    "download",
+    "--id",
+    packageId,
+    "-e",
+    "-d",
+    dir,
+    "--accept-package-agreements",
+    "--accept-source-agreements",
+    "--disable-interactivity",
+    ...(ver ? ["--version", ver] : []),
+  ];
+  const raw = await spawnCapture(winget, args);
+  if (!raw.ok && raw.code !== 0) {
+    return {
+      ok: false,
+      message: raw.message.slice(0, 300) || `winget download exited ${raw.code}`,
+    };
+  }
+  /** @type {string[]} */
+  const exes = [];
+  const walk = (p) => {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(p, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const ent of entries) {
+      const full = path.join(p, ent.name);
+      if (ent.isDirectory()) walk(full);
+      else if (/\.exe$/i.test(ent.name)) exes.push(full);
+    }
+  };
+  walk(dir);
+  const setup =
+    exes.find((f) => /setup|installer|qbittorrent|sabnzbd/i.test(path.basename(f))) ||
+    exes[0];
+  if (!setup) {
+    return { ok: false, message: "winget download produced no .exe installer" };
+  }
+  try {
+    assertWindowsExe(setup);
+    return await runSilentInstaller(setup);
+  } finally {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 async function runSilentInstaller(exePath) {
@@ -339,9 +459,11 @@ export function qbitSourceForgeSetup(version) {
   const ver = shortVer(version);
   if (!ver) return null;
   const name = `qbittorrent_${ver}_x64_setup.exe`;
+  // Prefer the downloads.sourceforge.net CDN path (fewer interstitial HTML pages).
   return {
     name,
-    url: `https://sourceforge.net/projects/qbittorrent/files/qbittorrent-win32/qbittorrent-${ver}/${name}/download`,
+    url: `https://downloads.sourceforge.net/project/qbittorrent/qbittorrent-win32/qbittorrent-${ver}/${name}`,
+    altUrl: `https://sourceforge.net/projects/qbittorrent/files/qbittorrent-win32/qbittorrent-${ver}/${name}/download`,
   };
 }
 
@@ -374,20 +496,37 @@ async function runSourceForgeQbitFallback(version) {
   if (!asset) {
     return { ok: false, message: "No qBittorrent version for SourceForge download" };
   }
-  try {
-    const exe = await downloadToTemp(asset.url, asset.name);
+  const urls = [asset.url, asset.altUrl].filter(Boolean);
+  /** @type {string[]} */
+  const errors = [];
+  for (const url of urls) {
     try {
-      return await runSilentInstaller(exe);
-    } finally {
+      const exe = await downloadToTemp(url, asset.name);
       try {
-        fs.rmSync(path.dirname(exe), { recursive: true, force: true });
-      } catch {
-        /* temp cleanup best-effort */
+        return await runSilentInstaller(exe);
+      } finally {
+        try {
+          fs.rmSync(path.dirname(exe), { recursive: true, force: true });
+        } catch {
+          /* temp cleanup best-effort */
+        }
       }
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
     }
-  } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : String(err) };
   }
+  return {
+    ok: false,
+    message: errors.join(" | ").slice(0, 400) || "SourceForge download failed",
+  };
+}
+
+function setJobProgress(appId, message) {
+  const cur = jobsById.get(appId);
+  if (!cur || cur.phase !== "running") return;
+  const next = { ...cur, message };
+  jobsById.set(appId, next);
+  lastJob = next;
 }
 
 async function localStillBehind(appId, targetVersion) {
@@ -429,25 +568,36 @@ async function upgradeApp(appId, opts = {}) {
   const packageId = WINGET_IDS[appId];
   const label = LABELS[appId] || appId;
   const targetVersion = shortVer(opts.targetVersion) || null;
+  const progress = (msg) => setJobProgress(appId, msg);
 
+  progress(`Refreshing winget source for ${label}…`);
   try {
     await refreshWingetSource();
   } catch {
     /* source refresh is best-effort */
   }
 
-  let result = await runWinget("upgrade", packageId, { version: targetVersion });
+  progress(
+    targetVersion
+      ? `Trying winget upgrade → v${targetVersion}…`
+      : `Trying winget upgrade for ${label}…`,
+  );
+  // Upgrade without pinning version first — winget often rejects --version on upgrade.
+  let result = await runWinget("upgrade", packageId);
   if (result.ok && !(result.alreadyCurrent && (await localStillBehind(appId, targetVersion)))) {
     return finalizeSuccess(appId, label, targetVersion, result);
   }
 
-  // Website installs (or stale winget) often need a forced install of the target version.
   const forceVersion = targetVersion || undefined;
+  progress(`Trying winget install${forceVersion ? ` v${forceVersion}` : ""}…`);
   result = await runWinget("install", packageId, { version: forceVersion });
   if (result.ok && !(result.alreadyCurrent && (await localStillBehind(appId, targetVersion)))) {
     return finalizeSuccess(appId, label, targetVersion, result);
   }
 
+  progress(
+    `Asking for admin (UAC on this PC) to install ${label}${forceVersion ? ` v${forceVersion}` : ""}…`,
+  );
   result = await runWinget("install", packageId, {
     elevated: true,
     version: forceVersion,
@@ -460,16 +610,38 @@ async function upgradeApp(appId, opts = {}) {
     result = { ...result, ok: false, message: finalized.message };
   }
 
-  let fallback = { ok: false, message: "" };
-  if (appId === "qbittorrent") {
-    fallback = await runSourceForgeQbitFallback(targetVersion);
-  } else {
-    fallback = await runGithubInstallerFallback(appId);
-  }
+  progress(`Downloading ${label} installer via winget…`);
+  let fallback = await wingetDownloadAndInstall(packageId, forceVersion);
   if (fallback.ok) {
     return finalizeSuccess(appId, label, targetVersion, {
-      message: `${fallback.message} via vendor installer`,
+      message: `${fallback.message} via winget download`,
     });
+  }
+
+  if (appId === "qbittorrent") {
+    progress(`Downloading qBittorrent from SourceForge…`);
+    const sf = await runSourceForgeQbitFallback(targetVersion);
+    if (sf.ok) {
+      return finalizeSuccess(appId, label, targetVersion, {
+        message: `${sf.message} via SourceForge`,
+      });
+    }
+    fallback = {
+      ok: false,
+      message: [fallback.message, sf.message].filter(Boolean).join(" | "),
+    };
+  } else {
+    progress(`Downloading ${label} from GitHub…`);
+    const gh = await runGithubInstallerFallback(appId);
+    if (gh.ok) {
+      return finalizeSuccess(appId, label, targetVersion, {
+        message: `${gh.message} via vendor installer`,
+      });
+    }
+    fallback = {
+      ok: false,
+      message: [fallback.message, gh.message].filter(Boolean).join(" | "),
+    };
   }
 
   const local = await readLocalVersion(appId);
@@ -483,7 +655,7 @@ async function upgradeApp(appId, opts = {}) {
       fallback.message && fallback.message !== result.message
         ? `Fallback: ${fallback.message}`
         : "",
-      "Approve the UAC prompt on this PC if one appeared, or reinstall once with winget so future updates work.",
+      "On the downloader PC: approve the UAC prompt if it appeared (check the taskbar).",
     ]
       .filter(Boolean)
       .join(" — ")

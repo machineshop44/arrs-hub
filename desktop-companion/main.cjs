@@ -98,6 +98,24 @@ function readConfiguredPort(dataDir) {
   return DEFAULT_PORT;
 }
 
+/** @type {boolean|null} */
+let systemCaSupported = null;
+
+function nodeSupportsSystemCa(nodePath, electronAsNode) {
+  if (systemCaSupported !== null) return systemCaSupported;
+  const env = electronAsNode
+    ? { ...process.env, ELECTRON_RUN_AS_NODE: "1" }
+    : { ...process.env };
+  const probe = spawnSync(nodePath, ["--use-system-ca", "-e", "process.exit(0)"], {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 8000,
+    env,
+  });
+  systemCaSupported = probe.status === 0;
+  return systemCaSupported;
+}
+
 function resolveNodeBinary() {
   if (process.execPath && fs.existsSync(process.execPath)) {
     return { bin: process.execPath, electronAsNode: true };
@@ -362,11 +380,21 @@ function startServer() {
     env.ELECTRON_RUN_AS_NODE = "1";
   }
 
+  // Match Hub: Windows TLS often needs the system CA store for winget CDN /
+  // SourceForge / GitHub downloads used by click-to-update.
+  const allowSystemCa = nodeSupportsSystemCa(node.bin, node.electronAsNode);
+  const args = [];
+  if (allowSystemCa) {
+    args.push("--use-system-ca");
+    env.NODE_USE_SYSTEM_CA = "1";
+  }
+  args.push(serverScript);
+
   appendServerLog(
-    `Starting companion server\n  root=${root}\n  data=${dataDir}\n  port=${companionPort}\n  script=${serverScript}\n  nodeOptionsCleared=1\n`,
+    `Starting companion server\n  root=${root}\n  data=${dataDir}\n  port=${companionPort}\n  script=${serverScript}\n  useSystemCa=${allowSystemCa ? 1 : 0}\n  nodeOptionsCleared=1\n`,
   );
 
-  serverProcess = spawn(node.bin, [serverScript], {
+  serverProcess = spawn(node.bin, args, {
     cwd: root,
     env,
     stdio: ["ignore", "pipe", "pipe"],

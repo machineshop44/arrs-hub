@@ -65,7 +65,11 @@ test("pickWindowsSetupAsset prefers x64 setup EXEs", () => {
 test("qbitSourceForgeSetup builds the official x64 download URL", () => {
   const asset = qbitSourceForgeSetup("5.3.0");
   assert.equal(asset?.name, "qbittorrent_5.3.0_x64_setup.exe");
-  assert.match(asset?.url || "", /qbittorrent-5\.3\.0\/qbittorrent_5\.3\.0_x64_setup\.exe\/download$/);
+  assert.match(
+    asset?.url || "",
+    /downloads\.sourceforge\.net\/project\/qbittorrent\/.*qbittorrent_5\.3\.0_x64_setup\.exe$/,
+  );
+  assert.match(asset?.altUrl || "", /\/download$/);
   assert.equal(qbitSourceForgeSetup(""), null);
 });
 

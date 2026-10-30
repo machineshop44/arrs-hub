@@ -1662,9 +1662,17 @@ export function DashboardStatus({
                                   );
                             let value = health;
                             if (updating) {
-                              value = "updating…";
+                              value = job?.message
+                                ? String(job.message).slice(0, 42)
+                                : "updating…";
                             } else if (job?.phase === "error") {
-                              value = "err";
+                              const errText = String(
+                                job.error || job.message || "err",
+                              );
+                              value =
+                                errText.length > 48
+                                  ? `err: ${errText.slice(0, 45)}…`
+                                  : `err: ${errText}`;
                             } else if (job?.phase === "done") {
                               value = verInfo?.updateAvailable
                                 ? "upd?"
