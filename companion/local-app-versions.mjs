@@ -1,6 +1,7 @@
 /**
  * Local app versions on the Companion PC.
  */
+import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { detectFileFlowsInstalls } from "./fileflows-detect.mjs";
@@ -32,11 +33,52 @@ function appData() {
   return process.env.APPDATA || path.join(userProfile(), "AppData", "Roaming");
 }
 
+/** Registry InstallLocation / DisplayIcon for apps not under the usual folders. */
+function registryInstallExe(displayNameHint, exeName) {
+  const hint = String(displayNameHint || "").replace(/'/g, "''");
+  const exe = String(exeName || "").replace(/'/g, "''");
+  const script = `
+$ErrorActionPreference='SilentlyContinue'
+$names = @('HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
+  'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
+  'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*')
+foreach ($n in $names) {
+  Get-ItemProperty $n | Where-Object { $_.DisplayName -like '*${hint}*' } | ForEach-Object {
+    $loc = [string]$_.InstallLocation
+    if ($loc) {
+      $p = Join-Path $loc '${exe}'
+      if (Test-Path -LiteralPath $p) { Write-Output $p; return }
+    }
+    $icon = [string]$_.DisplayIcon
+    if ($icon) {
+      $p = ($icon -split ',')[0].Trim('"')
+      if ($p -and (Test-Path -LiteralPath $p)) { Write-Output $p; return }
+    }
+  }
+}
+`;
+  try {
+    const out = execFileSync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", script],
+      { encoding: "utf8", timeout: 8000, windowsHide: true },
+    );
+    const line = String(out || "")
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .find(Boolean);
+    return line || "";
+  } catch {
+    return "";
+  }
+}
+
 function qbitExeCandidates() {
   return [
     path.join(programFiles(), "qBittorrent", "qbittorrent.exe"),
     path.join(programFilesX86(), "qBittorrent", "qbittorrent.exe"),
     path.join(localAppData(), "Programs", "qBittorrent", "qbittorrent.exe"),
+    registryInstallExe("qBittorrent", "qbittorrent.exe"),
   ];
 }
 

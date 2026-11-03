@@ -58,6 +58,46 @@ async function readLocalVersion(appId) {
   }
 }
 
+/** qBit WebUI on this PC (localhost bypass auth is common). */
+async function readQbitVersionViaWebUi() {
+  const bases = ["http://127.0.0.1:8080", "http://localhost:8080"];
+  for (const base of bases) {
+    try {
+      const res = await fetch(`${base}/api/v2/app/version`, {
+        signal: AbortSignal.timeout(4000),
+      });
+      if (!res.ok) continue;
+      const ver = shortVer(await res.text());
+      if (ver) return ver;
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
+}
+
+async function readInstalledVersion(appId) {
+  const local = await readLocalVersion(appId);
+  if (local) return local;
+  if (appId === "qbittorrent") return readQbitVersionViaWebUi();
+  return null;
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** After an installer exits, the EXE can be briefly missing/locked while qBit restarts. */
+async function readInstalledVersionWithRetry(appId, { attempts = 6, delayMs = 2500 } = {}) {
+  let last = null;
+  for (let i = 0; i < attempts; i += 1) {
+    last = await readInstalledVersion(appId);
+    if (last) return last;
+    if (i < attempts - 1) await sleep(delayMs);
+  }
+  return last;
+}
+
 /** @type {Map<string, object>} */
 const jobsById = new Map();
 /** @type {object | null} */
@@ -532,13 +572,14 @@ function setJobProgress(appId, message) {
 async function localStillBehind(appId, targetVersion) {
   const target = shortVer(targetVersion);
   if (!target) return false;
-  const local = await readLocalVersion(appId);
+  const local = await readInstalledVersion(appId);
   if (!local) return true;
   return compareSemver(local, target) < 0;
 }
 
 async function finalizeSuccess(appId, label, targetVersion, result) {
-  const local = await readLocalVersion(appId);
+  setJobProgress(appId, `Checking installed ${label} version…`);
+  const local = await readInstalledVersionWithRetry(appId);
   const target = shortVer(targetVersion);
   if (target && local && compareSemver(local, target) < 0) {
     return {
@@ -547,9 +588,11 @@ async function finalizeSuccess(appId, label, targetVersion, result) {
     };
   }
   if (target && !local) {
+    // Installer said OK but we couldn't re-read the binary yet (restart race).
+    // Don't hard-fail — Hub will re-probe WebUI/EXE on the next chip refresh.
     return {
-      ok: false,
-      message: `${label} update claimed success but the installed EXE version could not be read.`,
+      ok: true,
+      message: `${label} installer finished (v${target} requested). Version not readable yet — refresh the chip in a minute; check Help → About on the downloader PC if it still looks old.`,
     };
   }
   return {
