@@ -24,6 +24,8 @@ const HOUR_MS = 3_600_000;
 const QB_REMOVE_MAX_PER_SCAN = 200;
 /** Torrent states where qBittorrent is still working on the files. */
 const QB_BUSY_STATE = /^(checking|moving|allocating|metaDL|downloading|stalledDL|queuedDL|forcedDL|pausedDL|stoppedDL)/i;
+/** Finished / seeding (including queued or auto-paused by the upload queue). */
+const QB_SEEDING_STATE = /^(uploading|stalledUP|queuedUP|pausedUP|stoppedUP|forcedUP)/i;
 /** SABnzbd failures a second download attempt can fix (servers missing articles, repair short). */
 const SAB_RETRYABLE = /article|missing|repair|par2|crc|aborted|cannot be completed|incomplete|unpack/i;
 const SAB_NEVER_RETRY = /password|encrypt|disk|space|empty|duplicate|no files|invalid nzb|bad nzb/i;
@@ -89,6 +91,38 @@ export function pickQbRemovals(torrents, ctx) {
       reason: rule
         ? `imported by ${appLabel(app)} · seeded ${seededDays} d (${rule.match} needs ${rule.days} d)`
         : `imported by ${appLabel(app)} · ${hosts[0]} has no seed rule`,
+    });
+  }
+  return out;
+}
+
+/**
+ * Seed-rule trackers (TorrentDay / TorrentLeech): once a torrent is fully
+ * downloaded, Force Start it so qBit's active-upload queue can't pause it
+ * before the seed-time requirement is met.
+ * @param {{ hash: string, name: string, state?: string, progress?: number, force_start?: boolean, trackers: string[] }[]} torrents
+ * @param {{ rules: { match: string, days: number }[] }} ctx
+ */
+export function pickQbForceStart(torrents, ctx) {
+  const rules = Array.isArray(ctx?.rules) ? ctx.rules : [];
+  if (!rules.length) return [];
+  const out = [];
+  for (const t of torrents || []) {
+    const hash = String(t?.hash || "").toLowerCase();
+    if (!hash || Number(t.progress) < 1) continue;
+    if (t.force_start === true) continue;
+    const state = String(t.state || "");
+    if (QB_BUSY_STATE.test(state)) continue;
+    if (!QB_SEEDING_STATE.test(state) && state) continue;
+    const hosts = (t.trackers || []).map(hostOf).filter(Boolean);
+    if (!hosts.length) continue;
+    const rule = rules.find((r) => hosts.some((h) => h.includes(r.match)));
+    if (!rule) continue;
+    out.push({
+      hash,
+      name: String(t.name || hash),
+      resume: /^(pausedUP|stoppedUP)$/i.test(state),
+      reason: `seed-rule tracker ${rule.match} · Force Start so it keeps seeding`,
     });
   }
   return out;
@@ -231,25 +265,82 @@ async function runQbPass(resolver, settings, now) {
   const nowSec = Math.floor(now / 1000);
   const results = [];
 
+  const seedRules = parseSeedRules(settings.qbSeedRules);
+
+  /** Attach tracker URLs for any torrent we need to match against seed rules. */
+  async function attachTrackers(list) {
+    for (const t of list) {
+      if (Array.isArray(t.trackers) && t.trackers.length) continue;
+      t.trackers = t.tracker ? [t.tracker] : [];
+      if (t.trackers.length) continue;
+      try {
+        const rows = await getJson(
+          `${session.base}/api/v2/torrents/trackers?hash=${t.hash}`,
+          session.headers,
+        );
+        t.trackers = (Array.isArray(rows) ? rows : [])
+          .map((r) => String(r?.url || ""))
+          .filter((u) => /^(https?|udp):\/\//i.test(u));
+      } catch {
+        t.trackers = [];
+      }
+    }
+  }
+
+  if (settings.qbForceStartSeeders !== false && seedRules.length) {
+    const seeders = torrents.filter((t) => {
+      if (Number(t?.progress) < 1 || t?.force_start === true) return false;
+      const state = String(t?.state || "");
+      return !QB_BUSY_STATE.test(state) && (!state || QB_SEEDING_STATE.test(state));
+    });
+    await attachTrackers(seeders);
+    const forcePicks = pickQbForceStart(seeders, { rules: seedRules }).slice(
+      0,
+      QB_REMOVE_MAX_PER_SCAN,
+    );
+    if (forcePicks.length) {
+      const hashes = forcePicks.map((p) => p.hash).join("|");
+      let error = "";
+      try {
+        await qbPost(session, "torrents/setForceStart", {
+          hashes,
+          value: "true",
+        });
+        const resumeHashes = forcePicks.filter((p) => p.resume).map((p) => p.hash);
+        if (resumeHashes.length) await qbStart(session, resumeHashes.join("|"));
+        for (const p of forcePicks) {
+          const row = torrents.find((t) => String(t?.hash || "").toLowerCase() === p.hash);
+          if (row) row.force_start = true;
+        }
+      } catch (err) {
+        error = errText(err);
+      }
+      for (const p of forcePicks) {
+        results.push(
+          fixResult(now, {
+            key: `qb:force:${p.hash}`,
+            app: "qbittorrent",
+            title: p.name,
+            rule: "qbForceStart",
+            reason: p.reason,
+            ok: !error,
+            ...(error ? { error } : {}),
+          }),
+        );
+      }
+    }
+  }
+
   if (settings.qbCleanupEnabled !== false && importedBy.size) {
     const candidates = torrents.filter((t) => {
       const h = String(t?.hash || "").toLowerCase();
       return importedBy.has(h) && !activeHashes.has(h);
     });
-    for (const t of candidates) {
-      t.trackers = t.tracker ? [t.tracker] : [];
-      if (t.trackers.length) continue;
-      try {
-        const rows = await getJson(`${session.base}/api/v2/torrents/trackers?hash=${t.hash}`, session.headers);
-        t.trackers = (Array.isArray(rows) ? rows : []).map((r) => String(r?.url || "")).filter((u) => /^(https?|udp):\/\//i.test(u));
-      } catch {
-        t.trackers = [];
-      }
-    }
+    await attachTrackers(candidates);
     const picks = pickQbRemovals(candidates, {
       importedBy,
       activeHashes,
-      rules: parseSeedRules(settings.qbSeedRules),
+      rules: seedRules,
       nowSec,
     }).slice(0, QB_REMOVE_MAX_PER_SCAN);
     if (picks.length) {

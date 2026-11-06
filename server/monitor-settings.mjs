@@ -45,6 +45,11 @@ export function defaultMonitorSettings() {
     /** "tracker host = days", one per line. Trackers not listed have no minimum. */
     qbSeedRules: "td-peers.com = 3.5\ntleechreload.org = 8.5",
     qbCleanupDeleteFiles: true,
+    /**
+     * For seed-rule trackers only: Force Start finished torrents so qBit's
+     * upload queue can't pause them before seed time is met.
+     */
+    qbForceStartSeeders: true,
     discordNotifyClientCleanup: false,
     autoFixSabRetry: true,
     autoFixQbRecheck: true,
@@ -60,6 +65,16 @@ export function defaultMonitorSettings() {
     /** SABnzbd / qBittorrent passes run at most this often so the *arrs can work in between. */
     clientAutoFixIntervalHours: 24,
     autoFixMaxPerScan: 10,
+    /**
+     * Discord for queue/health auto-fixes:
+     * - daily: one summary per day (default — avoids spam)
+     * - immediate: every scan that fixes something (old behavior)
+     * - off: Hub list only
+     */
+    discordAutoFixNotify: "daily",
+    /** Local hour (0–23) to send the daily auto-fix summary. */
+    discordAutoFixDigestHour: 9,
+    /** @deprecated Prefer discordAutoFixNotify; kept for older UI payloads. */
     discordNotifyAutoFix: true,
     /** "Indexer back in rotation" re-tests: Hub list only unless this is on. */
     discordNotifyIndexerFixes: false,
@@ -86,6 +101,15 @@ function clampNumber(value, fallback, min, max) {
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, n));
+}
+
+/** @param {Record<string, unknown>} s */
+export function normalizeAutoFixNotify(s = {}) {
+  const raw = String(s.discordAutoFixNotify || "").trim().toLowerCase();
+  if (raw === "off" || raw === "daily" || raw === "immediate") return raw;
+  // Legacy boolean: false → off; true/missing → daily (quiet default).
+  if (s.discordNotifyAutoFix === false) return "off";
+  return "daily";
 }
 
 function normalize(raw) {
@@ -124,6 +148,7 @@ function normalize(raw) {
     qbCleanupEnabled: s.qbCleanupEnabled !== false,
     qbSeedRules: upgradeTorrentLeechSeedDays(typeof s.qbSeedRules === "string" ? s.qbSeedRules.trim() : d.qbSeedRules),
     qbCleanupDeleteFiles: s.qbCleanupDeleteFiles !== false,
+    qbForceStartSeeders: s.qbForceStartSeeders !== false,
     discordNotifyClientCleanup: s.discordNotifyClientCleanup === true,
     ...Object.fromEntries(
       [
@@ -141,7 +166,11 @@ function normalize(raw) {
     ),
     clientAutoFixIntervalHours: clampNumber(s.clientAutoFixIntervalHours, d.clientAutoFixIntervalHours, 1, 24 * 7),
     autoFixMaxPerScan: Math.round(clampNumber(s.autoFixMaxPerScan, d.autoFixMaxPerScan, 1, 50)),
-    discordNotifyAutoFix: s.discordNotifyAutoFix !== false,
+    discordAutoFixNotify: normalizeAutoFixNotify(s),
+    discordAutoFixDigestHour: Math.round(
+      clampNumber(s.discordAutoFixDigestHour, d.discordAutoFixDigestHour, 0, 23),
+    ),
+    discordNotifyAutoFix: normalizeAutoFixNotify(s) !== "off",
     discordNotifyIndexerFixes: s.discordNotifyIndexerFixes === true,
     discordNotifyIndexerFailures: s.discordNotifyIndexerFailures === true,
     problemReannounceHours: clampNumber(s.problemReannounceHours, d.problemReannounceHours, 0, 168),

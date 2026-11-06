@@ -373,6 +373,9 @@ export function describeAutoFix(r) {
   if (r.rule === "qbCleanup") {
     return `${appLabel(r.app)}: ${r.title} — ${r.reason} → ${r.ok ? "removed (done seeding)" : `fix failed: ${r.error}`}`;
   }
+  if (r.rule === "qbForceStart") {
+    return `${appLabel(r.app)}: ${r.title} — ${r.reason} → ${r.ok ? "Force Start on" : `fix failed: ${r.error}`}`;
+  }
   const action = r.imported
     ? "imported"
     : r.blocklist

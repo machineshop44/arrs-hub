@@ -7,7 +7,8 @@ import {
   parseDiskDrives,
   parseFailingIndexers,
 } from "./problems.mjs";
-import { diffProblems, pruneDismissed } from "./problems-monitor.mjs";
+import { diffProblems, pruneDismissed, shouldSendAutoFixDigest } from "./problems-monitor.mjs";
+import { normalizeAutoFixNotify } from "./monitor-settings.mjs";
 
 const GIB = 1024 ** 3;
 const settings = { diskFreeWarnGb: 50, diskMinTotalGb: 20, qbRequireInterfaceBind: true };
@@ -188,4 +189,28 @@ test("pruneDismissed keeps cleared problems hidden until they resolve", () => {
   assert.ok(d["disk:c:"]);
   d = pruneDismissed(d, [], []);
   assert.deepEqual(d, {}, "gone twice → forgotten so a recurrence shows again");
+});
+
+test("normalizeAutoFixNotify defaults legacy true/missing to daily", () => {
+  assert.equal(normalizeAutoFixNotify({}), "daily");
+  assert.equal(normalizeAutoFixNotify({ discordNotifyAutoFix: true }), "daily");
+  assert.equal(normalizeAutoFixNotify({ discordNotifyAutoFix: false }), "off");
+  assert.equal(normalizeAutoFixNotify({ discordAutoFixNotify: "immediate" }), "immediate");
+});
+
+test("shouldSendAutoFixDigest fires once per local day after the hour", () => {
+  const morning = new Date(2026, 10, 6, 8, 0, 0); // Nov 6 08:00 local
+  const afternoon = new Date(2026, 10, 6, 10, 0, 0);
+  assert.equal(shouldSendAutoFixDigest(null, 9, morning), false);
+  assert.equal(shouldSendAutoFixDigest(null, 9, afternoon), true);
+  assert.equal(
+    shouldSendAutoFixDigest(afternoon.toISOString(), 9, new Date(2026, 10, 6, 18, 0, 0)),
+    false,
+    "already sent today",
+  );
+  assert.equal(
+    shouldSendAutoFixDigest(afternoon.toISOString(), 9, new Date(2026, 10, 7, 9, 5, 0)),
+    true,
+    "next day after digest hour",
+  );
 });

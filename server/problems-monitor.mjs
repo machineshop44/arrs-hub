@@ -17,6 +17,7 @@ const RESOLVE_AFTER_MISSES = 2;
 const FIRST_SCAN_DELAY_MS = 90_000;
 const MAX_LINES_PER_EMBED = 15;
 const AUTOFIX_LOG_LIMIT = 25;
+const AUTOFIX_DIGEST_LIMIT = 200;
 const HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_REANNOUNCE_HOURS = 6;
 /** Public indexers flap all day; a failing tracker is re-announced at most daily. */
@@ -32,17 +33,32 @@ let lastError = null;
  * `dismissed` = problems the user cleared from the dashboard chip; hidden until they resolve.
  * @returns {{ active: Record<string, { title: string, severity: string, kind: string, firstSeen: string, misses: number }>, dismissed: Record<string, { at: string, misses: number }> }}
  */
+function emptyDigest() {
+  return { items: [], lastSentAt: null };
+}
+
 function loadState() {
   try {
     const raw = JSON.parse(fs.readFileSync(STATE_PATH, "utf8"));
+    const digest =
+      raw?.autoFixDigest && typeof raw.autoFixDigest === "object"
+        ? {
+            items: Array.isArray(raw.autoFixDigest.items) ? raw.autoFixDigest.items : [],
+            lastSentAt:
+              typeof raw.autoFixDigest.lastSentAt === "string"
+                ? raw.autoFixDigest.lastSentAt
+                : null,
+          }
+        : emptyDigest();
     return {
       active: raw && typeof raw.active === "object" && raw.active ? raw.active : {},
       dismissed: raw && typeof raw.dismissed === "object" && raw.dismissed ? raw.dismissed : {},
       autoFixLog: Array.isArray(raw?.autoFixLog) ? raw.autoFixLog : [],
       announced: raw && typeof raw.announced === "object" && raw.announced ? raw.announced : {},
+      autoFixDigest: digest,
     };
   } catch {
-    return { active: {}, dismissed: {}, autoFixLog: [], announced: {} };
+    return { active: {}, dismissed: {}, autoFixLog: [], announced: {}, autoFixDigest: emptyDigest() };
   }
 }
 
@@ -205,6 +221,65 @@ function formatLines(items, render) {
   return lines.join("\n").slice(0, 3900);
 }
 
+function startOfLocalDay(d = new Date()) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+/**
+ * Send the daily auto-fix digest once per local calendar day after digestHour,
+ * or if the previous send is more than 36h old (catch-up after downtime).
+ * Exported for tests.
+ */
+export function shouldSendAutoFixDigest(lastSentAt, digestHour = 9, now = new Date()) {
+  const hour = Math.min(23, Math.max(0, Number(digestHour) || 9));
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now));
+  const when = new Date(nowMs);
+  const lastMs = lastSentAt ? Date.parse(String(lastSentAt)) : NaN;
+  const sentToday =
+    Number.isFinite(lastMs) && startOfLocalDay(new Date(lastMs)) === startOfLocalDay(when);
+  if (sentToday) return false;
+  if (when.getHours() >= hour) return true;
+  // Before digest hour: only catch up if we clearly missed yesterday's send.
+  return Number.isFinite(lastMs) && nowMs - lastMs >= 36 * HOUR_MS;
+}
+
+function queueAutoFixDigest(state, fixes, nowIso = new Date().toISOString()) {
+  const digest = state.autoFixDigest || emptyDigest();
+  const items = [...(digest.items || [])];
+  for (const f of fixes) {
+    items.push({
+      at: nowIso,
+      ok: Boolean(f.ok),
+      line: describeAutoFix(f),
+    });
+  }
+  state.autoFixDigest = {
+    items: items.slice(-AUTOFIX_DIGEST_LIMIT),
+    lastSentAt: digest.lastSentAt || null,
+  };
+}
+
+async function flushAutoFixDigest(state, webhookUrl, settings) {
+  const digest = state.autoFixDigest || emptyDigest();
+  const items = Array.isArray(digest.items) ? digest.items : [];
+  if (!webhookUrl || !items.length) return false;
+  if (!shouldSendAutoFixDigest(digest.lastSentAt, settings.discordAutoFixDigestHour)) {
+    return false;
+  }
+  const failed = items.some((i) => !i.ok);
+  const okCount = items.filter((i) => i.ok).length;
+  await sendDiscordWebhook(webhookUrl, {
+    title:
+      items.length === 1
+        ? `Daily auto-fix: ${okCount ? "1 fix" : "1 attempt"}`
+        : `Daily auto-fix summary: ${okCount} fix${okCount === 1 ? "" : "es"}`,
+    description: formatLines(items, (i) => `${i.ok ? "🧹" : "⚠️"} ${i.line}`),
+    color: failed ? DISCORD_COLORS.restartFail : DISCORD_COLORS.restartOk,
+  });
+  state.autoFixDigest = { items: [], lastSentAt: new Date().toISOString() };
+  return true;
+}
+
 const SEVERITY_ICON = { error: "🔴", warning: "🟠", info: "🔵" };
 
 async function notify(added, resolved, settings, webhookUrl) {
@@ -250,7 +325,12 @@ async function notify(added, resolved, settings, webhookUrl) {
 }
 
 /** Routine, successful housekeeping: Hub list only unless Discord is turned on for it. */
-const HOUSEKEEPING_RULES = new Set(["qbCleanup", "qbReannounce", "plexRefresh"]);
+const HOUSEKEEPING_RULES = new Set([
+  "qbCleanup",
+  "qbForceStart",
+  "qbReannounce",
+  "plexRefresh",
+]);
 
 export async function runProblemsScan() {
   if (running) return lastSnapshot;
@@ -282,17 +362,21 @@ export async function runProblemsScan() {
     if (fixes.length) {
       state.autoFixLog = [...fixes, ...(state.autoFixLog || [])].slice(0, AUTOFIX_LOG_LIMIT);
     }
-    saveState(state);
-    applyDismissals(snapshot);
-    const webhookUrl = loadWatchdogSettings().discordWebhookUrl || "";
-    await notify(added, resolved, settings, webhookUrl);
     // Indexer re-tests stay in the Hub's auto-fix list unless Discord is turned on for them.
     const discordFixes = fixes.filter(
       (f) =>
         !(f.rule === "testIndexer" && f.ok && !settings.discordNotifyIndexerFixes) &&
         !(HOUSEKEEPING_RULES.has(f.rule) && f.ok && !settings.discordNotifyClientCleanup),
     );
-    if (webhookUrl && settings.discordNotifyAutoFix && discordFixes.length) {
+    const autoFixMode = settings.discordAutoFixNotify || "daily";
+    if (autoFixMode === "daily" && discordFixes.length) {
+      queueAutoFixDigest(state, discordFixes);
+    }
+    saveState(state);
+    applyDismissals(snapshot);
+    const webhookUrl = loadWatchdogSettings().discordWebhookUrl || "";
+    await notify(added, resolved, settings, webhookUrl);
+    if (webhookUrl && autoFixMode === "immediate" && discordFixes.length) {
       const failed = discordFixes.some((f) => !f.ok);
       await sendDiscordWebhook(webhookUrl, {
         title:
@@ -302,6 +386,10 @@ export async function runProblemsScan() {
         description: formatLines(discordFixes, (f) => `${f.ok ? "🧹" : "⚠️"} ${describeAutoFix(f)}`),
         color: failed ? DISCORD_COLORS.restartFail : DISCORD_COLORS.restartOk,
       });
+    }
+    if (webhookUrl && autoFixMode === "daily") {
+      const sent = await flushAutoFixDigest(state, webhookUrl, settings);
+      if (sent) saveState(state);
     }
     return snapshot;
   } catch (err) {

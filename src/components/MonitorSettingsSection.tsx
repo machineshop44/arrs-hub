@@ -33,6 +33,7 @@ type MonitorSettings = {
   qbCleanupEnabled: boolean;
   qbSeedRules: string;
   qbCleanupDeleteFiles: boolean;
+  qbForceStartSeeders: boolean;
   discordNotifyClientCleanup: boolean;
   clientAutoFixIntervalHours: number;
   autoFixSabRetry: boolean;
@@ -45,6 +46,8 @@ type MonitorSettings = {
   autoFixSeasonPack: boolean;
   autoFixOmbiAvailable: boolean;
   autoFixPlexRefresh: boolean;
+  discordAutoFixNotify: "off" | "daily" | "immediate";
+  discordAutoFixDigestHour: number;
   discordNotifyAutoFix: boolean;
   discordNotifyIndexerFixes: boolean;
   discordNotifyIndexerFailures: boolean;
@@ -363,6 +366,17 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
           <label className="toggle">
             <input
               type="checkbox"
+              checked={settings.qbForceStartSeeders}
+              disabled={disabled || !settings.autoFixEnabled}
+              onChange={(e) => patch({ qbForceStartSeeders: e.target.checked })}
+            />
+            <span className="toggle-label">
+              qBittorrent: Force Start finished torrents on those seed-rule trackers (keeps them seeding through the upload queue)
+            </span>
+          </label>
+          <label className="toggle">
+            <input
+              type="checkbox"
               checked={settings.qbCleanupDeleteFiles}
               disabled={disabled}
               onChange={(e) => patch({ qbCleanupDeleteFiles: e.target.checked })}
@@ -406,15 +420,42 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
               Discord: routine housekeeping (finished torrents removed, re-announces, Plex folder scans) — off = Hub list only
             </span>
           </label>
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={settings.discordNotifyAutoFix}
+          <label className="field">
+            <span className="field-label">Discord: auto-fixes</span>
+            <select
+              value={settings.discordAutoFixNotify || "daily"}
               disabled={disabled}
-              onChange={(e) => patch({ discordNotifyAutoFix: e.target.checked })}
-            />
-            <span className="toggle-label">Discord: auto-fixes</span>
+              onChange={(e) =>
+                patch({
+                  discordAutoFixNotify: e.target.value as
+                    | "off"
+                    | "daily"
+                    | "immediate",
+                })
+              }
+            >
+              <option value="daily">Daily summary (quiet)</option>
+              <option value="off">Off — Hub list only</option>
+              <option value="immediate">Every fix (noisy)</option>
+            </select>
           </label>
+          {settings.discordAutoFixNotify === "daily" ? (
+            <label className="field">
+              <span className="field-label">Daily summary hour (local)</span>
+              <input
+                type="number"
+                min={0}
+                max={23}
+                value={settings.discordAutoFixDigestHour ?? 9}
+                disabled={disabled}
+                onChange={(e) =>
+                  patch({
+                    discordAutoFixDigestHour: Number(e.target.value),
+                  })
+                }
+              />
+            </label>
+          ) : null}
           <label className="toggle">
             <input
               type="checkbox"

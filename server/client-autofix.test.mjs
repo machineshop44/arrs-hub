@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { upgradeTorrentLeechSeedDays } from "./monitor-settings.mjs";
-import { parseSeedRules, pickQbRemovals, pickSabRetries, planSabResume } from "./client-autofix.mjs";
+import {
+  parseSeedRules,
+  pickQbForceStart,
+  pickQbRemovals,
+  pickSabRetries,
+  planSabResume,
+} from "./client-autofix.mjs";
 
 test("saved TorrentLeech 3.5 day rule is raised to 8.5; TorrentDay stays 3.5", () => {
   assert.equal(
@@ -81,6 +87,61 @@ test("parseSeedRules reads host = days lines", () => {
     { match: "sync.td-peers.com", days: 3.5 },
     { match: "tleechreload.org", days: 10 },
   ]);
+});
+
+test("pickQbForceStart targets finished seed-rule torrents that are not forced yet", () => {
+  const rules = parseSeedRules("td-peers.com = 3.5\ntleechreload.org = 8.5");
+  const picks = pickQbForceStart(
+    [
+      {
+        hash: "td1",
+        name: "TD movie",
+        progress: 1,
+        state: "queuedUP",
+        force_start: false,
+        trackers: ["https://sync.td-peers.com/announce"],
+      },
+      {
+        hash: "tl1",
+        name: "TL show",
+        progress: 1,
+        state: "pausedUP",
+        force_start: false,
+        trackers: ["https://tracker.tleechreload.org/a/1/announce"],
+      },
+      {
+        hash: "already",
+        name: "Already forced",
+        progress: 1,
+        state: "forcedUP",
+        force_start: true,
+        trackers: ["https://sync.td-peers.com/announce"],
+      },
+      {
+        hash: "public",
+        name: "Public",
+        progress: 1,
+        state: "uploading",
+        force_start: false,
+        trackers: ["udp://tracker.opentrackr.org:1337/announce"],
+      },
+      {
+        hash: "dl",
+        name: "Still downloading",
+        progress: 0.9,
+        state: "downloading",
+        force_start: false,
+        trackers: ["https://sync.td-peers.com/announce"],
+      },
+    ],
+    { rules },
+  );
+  assert.deepEqual(
+    picks.map((p) => p.hash),
+    ["td1", "tl1"],
+  );
+  assert.equal(picks.find((p) => p.hash === "tl1")?.resume, true);
+  assert.equal(picks.find((p) => p.hash === "td1")?.resume, false);
 });
 
 test("pickQbRemovals honors import, queue and per-tracker seed time", () => {
