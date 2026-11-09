@@ -9,6 +9,14 @@ export function defaultMonitorSettings() {
     /** Background problem scan (Discord alerts even with the dashboard closed). */
     problemsEnabled: true,
     problemsIntervalMinutes: 5,
+    /**
+     * How Discord gets Hub alerts:
+     * - daily: one summary per day (default — stuck/autofix/watchdog/ombi)
+     * - immediate: old per-event spam
+     */
+    discordNotifyMode: "daily",
+    /** Local hour (0–23) for the daily summary. */
+    discordDigestHour: 9,
     discordNotifyProblems: true,
     discordNotifyProblemsResolved: false,
     discordNotifyOmbiRequests: true,
@@ -66,13 +74,11 @@ export function defaultMonitorSettings() {
     clientAutoFixIntervalHours: 24,
     autoFixMaxPerScan: 10,
     /**
-     * Discord for queue/health auto-fixes:
-     * - daily: one summary per day (default — avoids spam)
-     * - immediate: every scan that fixes something (old behavior)
-     * - off: Hub list only
+     * Include queue/health auto-fixes in Discord (timing follows discordNotifyMode).
+     * "off" | "daily" | "immediate" — off excludes them; otherwise include.
      */
     discordAutoFixNotify: "daily",
-    /** Local hour (0–23) to send the daily auto-fix summary. */
+    /** @deprecated Prefer discordDigestHour. */
     discordAutoFixDigestHour: 9,
     /** @deprecated Prefer discordAutoFixNotify; kept for older UI payloads. */
     discordNotifyAutoFix: true,
@@ -112,6 +118,13 @@ export function normalizeAutoFixNotify(s = {}) {
   return "daily";
 }
 
+/** @param {Record<string, unknown>} s */
+export function normalizeDiscordNotifyMode(s = {}) {
+  const raw = String(s.discordNotifyMode || "").trim().toLowerCase();
+  if (raw === "immediate" || raw === "daily") return raw;
+  return "daily";
+}
+
 function normalize(raw) {
   const d = defaultMonitorSettings();
   const s = { ...d, ...(raw && typeof raw === "object" ? raw : {}) };
@@ -119,6 +132,15 @@ function normalize(raw) {
     ...s,
     problemsEnabled: s.problemsEnabled !== false,
     problemsIntervalMinutes: clampNumber(s.problemsIntervalMinutes, d.problemsIntervalMinutes, 1, 120),
+    discordNotifyMode: normalizeDiscordNotifyMode(s),
+    discordDigestHour: Math.round(
+      clampNumber(
+        s.discordDigestHour ?? s.discordAutoFixDigestHour,
+        d.discordDigestHour,
+        0,
+        23,
+      ),
+    ),
     discordNotifyProblems: s.discordNotifyProblems !== false,
     discordNotifyProblemsResolved: s.discordNotifyProblemsResolved === true,
     discordNotifyOmbiRequests: s.discordNotifyOmbiRequests !== false,
@@ -168,7 +190,12 @@ function normalize(raw) {
     autoFixMaxPerScan: Math.round(clampNumber(s.autoFixMaxPerScan, d.autoFixMaxPerScan, 1, 50)),
     discordAutoFixNotify: normalizeAutoFixNotify(s),
     discordAutoFixDigestHour: Math.round(
-      clampNumber(s.discordAutoFixDigestHour, d.discordAutoFixDigestHour, 0, 23),
+      clampNumber(
+        s.discordDigestHour ?? s.discordAutoFixDigestHour,
+        d.discordDigestHour,
+        0,
+        23,
+      ),
     ),
     discordNotifyAutoFix: normalizeAutoFixNotify(s) !== "off",
     discordNotifyIndexerFixes: s.discordNotifyIndexerFixes === true,

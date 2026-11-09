@@ -2,6 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { DATA_DIR, ensureDataDirs } from "./config.mjs";
 import { sendDiscordWebhook, DISCORD_COLORS } from "./discord.mjs";
+import {
+  discordUsesDailyDigest,
+  flushDiscordDigest,
+  queueDiscordDigest,
+  shouldSendDiscordDigest,
+} from "./discord-digest.mjs";
 import { loadMonitorSettings } from "./monitor-settings.mjs";
 import { collectProblems } from "./problems.mjs";
 import { describeAutoFix, runQueueAutoFix } from "./queue-autofix.mjs";
@@ -17,7 +23,6 @@ const RESOLVE_AFTER_MISSES = 2;
 const FIRST_SCAN_DELAY_MS = 90_000;
 const MAX_LINES_PER_EMBED = 15;
 const AUTOFIX_LOG_LIMIT = 25;
-const AUTOFIX_DIGEST_LIMIT = 200;
 const HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_REANNOUNCE_HOURS = 6;
 /** Public indexers flap all day; a failing tracker is re-announced at most daily. */
@@ -221,106 +226,89 @@ function formatLines(items, render) {
   return lines.join("\n").slice(0, 3900);
 }
 
-function startOfLocalDay(d = new Date()) {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-}
-
-/**
- * Send the daily auto-fix digest once per local calendar day after digestHour,
- * or if the previous send is more than 36h old (catch-up after downtime).
- * Exported for tests.
- */
+/** @deprecated Use shouldSendDiscordDigest — kept for existing tests. */
 export function shouldSendAutoFixDigest(lastSentAt, digestHour = 9, now = new Date()) {
-  const hour = Math.min(23, Math.max(0, Number(digestHour) || 9));
-  const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now));
-  const when = new Date(nowMs);
-  const lastMs = lastSentAt ? Date.parse(String(lastSentAt)) : NaN;
-  const sentToday =
-    Number.isFinite(lastMs) && startOfLocalDay(new Date(lastMs)) === startOfLocalDay(when);
-  if (sentToday) return false;
-  if (when.getHours() >= hour) return true;
-  // Before digest hour: only catch up if we clearly missed yesterday's send.
-  return Number.isFinite(lastMs) && nowMs - lastMs >= 36 * HOUR_MS;
-}
-
-function queueAutoFixDigest(state, fixes, nowIso = new Date().toISOString()) {
-  const digest = state.autoFixDigest || emptyDigest();
-  const items = [...(digest.items || [])];
-  for (const f of fixes) {
-    items.push({
-      at: nowIso,
-      ok: Boolean(f.ok),
-      line: describeAutoFix(f),
-    });
-  }
-  state.autoFixDigest = {
-    items: items.slice(-AUTOFIX_DIGEST_LIMIT),
-    lastSentAt: digest.lastSentAt || null,
-  };
-}
-
-async function flushAutoFixDigest(state, webhookUrl, settings) {
-  const digest = state.autoFixDigest || emptyDigest();
-  const items = Array.isArray(digest.items) ? digest.items : [];
-  if (!webhookUrl || !items.length) return false;
-  if (!shouldSendAutoFixDigest(digest.lastSentAt, settings.discordAutoFixDigestHour)) {
-    return false;
-  }
-  const failed = items.some((i) => !i.ok);
-  const okCount = items.filter((i) => i.ok).length;
-  await sendDiscordWebhook(webhookUrl, {
-    title:
-      items.length === 1
-        ? `Daily auto-fix: ${okCount ? "1 fix" : "1 attempt"}`
-        : `Daily auto-fix summary: ${okCount} fix${okCount === 1 ? "" : "es"}`,
-    description: formatLines(items, (i) => `${i.ok ? "🧹" : "⚠️"} ${i.line}`),
-    color: failed ? DISCORD_COLORS.restartFail : DISCORD_COLORS.restartOk,
-  });
-  state.autoFixDigest = { items: [], lastSentAt: new Date().toISOString() };
-  return true;
+  return shouldSendDiscordDigest(lastSentAt, digestHour, now);
 }
 
 const SEVERITY_ICON = { error: "🔴", warning: "🟠", info: "🔵" };
 
+function migrateLegacyAutoFixDigest(state) {
+  const legacy = state.autoFixDigest;
+  const items = Array.isArray(legacy?.items) ? legacy.items : [];
+  if (!items.length) return;
+  for (const item of items) {
+    queueDiscordDigest("autofix", {
+      line: String(item.line || ""),
+      ok: item.ok !== false,
+    }, item.at);
+  }
+  state.autoFixDigest = { items: [], lastSentAt: legacy.lastSentAt || null };
+}
+
 async function notify(added, resolved, settings, webhookUrl) {
   if (!webhookUrl) return;
+  const daily = discordUsesDailyDigest(settings);
   const ombi = added.filter((p) => p.kind === "ombi");
   const issues = added.filter(
     (p) => p.kind !== "ombi" && (settings.discordNotifyIndexerFailures || !p.key.startsWith("health:indexer:")),
   );
 
   if (settings.discordNotifyProblems && issues.length) {
-    const worst = issues.some((p) => p.severity === "error") ? DISCORD_COLORS.down : DISCORD_COLORS.restartFail;
-    await sendDiscordWebhook(webhookUrl, {
-      title: issues.length === 1 ? issues[0].title : `${issues.length} new problems on your Plex stack`,
-      description: formatLines(issues, (p) =>
-        issues.length === 1
-          ? p.detail
-          : `${SEVERITY_ICON[p.severity] || "•"} **${p.title}** — ${p.detail}`,
-      ),
-      color: worst,
-    });
+    if (daily) {
+      for (const p of issues) {
+        queueDiscordDigest("problems", {
+          line: `**${p.title}** — ${p.detail}`,
+          severity: p.severity,
+        });
+      }
+    } else {
+      const worst = issues.some((p) => p.severity === "error") ? DISCORD_COLORS.down : DISCORD_COLORS.restartFail;
+      await sendDiscordWebhook(webhookUrl, {
+        title: issues.length === 1 ? issues[0].title : `${issues.length} new problems on your Plex stack`,
+        description: formatLines(issues, (p) =>
+          issues.length === 1
+            ? p.detail
+            : `${SEVERITY_ICON[p.severity] || "•"} **${p.title}** — ${p.detail}`,
+        ),
+        color: worst,
+      });
+    }
   }
 
   if (settings.discordNotifyOmbiRequests && ombi.length) {
-    await sendDiscordWebhook(webhookUrl, {
-      title: ombi.length === 1 ? ombi[0].title : `${ombi.length} new Ombi requests`,
-      description: formatLines(ombi, (p) =>
-        ombi.length === 1 ? p.detail : `• **${p.title.replace(/^New Ombi request: /, "")}** — ${p.detail}`,
-      ),
-      color: DISCORD_COLORS.test,
-    });
+    if (daily) {
+      for (const p of ombi) {
+        queueDiscordDigest("ombi", {
+          line: `**${p.title.replace(/^New Ombi request: /, "")}** — ${p.detail}`,
+        });
+      }
+    } else {
+      await sendDiscordWebhook(webhookUrl, {
+        title: ombi.length === 1 ? ombi[0].title : `${ombi.length} new Ombi requests`,
+        description: formatLines(ombi, (p) =>
+          ombi.length === 1 ? p.detail : `• **${p.title.replace(/^New Ombi request: /, "")}** — ${p.detail}`,
+        ),
+        color: DISCORD_COLORS.test,
+      });
+    }
   }
 
   const fixed = resolved.filter(
     (p) => p.kind !== "ombi" && (settings.discordNotifyIndexerFailures || !p.key.startsWith("health:indexer:")),
   );
   if (settings.discordNotifyProblemsResolved && fixed.length) {
-    await sendDiscordWebhook(webhookUrl, {
-      title: fixed.length === 1 ? `Resolved: ${fixed[0].title}` : `${fixed.length} problems resolved`,
-      description: fixed.length === 1 ? undefined : formatLines(fixed, (p) => `✅ ${p.title}`),
-      color: DISCORD_COLORS.restartOk,
-    });
+    if (daily) {
+      for (const p of fixed) {
+        queueDiscordDigest("resolved", { line: p.title });
+      }
+    } else {
+      await sendDiscordWebhook(webhookUrl, {
+        title: fixed.length === 1 ? `Resolved: ${fixed[0].title}` : `${fixed.length} problems resolved`,
+        description: fixed.length === 1 ? undefined : formatLines(fixed, (p) => `✅ ${p.title}`),
+        color: DISCORD_COLORS.restartOk,
+      });
+    }
   }
 }
 
@@ -368,15 +356,24 @@ export async function runProblemsScan() {
         !(f.rule === "testIndexer" && f.ok && !settings.discordNotifyIndexerFixes) &&
         !(HOUSEKEEPING_RULES.has(f.rule) && f.ok && !settings.discordNotifyClientCleanup),
     );
+    migrateLegacyAutoFixDigest(state);
     const autoFixMode = settings.discordAutoFixNotify || "daily";
-    if (autoFixMode === "daily" && discordFixes.length) {
-      queueAutoFixDigest(state, discordFixes);
+    const daily = discordUsesDailyDigest(settings);
+    if (autoFixMode !== "off" && discordFixes.length) {
+      if (daily) {
+        for (const f of discordFixes) {
+          queueDiscordDigest("autofix", {
+            line: describeAutoFix(f),
+            ok: Boolean(f.ok),
+          });
+        }
+      }
     }
     saveState(state);
     applyDismissals(snapshot);
     const webhookUrl = loadWatchdogSettings().discordWebhookUrl || "";
     await notify(added, resolved, settings, webhookUrl);
-    if (webhookUrl && autoFixMode === "immediate" && discordFixes.length) {
+    if (webhookUrl && !daily && autoFixMode !== "off" && discordFixes.length) {
       const failed = discordFixes.some((f) => !f.ok);
       await sendDiscordWebhook(webhookUrl, {
         title:
@@ -387,9 +384,10 @@ export async function runProblemsScan() {
         color: failed ? DISCORD_COLORS.restartFail : DISCORD_COLORS.restartOk,
       });
     }
-    if (webhookUrl && autoFixMode === "daily") {
-      const sent = await flushAutoFixDigest(state, webhookUrl, settings);
-      if (sent) saveState(state);
+    if (webhookUrl && daily) {
+      await flushDiscordDigest(webhookUrl, {
+        discordDigestHour: settings.discordDigestHour,
+      });
     }
     return snapshot;
   } catch (err) {

@@ -11,6 +11,12 @@ import {
 } from "./watchdog-store.mjs";
 import { DISCORD_COLORS, sendDiscordWebhook } from "./discord.mjs";
 import {
+  discordUsesDailyDigest,
+  flushDiscordDigest,
+  queueDiscordDigest,
+} from "./discord-digest.mjs";
+import { loadMonitorSettings } from "./monitor-settings.mjs";
+import {
   checkCompanionHealth,
   requestCompanionRestart,
   requestCompanionServiceStatus,
@@ -663,6 +669,22 @@ export function restartBackoffMs(settings, attempts) {
 
 async function notifyDiscord(settings, payload) {
   if (!settings.discordWebhookUrl) return;
+  const monitor = loadMonitorSettings();
+  if (discordUsesDailyDigest(monitor)) {
+    const title = String(payload?.title || "").trim();
+    const detail = String(payload?.description || "")
+      .split(/\n/)
+      .map((s) => s.trim())
+      .find(Boolean);
+    queueDiscordDigest("watchdog", {
+      line: detail ? `**${title}** — ${detail}` : title,
+      severity: payload?.color === DISCORD_COLORS.down ? "error" : "info",
+    });
+    await flushDiscordDigest(settings.discordWebhookUrl, {
+      discordDigestHour: monitor.discordDigestHour,
+    });
+    return;
+  }
   const result = await sendDiscordWebhook(settings.discordWebhookUrl, payload);
   if (!result.ok) {
     console.error("Discord webhook failed:", result.message);

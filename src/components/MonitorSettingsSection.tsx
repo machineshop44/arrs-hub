@@ -11,6 +11,8 @@ type BackupResult = {
 type MonitorSettings = {
   problemsEnabled: boolean;
   problemsIntervalMinutes: number;
+  discordNotifyMode: "daily" | "immediate";
+  discordDigestHour: number;
   discordNotifyProblems: boolean;
   discordNotifyProblemsResolved: boolean;
   discordNotifyOmbiRequests: boolean;
@@ -162,6 +164,36 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
               onChange={(e) => patch({ problemsIntervalMinutes: Number(e.target.value) })}
             />
           </label>
+          <label className="field">
+            <span className="field-label">Discord delivery</span>
+            <select
+              value={settings.discordNotifyMode || "daily"}
+              disabled={disabled}
+              onChange={(e) =>
+                patch({
+                  discordNotifyMode: e.target.value as "daily" | "immediate",
+                })
+              }
+            >
+              <option value="daily">Daily summary (quiet — stuck, autofix, watchdog, Ombi)</option>
+              <option value="immediate">Every event (noisy)</option>
+            </select>
+          </label>
+          {settings.discordNotifyMode !== "immediate" ? (
+            <label className="field">
+              <span className="field-label">Daily summary hour (local)</span>
+              <input
+                type="number"
+                min={0}
+                max={23}
+                value={settings.discordDigestHour ?? 9}
+                disabled={disabled}
+                onChange={(e) =>
+                  patch({ discordDigestHour: Number(e.target.value) })
+                }
+              />
+            </label>
+          ) : null}
           <label className="toggle">
             <input
               type="checkbox"
@@ -169,7 +201,7 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
               disabled={disabled}
               onChange={(e) => patch({ discordNotifyProblems: e.target.checked })}
             />
-            <span className="toggle-label">Discord: new problems</span>
+            <span className="toggle-label">Include: new problems (stuck downloads, health, etc.)</span>
           </label>
           <label className="toggle">
             <input
@@ -178,7 +210,7 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
               disabled={disabled}
               onChange={(e) => patch({ discordNotifyProblemsResolved: e.target.checked })}
             />
-            <span className="toggle-label">Discord: problems resolved</span>
+            <span className="toggle-label">Include: problems resolved</span>
           </label>
           <label className="toggle">
             <input
@@ -187,7 +219,7 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
               disabled={disabled}
               onChange={(e) => patch({ discordNotifyOmbiRequests: e.target.checked })}
             />
-            <span className="toggle-label">Discord: new Ombi requests</span>
+            <span className="toggle-label">Include: new Ombi requests</span>
           </label>
           <label className="field">
             <span>Low disk alert below (GB free)</span>
@@ -420,42 +452,21 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
               Discord: routine housekeeping (finished torrents removed, re-announces, Plex folder scans) — off = Hub list only
             </span>
           </label>
-          <label className="field">
-            <span className="field-label">Discord: auto-fixes</span>
-            <select
-              value={settings.discordAutoFixNotify || "daily"}
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={settings.discordAutoFixNotify !== "off"}
               disabled={disabled}
               onChange={(e) =>
                 patch({
-                  discordAutoFixNotify: e.target.value as
-                    | "off"
-                    | "daily"
-                    | "immediate",
+                  discordAutoFixNotify: e.target.checked ? "daily" : "off",
                 })
               }
-            >
-              <option value="daily">Daily summary (quiet)</option>
-              <option value="off">Off — Hub list only</option>
-              <option value="immediate">Every fix (noisy)</option>
-            </select>
+            />
+            <span className="toggle-label">
+              Include: auto-fixes (off = Hub list only)
+            </span>
           </label>
-          {settings.discordAutoFixNotify === "daily" ? (
-            <label className="field">
-              <span className="field-label">Daily summary hour (local)</span>
-              <input
-                type="number"
-                min={0}
-                max={23}
-                value={settings.discordAutoFixDigestHour ?? 9}
-                disabled={disabled}
-                onChange={(e) =>
-                  patch({
-                    discordAutoFixDigestHour: Number(e.target.value),
-                  })
-                }
-              />
-            </label>
-          ) : null}
           <label className="toggle">
             <input
               type="checkbox"

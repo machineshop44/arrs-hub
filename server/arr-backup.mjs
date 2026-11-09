@@ -125,11 +125,25 @@ export async function runArrBackups() {
     const failed = results.filter((r) => !r.ok);
     const webhookUrl = loadWatchdogSettings().discordWebhookUrl || "";
     if (failed.length && webhookUrl && settings.discordNotifyProblems) {
-      await sendDiscordWebhook(webhookUrl, {
-        title: `Config backup failed for ${failed.map((r) => appLabel(r.id)).join(", ")}`,
-        description: failed.map((r) => `• **${appLabel(r.id)}** — ${r.error}`).join("\n"),
-        color: DISCORD_COLORS.restartFail,
-      });
+      const { discordUsesDailyDigest, queueDiscordDigest, flushDiscordDigest } =
+        await import("./discord-digest.mjs");
+      if (discordUsesDailyDigest(settings)) {
+        for (const f of failed) {
+          queueDiscordDigest("other", {
+            line: `**Backup failed: ${f.id || "arr"}** — ${f.error || "unknown error"}`,
+            severity: "error",
+          });
+        }
+        await flushDiscordDigest(webhookUrl, {
+          discordDigestHour: settings.discordDigestHour,
+        });
+      } else {
+        await sendDiscordWebhook(webhookUrl, {
+          title: `Config backup failed for ${failed.map((r) => appLabel(r.id)).join(", ")}`,
+          description: failed.map((r) => `• **${appLabel(r.id)}** — ${r.error}`).join("\n"),
+          color: DISCORD_COLORS.restartFail,
+        });
+      }
     }
     return { ok: failed.length === 0, at, dir: destRoot, results };
   } finally {
