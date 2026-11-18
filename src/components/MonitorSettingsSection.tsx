@@ -38,6 +38,8 @@ type MonitorSettings = {
   qbForceStartSeeders: boolean;
   discordNotifyClientCleanup: boolean;
   clientAutoFixIntervalHours: number;
+  autoAppUpdateEnabled: boolean;
+  autoAppUpdateIntervalHours: number;
   autoFixSabRetry: boolean;
   autoFixQbRecheck: boolean;
   autoFixQbSlots: boolean;
@@ -175,7 +177,7 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
                 })
               }
             >
-              <option value="daily">Daily summary (quiet — stuck, autofix, watchdog, Ombi)</option>
+              <option value="daily">Daily summary (quiet — stuck, autofix, updates, watchdog, Ombi)</option>
               <option value="immediate">Every event (noisy)</option>
             </select>
           </label>
@@ -255,6 +257,37 @@ export function MonitorSettingsSection({ serverUp }: MonitorSettingsSectionProps
             <span className="toggle-label">
               Warn if qBittorrent is not bound to the VPN adapter
             </span>
+          </label>
+
+          <h4 className="settings-subhead">Auto-install app updates</h4>
+          <p className="settings-hint">
+            When a stack app shows an update on the Hub / Companion chips, install
+            it in the background (Sonarr, Radarr, Lidarr, Readarr, Prowlarr,
+            Whisparr, Tautulli, qBittorrent, SABnzbd). Same install path as
+            click-to-update — up to 3 apps per pass. qBit/SAB may still need a
+            one-time UAC prompt on the Companion PC.
+          </p>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={settings.autoAppUpdateEnabled !== false}
+              disabled={disabled}
+              onChange={(e) => patch({ autoAppUpdateEnabled: e.target.checked })}
+            />
+            <span className="toggle-label">Auto-install app updates</span>
+          </label>
+          <label className="field">
+            <span>Check for updates every (hours)</span>
+            <input
+              type="number"
+              min={1}
+              max={168}
+              value={settings.autoAppUpdateIntervalHours ?? 6}
+              disabled={disabled || settings.autoAppUpdateEnabled === false}
+              onChange={(e) =>
+                patch({ autoAppUpdateIntervalHours: Number(e.target.value) })
+              }
+            />
           </label>
 
           <h4 className="settings-subhead">Auto-fix stuck downloads</h4>

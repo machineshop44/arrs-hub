@@ -74,6 +74,12 @@ export function defaultMonitorSettings() {
     clientAutoFixIntervalHours: 24,
     autoFixMaxPerScan: 10,
     /**
+     * Background install of stack app updates (*arr BuiltIn, Tautulli, qBit/SAB via Companion)
+     * when the version chips would show yellow — no click required.
+     */
+    autoAppUpdateEnabled: true,
+    autoAppUpdateIntervalHours: 6,
+    /**
      * Include queue/health auto-fixes in Discord (timing follows discordNotifyMode).
      * "off" | "daily" | "immediate" — off excludes them; otherwise include.
      */
@@ -188,6 +194,13 @@ function normalize(raw) {
     ),
     clientAutoFixIntervalHours: clampNumber(s.clientAutoFixIntervalHours, d.clientAutoFixIntervalHours, 1, 24 * 7),
     autoFixMaxPerScan: Math.round(clampNumber(s.autoFixMaxPerScan, d.autoFixMaxPerScan, 1, 50)),
+    autoAppUpdateEnabled: s.autoAppUpdateEnabled !== false,
+    autoAppUpdateIntervalHours: clampNumber(
+      s.autoAppUpdateIntervalHours,
+      d.autoAppUpdateIntervalHours,
+      1,
+      24 * 7,
+    ),
     discordAutoFixNotify: normalizeAutoFixNotify(s),
     discordAutoFixDigestHour: Math.round(
       clampNumber(

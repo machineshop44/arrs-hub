@@ -75,6 +75,10 @@ import {
   startProblemsMonitor,
 } from "./problems-monitor.mjs";
 import {
+  getAppUpdateMonitorStatus,
+  startAppUpdateMonitor,
+} from "./app-update-monitor.mjs";
+import {
   isBackupRunning,
   resolveBackupDir,
   runArrBackups,
@@ -815,6 +819,7 @@ app.get("/api/monitor/settings", (_req, res) => {
     backupDirResolved: resolveBackupDir(settings),
     backupRunning: isBackupRunning(),
     problems: getProblemsMonitorStatus(),
+    appUpdates: getAppUpdateMonitorStatus(),
   });
 });
 
@@ -1427,6 +1432,7 @@ app.listen(PORT, HOST, () => {
   }
   try {
     startProblemsMonitor();
+    startAppUpdateMonitor();
     startBackupScheduler();
   } catch (err) {
     console.error("Problems monitor / backups failed to start:", err?.message || err);

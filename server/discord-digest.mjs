@@ -11,7 +11,7 @@ const DIGEST_LIMIT = 300;
 const MAX_LINES = 20;
 const HOUR_MS = 60 * 60 * 1000;
 
-/** @typedef {"problems"|"resolved"|"ombi"|"autofix"|"watchdog"|"other"} DigestSection */
+/** @typedef {"problems"|"resolved"|"ombi"|"autofix"|"watchdog"|"appupdate"|"other"} DigestSection */
 
 function emptyDigest() {
   return { items: [], lastSentAt: null };
@@ -117,8 +117,12 @@ export async function flushDiscordDigest(webhookUrl, settings = {}) {
     ombi: items.filter((i) => i.section === "ombi"),
     autofix: items.filter((i) => i.section === "autofix"),
     watchdog: items.filter((i) => i.section === "watchdog"),
+    appupdate: items.filter((i) => i.section === "appupdate"),
     other: items.filter(
-      (i) => !["problems", "resolved", "ombi", "autofix", "watchdog"].includes(i.section),
+      (i) =>
+        !["problems", "resolved", "ombi", "autofix", "watchdog", "appupdate"].includes(
+          i.section,
+        ),
     ),
   };
 
@@ -131,12 +135,16 @@ export async function flushDiscordDigest(webhookUrl, settings = {}) {
     formatSection("Ombi", by.ombi, (i) => `• ${i.line}`),
     formatSection("Auto-fixes", by.autofix, (i) => `${i.ok === false ? "⚠️" : "🧹"} ${i.line}`),
     formatSection("Watchdog", by.watchdog, (i) => `📡 ${i.line}`),
+    formatSection("App updates", by.appupdate, (i) =>
+      `${i.ok === false ? "⚠️" : "⬆️"} ${i.line}`,
+    ),
     formatSection("Other", by.other, (i) => `• ${i.line}`),
   ].filter(Boolean);
 
   const hasError =
     by.problems.some((i) => i.severity === "error") ||
     by.autofix.some((i) => i.ok === false) ||
+    by.appupdate.some((i) => i.ok === false) ||
     by.watchdog.some((i) => i.severity === "error");
 
   const result = await sendDiscordWebhook(webhookUrl, {
