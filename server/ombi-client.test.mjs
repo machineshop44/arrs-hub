@@ -4,6 +4,7 @@ import {
   buildOmbiRequestPayload,
   mapMusicArtistHit,
   mapMovieHit,
+  mapOmbiRootFolders,
   mapTvHit,
   mergeMediaSearchHits,
   ombiApprovePath,
@@ -109,8 +110,52 @@ describe("buildOmbiRequestPayload music", () => {
         title: "Breaking Bad",
         tvdbId: 81189,
       }).body,
-      { requestAll: true, tvDbId: 81189 },
+      {
+        requestAll: true,
+        firstSeason: false,
+        latestSeason: false,
+        tvDbId: 81189,
+      },
     );
+  });
+
+  it("applies root folder override and first-season mode", () => {
+    assert.deepEqual(
+      buildOmbiRequestPayload(
+        { kind: "movie", title: "Your Name", tmdbId: 372058 },
+        { rootFolderId: 2, rootFolderPath: "D:\\Anime Movies" },
+      ).body,
+      { theMovieDbId: 372058, rootFolderOverride: 2 },
+    );
+    const tv = buildOmbiRequestPayload(
+      { kind: "tv", title: "Frieren", tvdbId: 424536 },
+      { seasonMode: "first", rootFolderId: 5, rootFolderPath: "D:\\Anime" },
+    );
+    assert.deepEqual(tv.body, {
+      requestAll: false,
+      firstSeason: true,
+      latestSeason: false,
+      tvDbId: 424536,
+      rootFolderOverride: 5,
+    });
+    assert.match(tv.message, /first season/i);
+    assert.match(tv.message, /Anime/);
+  });
+});
+
+describe("mapOmbiRootFolders", () => {
+  it("keeps id + path and drops bad rows", () => {
+    const folders = mapOmbiRootFolders([
+      { id: 1, path: "D:\\TV", freeSpace: 50000000000 },
+      { id: 2, path: "D:\\Anime" },
+      { id: 0, path: "bad" },
+      { id: 3, path: "" },
+      null,
+    ]);
+    assert.deepEqual(folders, [
+      { id: 1, path: "D:\\TV", freeSpace: 50000000000 },
+      { id: 2, path: "D:\\Anime", freeSpace: null },
+    ]);
   });
 });
 

@@ -207,10 +207,56 @@ export function assertOmbiOk(status, data, fallback) {
 }
 
 /**
+ * Normalize Ombi / Radarr / Sonarr root-folder rows for the request dialog.
+ * @param {unknown} rows
+ * @returns {{ id: number, path: string, freeSpace: number|null }[]}
+ */
+export function mapOmbiRootFolders(rows) {
+  const out = [];
+  for (const row of asArray(rows)) {
+    if (!row || typeof row !== "object") continue;
+    const id = numId(row.id);
+    const path = String(row.path || row.rootFolderPath || "").trim();
+    if (!id || !path) continue;
+    const free = Number(row.freeSpace ?? row.freeSpaceBytes);
+    out.push({
+      id,
+      path,
+      freeSpace: Number.isFinite(free) ? free : null,
+    });
+  }
+  return out;
+}
+
+/**
+ * @param {string} baseUrl
+ * @param {string} apiKey
+ * @returns {Promise<{ movie: ReturnType<typeof mapOmbiRootFolders>, tv: ReturnType<typeof mapOmbiRootFolders> }>}
+ */
+export async function fetchOmbiRootFolders(baseUrl, apiKey) {
+  const [movieRes, tvRes] = await Promise.all([
+    ombiHttp(baseUrl, apiKey, "/api/v1/Radarr/RootFolders", { timeoutMs: 20000 }),
+    ombiHttp(baseUrl, apiKey, "/api/v1/Sonarr/RootFolders", { timeoutMs: 20000 }),
+  ]);
+  return {
+    movie:
+      movieRes.status >= 200 && movieRes.status < 300
+        ? mapOmbiRootFolders(movieRes.data)
+        : [],
+    tv:
+      tvRes.status >= 200 && tvRes.status < 300
+        ? mapOmbiRootFolders(tvRes.data)
+        : [],
+  };
+}
+
+/**
  * Build Ombi request body + path for a normalized search hit.
+ * @param {object} hit
+ * @param {{ seasonMode?: "first"|"all", rootFolderId?: number|null, rootFolderPath?: string|null }} [opts]
  * Throws if the hit cannot be requested (e.g. artist-only music).
  */
-export function buildOmbiRequestPayload(hit) {
+export function buildOmbiRequestPayload(hit, opts = {}) {
   if (!hit || typeof hit !== "object") {
     const err = new Error("Missing request payload");
     err.status = 400;
@@ -227,6 +273,15 @@ export function buildOmbiRequestPayload(hit) {
     throw err;
   }
 
+  const rootFolderId = numId(opts.rootFolderId);
+  const seasonMode =
+    String(opts.seasonMode || "all").toLowerCase() === "first" ? "first" : "all";
+  const folderNote = opts.rootFolderPath
+    ? ` → ${String(opts.rootFolderPath).trim()}`
+    : rootFolderId
+      ? ` → root #${rootFolderId}`
+      : "";
+
   const kind = String(hit.kind || "").toLowerCase();
   if (kind === "movie") {
     const tmdbId = numId(hit.tmdbId);
@@ -235,17 +290,23 @@ export function buildOmbiRequestPayload(hit) {
       err.status = 400;
       throw err;
     }
+    const body = { theMovieDbId: tmdbId };
+    if (rootFolderId) body.rootFolderOverride = rootFolderId;
     return {
       path: "/api/v1/Request/movie",
-      body: { theMovieDbId: tmdbId },
-      message: `Requested “${hit.title}” via Ombi → Radarr.`,
+      body,
+      message: `Requested “${hit.title}” via Ombi → Radarr${folderNote}.`,
     };
   }
 
   if (kind === "tv") {
     const tvdbId = numId(hit.tvdbId);
     const tmdbId = numId(hit.tmdbId);
-    const body = { requestAll: true };
+    const body = {
+      requestAll: seasonMode === "all",
+      firstSeason: seasonMode === "first",
+      latestSeason: false,
+    };
     if (tvdbId) body.tvDbId = tvdbId;
     else if (tmdbId) body.theMovieDbId = tmdbId;
     else {
@@ -253,10 +314,12 @@ export function buildOmbiRequestPayload(hit) {
       err.status = 400;
       throw err;
     }
+    if (rootFolderId) body.rootFolderOverride = rootFolderId;
+    const seasonNote = seasonMode === "first" ? "first season" : "all seasons";
     return {
       path: "/api/v1/Request/tv",
       body,
-      message: `Requested “${hit.title}” (all seasons) via Ombi → Sonarr.`,
+      message: `Requested “${hit.title}” (${seasonNote}) via Ombi → Sonarr${folderNote}.`,
     };
   }
 
@@ -436,8 +499,8 @@ export async function searchOmbi(baseUrl, apiKey, mode, query) {
   return hits;
 }
 
-export async function requestOmbiMedia(baseUrl, apiKey, hit) {
-  const payload = buildOmbiRequestPayload(hit);
+export async function requestOmbiMedia(baseUrl, apiKey, hit, opts = {}) {
+  const payload = buildOmbiRequestPayload(hit, opts);
   const { status, data } = await ombiHttp(baseUrl, apiKey, payload.path, {
     method: "POST",
     body: payload.body,

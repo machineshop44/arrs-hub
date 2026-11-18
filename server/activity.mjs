@@ -5,6 +5,7 @@ import { getTautulliActivity, loadTautulliSettings } from "./tautulli.mjs";
 import { createServiceUrlResolver } from "./url-policy.mjs";
 import {
   assertOmbiOk,
+  fetchOmbiRootFolders,
   normalizeOmbiBase,
   ombiApprovePath,
   ombiDenyPath,
@@ -577,8 +578,18 @@ export async function searchOmbiRequests(body = {}) {
 }
 
 /**
+ * Root folders Ombi can send to Radarr (movies) / Sonarr (TV + anime).
+ * @param {{ urls?: Record<string, string> }} [body]
+ */
+export async function listOmbiRootFolders(body = {}) {
+  const { ombiUrl, apiKey } = resolveOmbiConnection(body);
+  const folders = await fetchOmbiRootFolders(ombiUrl, apiKey);
+  return { ok: true, configured: true, ombiUrl, ...folders };
+}
+
+/**
  * Submit a media request through Ombi.
- * @param {{ kind: string, title?: string, tmdbId?: number, tvdbId?: number, foreignAlbumId?: string, available?: boolean, requested?: boolean, approved?: boolean, urls?: Record<string, string> }} body
+ * @param {{ kind: string, title?: string, tmdbId?: number, tvdbId?: number, foreignAlbumId?: string, available?: boolean, requested?: boolean, approved?: boolean, seasonMode?: string, rootFolderId?: number, rootFolderPath?: string, urls?: Record<string, string> }} body
  */
 export async function submitOmbiRequest(body = {}) {
   const { ombiUrl, apiKey } = resolveOmbiConnection(body);
@@ -592,7 +603,11 @@ export async function submitOmbiRequest(body = {}) {
     requested: body.requested === true,
     approved: body.approved === true,
   };
-  const result = await requestOmbiMedia(ombiUrl, apiKey, hit);
+  const result = await requestOmbiMedia(ombiUrl, apiKey, hit, {
+    seasonMode: body.seasonMode,
+    rootFolderId: body.rootFolderId,
+    rootFolderPath: body.rootFolderPath,
+  });
   return { ...result, kind: hit.kind, ombiUrl };
 }
 

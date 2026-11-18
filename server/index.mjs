@@ -60,6 +60,7 @@ import {
   denyOmbiRequest,
   getHubStatusSummary,
   getOmbiPendingRequests,
+  listOmbiRootFolders,
   searchOmbiRequests,
   submitOmbiRequest,
 } from "./activity.mjs";
@@ -729,6 +730,18 @@ app.post("/api/activity/ombi/search", async (req, res) => {
   }
 });
 
+app.post("/api/activity/ombi/root-folders", async (req, res) => {
+  try {
+    const result = await listOmbiRootFolders({
+      resolver: serviceUrlResolverForRequest(req),
+    });
+    res.json(result);
+  } catch (err) {
+    const status = Number(err?.status) || 500;
+    res.status(status).json({ error: err.message || String(err) });
+  }
+});
+
 app.post("/api/activity/ombi/request", async (req, res) => {
   try {
     const result = await submitOmbiRequest({
@@ -740,6 +753,9 @@ app.post("/api/activity/ombi/request", async (req, res) => {
       available: req.body?.available,
       requested: req.body?.requested,
       approved: req.body?.approved,
+      seasonMode: req.body?.seasonMode,
+      rootFolderId: req.body?.rootFolderId,
+      rootFolderPath: req.body?.rootFolderPath,
       resolver: serviceUrlResolverForRequest(req),
     });
     res.json(result);
